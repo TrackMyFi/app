@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { TRANSACTION_TYPES, CATEGORIES } from '../lib/transactions/constants'
+import { balancePreview } from '../lib/transactions/balancePreview'
+import { isInvestment } from '../lib/accountTypes'
 import DateInput from './DateInput.vue'
 import type { Transaction } from '../lib/types/Transaction'
 
@@ -57,6 +59,34 @@ const accountItems = computed(() =>
   accountsStore.accounts.map((a) => ({ label: a.name, value: a.id })),
 )
 
+// Default the switch on for cash/liability accounts, off for investment accounts.
+function defaultUpdateBalance(accountId: number | undefined): boolean {
+  if (accountId == null) return false
+  const acct = accountsStore.accounts.find((a) => a.id === accountId)
+  return acct ? !isInvestment(acct.type) : false
+}
+const updateBalance = ref(false)
+watch(() => form.accountId, (id) => { updateBalance.value = defaultUpdateBalance(id) })
+
+const preview = computed(() =>
+  form.accountId == null
+    ? []
+    : balancePreview(accountsStore.allBalances, {
+        type: form.type,
+        amount: form.amount || 0,
+        accountId: form.accountId,
+        transferAccountId: form.transferAccountId,
+        date: form.date,
+      }),
+)
+
+function money(n: number): string {
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+function accountName(id: number): string {
+  return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
+}
+
 async function save() {
   if (form.accountId == null) return
   const now = DateTime.now().toISO()!
@@ -71,7 +101,7 @@ async function save() {
       type: form.type,
       category: form.category,
       isContribution: form.isContribution,
-      updateBalance: false,
+      updateBalance: updateBalance.value,
       updatedAt: now,
     })
   } else {
@@ -85,7 +115,7 @@ async function save() {
       category: form.category,
       isContribution: form.isContribution,
       importSource: 'manual',
-      updateBalance: false,
+      updateBalance: updateBalance.value,
       createdAt: now,
     })
   }
@@ -103,6 +133,20 @@ async function save() {
     <DateInput v-model="form.date" />
     <USelect v-if="!isTransfer" v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" />
     <UCheckbox v-if="!isTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
+
+    <div class="rounded border border-default p-3 space-y-2">
+      <USwitch v-model="updateBalance" label="Update account balance" />
+      <p class="text-xs text-muted">
+        Writes a new balance snapshot reflecting this transaction, so the change shows up in your
+        net-worth history. Leave off to record the transaction without touching balances.
+      </p>
+      <div v-if="updateBalance" class="text-sm space-y-1">
+        <div v-for="line in preview" :key="line.accountId" class="tabular-nums">
+          {{ accountName(line.accountId) }}: {{ money(line.from) }} → <strong>{{ money(line.to) }}</strong>
+        </div>
+      </div>
+    </div>
+
     <div class="flex justify-end gap-2 pt-2">
       <UButton type="submit">{{ props.editing ? 'Save' : 'Add' }}</UButton>
     </div>
