@@ -251,3 +251,53 @@ async fn bulk_create_writes_no_snapshots() {
     assert_eq!(balance_count(&conn).await, 0); // never writes snapshots
     assert!(page.rows.iter().all(|r| r.import_source == "csv"));
 }
+
+#[tokio::test]
+async fn balances_expose_linked_transaction_id() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &NewAccount {
+        name: "Checking".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+
+    // A manually-entered balance has no linking transaction.
+    accounts::add_balance(&conn, &accounts::NewBalance {
+        account_id: acct, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+
+    // A transaction with the balance switch ON generates a linked snapshot (1000 - 40 = 960).
+    let mut t = new_txn(acct, 40.0, "expense");
+    t.update_balance = true;
+    let txn_id = transactions::create_transaction(&conn, &t).await.unwrap();
+
+    let balances = accounts::list_all_balances(&conn).await.unwrap();
+    let manual = balances.iter().find(|b| b.balance == 1000.0).unwrap();
+    let generated = balances.iter().find(|b| b.balance == 960.0).unwrap();
+    assert_eq!(manual.linked_transaction_id, None);
+    assert_eq!(generated.linked_transaction_id, Some(txn_id));
+}
+
+#[tokio::test]
+async fn transfer_balances_link_to_same_transaction() {
+    let conn = setup().await;
+    let a = accounts::create_account(&conn, &NewAccount {
+        name: "A".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    let b = accounts::create_account(&conn, &NewAccount {
+        name: "B".into(), r#type: "savings".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &accounts::NewBalance {
+        account_id: a, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &accounts::NewBalance {
+        account_id: b, balance: 200.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+
+    let mut t = new_txn(a, 300.0, "transfer");
+    t.transfer_account_id = Some(b);
+    t.update_balance = true;
+    let txn_id = transactions::create_transaction(&conn, &t).await.unwrap();
+
+    let balances = accounts::list_all_balances(&conn).await.unwrap();
+    // Source snapshot: 1000 - 300 = 700; destination: 200 + 300 = 500.
+    let src = balances.iter().find(|x| x.account_id == a && x.balance == 700.0).unwrap();
+    let dst = balances.iter().find(|x| x.account_id == b && x.balance == 500.0).unwrap();
+    assert_eq!(src.linked_transaction_id, Some(txn_id));
+    assert_eq!(dst.linked_transaction_id, Some(txn_id));
+}

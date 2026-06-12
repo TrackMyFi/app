@@ -36,6 +36,7 @@ pub struct AccountBalance {
     pub account_id: i32,
     pub balance: f64,
     pub recorded_at: String,
+    pub linked_transaction_id: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

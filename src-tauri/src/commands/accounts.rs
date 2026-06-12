@@ -49,6 +49,7 @@ fn row_to_balance(row: &libsql::Row) -> Result<AccountBalance, String> {
         account_id: row.get(1).map_err(|e| e.to_string())?,
         balance: row.get(2).map_err(|e| e.to_string())?,
         recorded_at: row.get(3).map_err(|e| e.to_string())?,
+        linked_transaction_id: row.get(4).map_err(|e| e.to_string())?,
     })
 }
 
@@ -177,8 +178,11 @@ pub async fn list_account_balances(
 ) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT id, account_id, balance, recorded_at FROM account_balance \
-             WHERE account_id = ?1 ORDER BY recorded_at",
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+             FROM account_balance b \
+             LEFT JOIN txn t \
+               ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \
+             WHERE b.account_id = ?1 ORDER BY b.recorded_at",
             libsql::params![account_id],
         )
         .await
@@ -193,7 +197,11 @@ pub async fn list_account_balances(
 pub async fn list_all_balances(conn: &Connection) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT id, account_id, balance, recorded_at FROM account_balance ORDER BY recorded_at",
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+             FROM account_balance b \
+             LEFT JOIN txn t \
+               ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \
+             ORDER BY b.recorded_at",
             (),
         )
         .await
