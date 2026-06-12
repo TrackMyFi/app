@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { TransactionPage } from '../types/TransactionPage'
+import type { Transaction } from '../types/Transaction'
 
 export interface TransactionFilter {
   accountId?: number | null
@@ -42,6 +43,8 @@ export interface UpdateTransaction {
 
 export const listTransactions = (filter: TransactionFilter = {}) =>
   invoke<TransactionPage>('list_transactions_cmd', { filter })
+export const getTransaction = (id: number) =>
+  invoke<Transaction>('get_transaction_cmd', { id })
 export const createTransaction = (transaction: NewTransaction) =>
   invoke<number>('create_transaction_cmd', { transaction })
 export const updateTransaction = (transaction: UpdateTransaction) =>

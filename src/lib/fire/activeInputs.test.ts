@@ -8,8 +8,8 @@ const accounts: Account[] = [
   { id: 2, name: 'Old 401k', type: '401k', institution: null, isActive: false, includeInFireCalculations: true, createdAt: '2026-01-01' },
 ]
 const balances: AccountBalance[] = [
-  { id: 1, accountId: 1, balance: 1000, recordedAt: '2026-01-01' },
-  { id: 2, accountId: 2, balance: 5000, recordedAt: '2026-01-01' }, // belongs to archived account
+  { id: 1, accountId: 1, balance: 1000, recordedAt: '2026-01-01', linkedTransactionId: null },
+  { id: 2, accountId: 2, balance: 5000, recordedAt: '2026-01-01', linkedTransactionId: null }, // belongs to archived account
 ]
 
 describe('activeFireInputs', () => {
@@ -20,7 +20,7 @@ describe('activeFireInputs', () => {
 
   it('excludes balances belonging to archived accounts', () => {
     const { balances: b } = activeFireInputs(accounts, balances)
-    expect(b).toEqual([{ accountId: 1, balance: 1000, recordedAt: '2026-01-01' }])
+    expect(b).toEqual([{ id: 1, accountId: 1, balance: 1000, recordedAt: '2026-01-01' }])
   })
 
   it('keeps all inputs when every account is active', () => {
