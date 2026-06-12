@@ -3,7 +3,7 @@ const links = [
   { label: 'Dashboard', to: '/', icon: 'i-lucide-layout-dashboard' },
   { label: 'Accounts', to: '/accounts', icon: 'i-lucide-wallet' },
   { label: 'Transactions', to: '/transactions', icon: 'i-lucide-receipt' },
-  { label: 'Paychecks', icon: 'i-lucide-banknote', disabled: true },
+  { label: 'Paychecks', to: '/paychecks', icon: 'i-lucide-banknote' },
   { label: 'Contributions', icon: 'i-lucide-piggy-bank', disabled: true },
   { label: 'Budget', icon: 'i-lucide-calculator', disabled: true },
   { label: 'Forecast', icon: 'i-lucide-trending-up', disabled: true },
