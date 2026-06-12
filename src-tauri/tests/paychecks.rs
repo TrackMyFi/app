@@ -1,6 +1,6 @@
 use libsql::Builder;
 use trackmyfi_app_lib::commands::accounts::{self, NewAccount};
-use trackmyfi_app_lib::commands::paychecks::{self, NewPaycheck, PaycheckFilter};
+use trackmyfi_app_lib::commands::paychecks::{self, NewPaycheck, PaycheckFilter, UpdatePaycheck};
 use trackmyfi_app_lib::models::{PaycheckDeduction, EmployerMatchItem};
 use trackmyfi_app_lib::migrations;
 
@@ -244,4 +244,41 @@ async fn delete_paycheck_removes_contributions() {
 
     // Paycheck itself gone
     assert!(paychecks::get_paycheck(&conn, created.id).await.is_err());
+}
+
+#[tokio::test]
+async fn update_nonexistent_paycheck_errors_with_no_orphaned_txns() {
+    let conn = setup().await;
+    let acct = make_account(&conn, "Fidelity 401k", "401k").await;
+
+    let result = paychecks::update_paycheck(&conn, &UpdatePaycheck {
+        id: 9999,
+        pay_date: "2026-06-15".into(),
+        employer: "Acme".into(),
+        pay_period: "biweekly".into(),
+        gross_amount: 5000.0,
+        net_amount: 3200.0,
+        federal_tax: 800.0, state_tax: 250.0, local_tax: 0.0,
+        social_security_tax: 310.0, medicare_tax: 72.5,
+        deductions: vec![
+            PaycheckDeduction {
+                label: "401k".into(), amount: 750.0, pre_tax: true,
+                contribution_account_type: Some("401k".into()), account_id: Some(acct),
+            },
+        ],
+        employer_match: vec![],
+        updated_at: "2026-06-16T00:00:00Z".into(),
+    }).await;
+
+    assert!(result.is_err());
+    // No orphaned txn rows should have been written
+    assert_eq!(txn_count(&conn).await, 0);
+}
+
+#[tokio::test]
+async fn delete_nonexistent_paycheck_is_idempotent() {
+    let conn = setup().await;
+    // Deleting a non-existent paycheck silently succeeds (idempotent)
+    let result = paychecks::delete_paycheck(&conn, 9999).await;
+    assert!(result.is_ok());
 }

@@ -187,6 +187,9 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
 }
 
 pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Paycheck, String> {
+    // Verify the paycheck exists before modifying anything
+    get_paycheck(conn, p.id).await?;
+
     // Delete all contribution txns previously created by this paycheck
     conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![p.id])
         .await
