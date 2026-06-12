@@ -3,9 +3,24 @@ import { computed, onMounted, ref } from 'vue'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { TRANSACTION_TYPES, CATEGORIES } from '../lib/transactions/constants'
+import TransactionForm from '../components/TransactionForm.vue'
+import type { Transaction } from '../lib/types/Transaction'
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
+
+const isModalOpen = ref(false)
+const editing = ref<Transaction | null>(null)
+
+function openAdd() { editing.value = null; isModalOpen.value = true }
+function openEdit(t: Transaction) { editing.value = t; isModalOpen.value = true }
+function onSaved() { isModalOpen.value = false }
+
+async function removeRow(t: Transaction) {
+  const ok = await confirm(`Delete "${t.description}"?`, { title: 'Delete transaction' })
+  if (ok) await store.remove(t.id)
+}
 
 const accountId = ref<number | undefined>(undefined)
 const type = ref<string | undefined>(undefined)
@@ -42,6 +57,7 @@ onMounted(async () => {
   <div class="p-6 space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Transactions</h1>
+      <UButton icon="i-lucide-plus" @click="openAdd">Add transaction</UButton>
     </div>
 
     <div class="flex flex-wrap gap-2 items-end">
@@ -83,6 +99,7 @@ onMounted(async () => {
           <th>Type</th>
           <th>Category</th>
           <th class="text-right">Amount</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -96,11 +113,21 @@ onMounted(async () => {
           <td>{{ t.type }}</td>
           <td>{{ t.category }}</td>
           <td class="text-right tabular-nums">{{ money(t.amount) }}</td>
+          <td class="text-right">
+            <UButton size="xs" variant="ghost" icon="i-lucide-pencil" @click="openEdit(t)" />
+            <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash-2" @click="removeRow(t)" />
+          </td>
         </tr>
         <tr v-if="!rows.length">
-          <td colspan="6" class="py-6 text-center text-muted">No transactions yet.</td>
+          <td colspan="7" class="py-6 text-center text-muted">No transactions yet.</td>
         </tr>
       </tbody>
     </table>
+
+    <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
+      <template #body>
+        <TransactionForm :editing="editing" @saved="onSaved" />
+      </template>
+    </UModal>
   </div>
 </template>
