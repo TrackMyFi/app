@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
     BalanceForm: typeof import('./src/components/BalanceForm.vue')['default']
+    BalanceRow: typeof import('./src/components/BalanceRow.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']
     NetWorthChart: typeof import('./src/components/NetWorthChart.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
@@ -27,6 +28,7 @@ declare module 'vue' {
     UIcon: typeof import('./node_modules/@nuxt/ui/dist/runtime/vue/components/Icon.vue')['default']
     UInput: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Input.vue')['default']
     UInputDate: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/InputDate.vue')['default']
+    UModal: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Modal.vue')['default']
     UPopover: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Popover.vue')['default']
     USelect: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Select.vue')['default']
     USwitch: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Switch.vue')['default']
