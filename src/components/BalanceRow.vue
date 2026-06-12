@@ -6,6 +6,7 @@ import type { AccountBalance } from '../lib/types/AccountBalance'
 import DateInput from './DateInput.vue'
 
 const props = defineProps<{ balance: AccountBalance }>()
+const emit = defineEmits<{ (e: 'view-transaction', id: number): void }>()
 
 const store = useAccountsStore()
 
@@ -70,6 +71,14 @@ const formatted = (n: number) =>
       <td class="py-1 text-right font-mono">{{ formatted(balance.balance) }}</td>
       <td class="py-1 text-right">
         <div class="flex justify-end gap-1">
+          <UButton
+            v-if="balance.linkedTransactionId != null"
+            size="xs"
+            variant="ghost"
+            icon="i-lucide-receipt"
+            title="View linked transaction"
+            @click="emit('view-transaction', balance.linkedTransactionId)"
+          />
           <UButton size="xs" variant="ghost" @click="startEdit">Edit</UButton>
           <UButton size="xs" variant="ghost" color="error" @click="remove">Delete</UButton>
         </div>
