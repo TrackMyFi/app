@@ -170,3 +170,78 @@ async fn get_paycheck_missing_id_errors() {
     let conn = setup().await;
     assert!(paychecks::get_paycheck(&conn, 9999).await.is_err());
 }
+
+#[tokio::test]
+async fn update_paycheck_recreates_contributions() {
+    let conn = setup().await;
+    let acct = make_account(&conn, "Fidelity 401k", "401k").await;
+    let acct2 = make_account(&conn, "HSA", "hsa").await;
+
+    // Create with one contribution deduction
+    let mut p = base_paycheck("Acme", "2026-06-15");
+    p.deductions = vec![
+        PaycheckDeduction {
+            label: "401k".into(), amount: 750.0, pre_tax: true,
+            contribution_account_type: Some("401k".into()), account_id: Some(acct),
+        },
+    ];
+    let created = paychecks::create_paycheck(&conn, &p).await.unwrap();
+    assert_eq!(contribution_count_for(&conn, created.id).await, 1);
+
+    // Update: change amount and add a second contribution deduction
+    paychecks::update_paycheck(&conn, &trackmyfi_app_lib::commands::paychecks::UpdatePaycheck {
+        id: created.id,
+        pay_date: "2026-06-15".into(),
+        employer: "Acme".into(),
+        pay_period: "biweekly".into(),
+        gross_amount: 5000.0,
+        net_amount: 3100.0,
+        federal_tax: 800.0, state_tax: 250.0, local_tax: 0.0,
+        social_security_tax: 310.0, medicare_tax: 72.5,
+        deductions: vec![
+            PaycheckDeduction {
+                label: "401k".into(), amount: 800.0, pre_tax: true,
+                contribution_account_type: Some("401k".into()), account_id: Some(acct),
+            },
+            PaycheckDeduction {
+                label: "HSA".into(), amount: 150.0, pre_tax: true,
+                contribution_account_type: Some("hsa".into()), account_id: Some(acct2),
+            },
+        ],
+        employer_match: vec![],
+        updated_at: "2026-06-16T00:00:00Z".into(),
+    }).await.unwrap();
+
+    // Old contribution removed, two new ones created
+    assert_eq!(contribution_count_for(&conn, created.id).await, 2);
+
+    // Verify new amount
+    let mut rows = conn.query(
+        "SELECT amount FROM txn WHERE paycheck_id = ?1 AND account_id = ?2",
+        libsql::params![created.id, acct],
+    ).await.unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<f64>(0).unwrap(), 800.0);
+}
+
+#[tokio::test]
+async fn delete_paycheck_removes_contributions() {
+    let conn = setup().await;
+    let acct = make_account(&conn, "Fidelity 401k", "401k").await;
+
+    let mut p = base_paycheck("Acme", "2026-06-15");
+    p.deductions = vec![
+        PaycheckDeduction {
+            label: "401k".into(), amount: 750.0, pre_tax: true,
+            contribution_account_type: Some("401k".into()), account_id: Some(acct),
+        },
+    ];
+    let created = paychecks::create_paycheck(&conn, &p).await.unwrap();
+    assert_eq!(txn_count(&conn).await, 1);
+
+    paychecks::delete_paycheck(&conn, created.id).await.unwrap();
+    assert_eq!(txn_count(&conn).await, 0);
+
+    // Paycheck itself gone
+    assert!(paychecks::get_paycheck(&conn, created.id).await.is_err());
+}

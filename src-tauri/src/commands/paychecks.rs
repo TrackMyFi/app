@@ -22,6 +22,25 @@ pub struct NewPaycheck {
     pub created_at: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePaycheck {
+    pub id: i32,
+    pub pay_date: String,
+    pub employer: String,
+    pub pay_period: String,
+    pub gross_amount: f64,
+    pub net_amount: f64,
+    pub federal_tax: f64,
+    pub state_tax: f64,
+    pub local_tax: f64,
+    pub social_security_tax: f64,
+    pub medicare_tax: f64,
+    pub deductions: Vec<PaycheckDeduction>,
+    pub employer_match: Vec<EmployerMatchItem>,
+    pub updated_at: String,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PaycheckFilter {
@@ -167,6 +186,45 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
     get_paycheck(conn, id).await
 }
 
+pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Paycheck, String> {
+    // Delete all contribution txns previously created by this paycheck
+    conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![p.id])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let deductions_json = serde_json::to_string(&p.deductions).map_err(|e| e.to_string())?;
+    let employer_match_json = serde_json::to_string(&p.employer_match).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE paycheck SET pay_date=?1, employer=?2, pay_period=?3, gross_amount=?4, \
+         net_amount=?5, federal_tax=?6, state_tax=?7, local_tax=?8, social_security_tax=?9, \
+         medicare_tax=?10, deductions=?11, employer_match=?12, updated_at=?13 WHERE id=?14",
+        params![
+            p.pay_date.clone(), p.employer.clone(), p.pay_period.clone(),
+            p.gross_amount, p.net_amount,
+            p.federal_tax, p.state_tax, p.local_tax, p.social_security_tax, p.medicare_tax,
+            deductions_json, employer_match_json, p.updated_at.clone(), p.id
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, &p.updated_at).await?;
+    get_paycheck(conn, p.id).await
+}
+
+pub async fn delete_paycheck(conn: &Connection, id: i32) -> Result<(), String> {
+    // Explicitly delete contribution transactions before deleting the paycheck.
+    // PRAGMA foreign_keys is NOT enabled in this project, so ON DELETE CASCADE does not fire.
+    conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM paycheck WHERE id = ?1", params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -191,4 +249,19 @@ pub async fn create_paycheck_cmd(
 ) -> Result<Paycheck, String> {
     let conn = db.conn().await?;
     create_paycheck(&conn, &paycheck).await
+}
+
+#[tauri::command]
+pub async fn update_paycheck_cmd(
+    db: State<'_, Db>,
+    paycheck: UpdatePaycheck,
+) -> Result<Paycheck, String> {
+    let conn = db.conn().await?;
+    update_paycheck(&conn, &paycheck).await
+}
+
+#[tauri::command]
+pub async fn delete_paycheck_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+    let conn = db.conn().await?;
+    delete_paycheck(&conn, id).await
 }

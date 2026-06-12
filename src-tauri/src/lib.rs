@@ -39,6 +39,11 @@ pub fn run() {
             commands::import_mappings::list_import_mappings_cmd,
             commands::import_mappings::create_import_mapping_cmd,
             commands::import_mappings::delete_import_mapping_cmd,
+            commands::paychecks::list_paychecks_cmd,
+            commands::paychecks::get_paycheck_cmd,
+            commands::paychecks::create_paycheck_cmd,
+            commands::paychecks::update_paycheck_cmd,
+            commands::paychecks::delete_paycheck_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
