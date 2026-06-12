@@ -8,6 +8,8 @@ export const createAccount = (account: {
   includeInFireCalculations: boolean; createdAt: string
 }) => invoke<number>('create_account_cmd', { account })
 export const archiveAccount = (id: number) => invoke<void>('archive_account_cmd', { id })
+export const unarchiveAccount = (id: number) => invoke<void>('unarchive_account_cmd', { id })
+export const deleteAccount = (id: number) => invoke<void>('delete_account_cmd', { id })
 export const addBalance = (balance: { accountId: number; balance: number; recordedAt: string }) =>
   invoke<void>('add_balance_cmd', { balance })
 export const listAllBalances = () => invoke<AccountBalance[]>('list_all_balances_cmd')

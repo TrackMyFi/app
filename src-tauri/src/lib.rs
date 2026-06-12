@@ -22,6 +22,8 @@ pub fn run() {
             commands::accounts::list_accounts_cmd,
             commands::accounts::create_account_cmd,
             commands::accounts::archive_account_cmd,
+            commands::accounts::unarchive_account_cmd,
+            commands::accounts::delete_account_cmd,
             commands::accounts::add_balance_cmd,
             commands::accounts::list_all_balances_cmd,
         ])

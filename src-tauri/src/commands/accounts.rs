@@ -89,6 +89,32 @@ pub async fn archive_account(conn: &Connection, id: i32) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn unarchive_account(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute(
+        "UPDATE account SET is_active = 1 WHERE id = ?1",
+        libsql::params![id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Permanently delete an account and all of its balance snapshots.
+/// Balances are removed explicitly rather than relying on FK cascade,
+/// since SQLite foreign-key enforcement is off by default per connection.
+pub async fn delete_account(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM account_balance WHERE account_id = ?1",
+        libsql::params![id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM account WHERE id = ?1", libsql::params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub async fn add_balance(conn: &Connection, b: &NewBalance) -> Result<(), String> {
     conn.execute(
         "INSERT INTO account_balance (account_id, balance, recorded_at) VALUES (?1, ?2, ?3)",
@@ -151,6 +177,18 @@ pub async fn create_account_cmd(db: State<'_, Db>, account: NewAccount) -> Resul
 pub async fn archive_account_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
     let conn = db.conn().await?;
     archive_account(&conn, id).await
+}
+
+#[tauri::command]
+pub async fn unarchive_account_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+    let conn = db.conn().await?;
+    unarchive_account(&conn, id).await
+}
+
+#[tauri::command]
+pub async fn delete_account_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+    let conn = db.conn().await?;
+    delete_account(&conn, id).await
 }
 
 #[tauri::command]

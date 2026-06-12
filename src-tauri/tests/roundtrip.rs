@@ -92,4 +92,14 @@ async fn account_and_balance_roundtrip() {
     accounts::archive_account(&conn, id).await.unwrap();
     let after = accounts::list_accounts(&conn).await.unwrap();
     assert_eq!(after[0].is_active, false);
+
+    // restore (unarchive)
+    accounts::unarchive_account(&conn, id).await.unwrap();
+    let restored = accounts::list_accounts(&conn).await.unwrap();
+    assert_eq!(restored[0].is_active, true);
+
+    // permanent delete removes the account AND its balance snapshots
+    accounts::delete_account(&conn, id).await.unwrap();
+    assert_eq!(accounts::list_accounts(&conn).await.unwrap().len(), 0);
+    assert_eq!(accounts::list_all_balances(&conn).await.unwrap().len(), 0);
 }

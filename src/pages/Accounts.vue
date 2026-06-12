@@ -16,6 +16,10 @@ const activeAccounts = computed(() =>
   store.accounts.filter((a: Account) => a.isActive),
 )
 
+const archivedAccounts = computed(() =>
+  store.accounts.filter((a: Account) => !a.isActive),
+)
+
 function latestBalance(accountId: number): string {
   const balances = store.allBalances.filter(
     (b: AccountBalance) => b.accountId === accountId,
@@ -36,6 +40,17 @@ function accountBalances(accountId: number): AccountBalance[] {
 
 async function archive(id: number) {
   await store.archive(id)
+}
+
+async function unarchive(id: number) {
+  await store.unarchive(id)
+}
+
+async function remove(account: Account) {
+  const ok = window.confirm(
+    `Permanently delete "${account.name}" and all of its balance snapshots? This cannot be undone.`,
+  )
+  if (ok) await store.remove(account.id)
 }
 </script>
 
@@ -107,6 +122,30 @@ async function archive(id: number) {
           </div>
         </div>
       </UCard>
+    </div>
+
+    <div v-if="archivedAccounts.length > 0" class="mt-10">
+      <h2 class="text-lg font-semibold mb-1">Archived</h2>
+      <p class="text-sm text-gray-500 mb-4">
+        Archived accounts are excluded from your dashboard totals. Restore one to include it again,
+        or permanently delete it (removes the account and its balance history).
+      </p>
+      <div class="space-y-2">
+        <UCard v-for="account in archivedAccounts" :key="account.id">
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="font-medium">{{ account.name }}</span>
+              <span class="ml-2 text-sm text-gray-500">{{ account.type }}</span>
+              <span v-if="account.institution" class="ml-2 text-sm text-gray-400">· {{ account.institution }}</span>
+              <span class="ml-2 text-sm text-gray-400">· {{ latestBalance(account.id) }}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <UButton size="sm" variant="ghost" @click="unarchive(account.id)">Restore</UButton>
+              <UButton size="sm" color="error" variant="soft" @click="remove(account)">Delete</UButton>
+            </div>
+          </div>
+        </UCard>
+      </div>
     </div>
   </div>
 </template>
