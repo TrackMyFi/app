@@ -26,6 +26,12 @@ pub fn run() {
             greet,
             commands::fire_profile::get_fire_profile,
             commands::fire_profile::upsert_fire_profile,
+            commands::accounts::list_accounts_cmd,
+            commands::accounts::create_account_cmd,
+            commands::accounts::archive_account_cmd,
+            commands::accounts::add_balance_cmd,
+            commands::accounts::list_account_balances_cmd,
+            commands::accounts::list_all_balances_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
