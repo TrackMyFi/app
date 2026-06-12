@@ -4,6 +4,7 @@ import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { TRANSACTION_TYPES, CATEGORIES } from '../lib/transactions/constants'
 import TransactionForm from '../components/TransactionForm.vue'
+import ImportWizard from '../components/ImportWizard.vue'
 import type { Transaction } from '../lib/types/Transaction'
 import { confirm } from '@tauri-apps/plugin-dialog'
 
@@ -16,6 +17,9 @@ const editing = ref<Transaction | null>(null)
 function openAdd() { editing.value = null; isModalOpen.value = true }
 function openEdit(t: Transaction) { editing.value = t; isModalOpen.value = true }
 function onSaved() { isModalOpen.value = false }
+
+const isImportOpen = ref(false)
+function onImportDone() { isImportOpen.value = false }
 
 async function removeRow(t: Transaction) {
   const ok = await confirm(`Delete "${t.description}"?`, { title: 'Delete transaction' })
@@ -57,7 +61,10 @@ onMounted(async () => {
   <div class="p-6 space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Transactions</h1>
-      <UButton icon="i-lucide-plus" @click="openAdd">Add transaction</UButton>
+      <div class="flex gap-2">
+        <UButton variant="soft" icon="i-lucide-upload" @click="isImportOpen = true">Import CSV</UButton>
+        <UButton icon="i-lucide-plus" @click="openAdd">Add transaction</UButton>
+      </div>
     </div>
 
     <div class="flex flex-wrap gap-2 items-end">
@@ -127,6 +134,12 @@ onMounted(async () => {
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
       <template #body>
         <TransactionForm :editing="editing" @saved="onSaved" />
+      </template>
+    </UModal>
+
+    <UModal v-model:open="isImportOpen" title="Import transactions from CSV">
+      <template #body>
+        <ImportWizard @done="onImportDone" />
       </template>
     </UModal>
   </div>

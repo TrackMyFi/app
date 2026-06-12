@@ -48,3 +48,5 @@ export const updateTransaction = (transaction: UpdateTransaction) =>
   invoke<void>('update_transaction_cmd', { transaction })
 export const deleteTransaction = (id: number) =>
   invoke<void>('delete_transaction_cmd', { id })
+export const bulkCreateTransactions = (transactions: NewTransaction[]) =>
+  invoke<number>('bulk_create_transactions_cmd', { transactions })
