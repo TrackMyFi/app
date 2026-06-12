@@ -6,6 +6,10 @@ import BalanceForm from '../components/BalanceForm.vue'
 import BalanceRow from '../components/BalanceRow.vue'
 import type { Account } from '../lib/types/Account'
 import type { AccountBalance } from '../lib/types/AccountBalance'
+import { latestSnapshot, byRecencyDesc } from '../lib/balances/recency'
+import TransactionDetail from '../components/TransactionDetail.vue'
+import type { Transaction } from '../lib/types/Transaction'
+import { getTransaction } from '../lib/api/transactions'
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 const store = useAccountsStore()
@@ -31,6 +35,18 @@ watch(isAccountModalOpen, (open) => {
   if (!open) editingAccount.value = null
 })
 
+const isTransactionModalOpen = ref(false)
+const viewingTransaction = ref<Transaction | null>(null)
+
+async function openTransaction(id: number) {
+  viewingTransaction.value = await getTransaction(id)
+  isTransactionModalOpen.value = true
+}
+
+watch(isTransactionModalOpen, (open) => {
+  if (!open) viewingTransaction.value = null
+})
+
 onMounted(async () => {
   await store.load()
 })
@@ -47,10 +63,8 @@ function latestBalance(accountId: number): string {
   const balances = store.allBalances.filter(
     (b: AccountBalance) => b.accountId === accountId,
   )
-  if (!balances.length) return '—'
-  const latest = balances.reduce((best, b) =>
-    b.recordedAt > best.recordedAt ? b : best,
-  )
+  const latest = latestSnapshot(balances)
+  if (!latest) return '—'
   return latest.balance.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
@@ -58,7 +72,7 @@ function accountBalances(accountId: number): AccountBalance[] {
   return store.allBalances
     .filter((b: AccountBalance) => b.accountId === accountId)
     .slice()
-    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+    .sort(byRecencyDesc)
 }
 
 async function archive(id: number) {
@@ -157,6 +171,7 @@ async function remove(account: Account) {
                     v-for="b in accountBalances(account.id)"
                     :key="b.id"
                     :balance="b"
+                    @view-transaction="openTransaction"
                   />
                 </tbody>
               </table>
@@ -189,5 +204,11 @@ async function remove(account: Account) {
         </UCard>
       </div>
     </div>
+
+    <UModal v-model:open="isTransactionModalOpen" title="Transaction details">
+      <template #body>
+        <TransactionDetail v-if="viewingTransaction" :transaction="viewingTransaction" />
+      </template>
+    </UModal>
   </div>
 </template>
