@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useAccountsStore } from '../stores/accounts'
 import AccountForm from '../components/AccountForm.vue'
 import BalanceForm from '../components/BalanceForm.vue'
+import BalanceRow from '../components/BalanceRow.vue'
 import type { Account } from '../lib/types/Account'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import { confirm } from '@tauri-apps/plugin-dialog';
@@ -148,19 +149,15 @@ async function remove(account: Account) {
                   <tr class="text-left text-gray-500 border-b">
                     <th class="pb-1 pr-6 font-medium">Date</th>
                     <th class="pb-1 font-medium text-right">Balance</th>
+                    <th class="pb-1 font-medium text-right"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
+                  <BalanceRow
                     v-for="b in accountBalances(account.id)"
                     :key="b.id"
-                    class="border-b border-gray-100 last:border-0"
-                  >
-                    <td class="py-1 pr-6 text-gray-600">{{ b.recordedAt }}</td>
-                    <td class="py-1 text-right font-mono">
-                      {{ b.balance.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) }}
-                    </td>
-                  </tr>
+                    :balance="b"
+                  />
                 </tbody>
               </table>
             </div>
