@@ -4,6 +4,7 @@ import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { paycheckTotals } from '../lib/paychecks/index'
 import PaycheckForm from '../components/PaycheckForm.vue'
+import DateInput from '../components/DateInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 import { confirm } from '@tauri-apps/plugin-dialog'
 
@@ -43,7 +44,7 @@ function money(n: number): string {
 }
 
 onMounted(async () => {
-  await accountsStore.load()
+  await accountsStore.load() // pre-populates store for PaycheckForm account dropdowns
   await store.load()
 })
 </script>
@@ -58,11 +59,11 @@ onMounted(async () => {
     <div class="flex flex-wrap gap-2 items-end">
       <div>
         <p class="text-xs text-muted mb-1">From</p>
-        <UInput v-model="startDate" type="date" class="w-36" />
+        <DateInput v-model="startDate" />
       </div>
       <div>
         <p class="text-xs text-muted mb-1">To</p>
-        <UInput v-model="endDate" type="date" class="w-36" />
+        <DateInput v-model="endDate" />
       </div>
       <UInput v-model="employerSearch" placeholder="Search employer" class="w-44" />
       <UButton @click="applyFilters">Apply</UButton>
