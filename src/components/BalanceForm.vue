@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
+import DateInput from './DateInput.vue'
 
 const props = defineProps<{ accountId: number }>()
 
@@ -27,7 +28,7 @@ async function onSubmit() {
       <UInput v-model.number="balance" type="number" step="0.01" placeholder="0.00" class="w-36" />
     </UFormField>
     <UFormField label="Date">
-      <UInput v-model="recordedAt" type="date" class="w-40" />
+      <DateInput v-model="recordedAt" />
     </UFormField>
     <UButton type="submit" size="sm" class="mb-0.5">Add Snapshot</UButton>
   </UForm>
