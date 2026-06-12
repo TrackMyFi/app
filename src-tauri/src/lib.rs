@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod db;
 pub mod migrations;
 pub mod models;
@@ -21,7 +22,11 @@ pub fn run() {
             app.manage(db);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::fire_profile::get_fire_profile,
+            commands::fire_profile::upsert_fire_profile,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

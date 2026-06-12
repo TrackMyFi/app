@@ -28,3 +28,8 @@ CREATE TABLE account_balance (
 );
 
 CREATE INDEX idx_balance_account ON account_balance(account_id, recorded_at);
+
+INSERT INTO fire_profile
+  (id, current_age, target_retirement_age, annual_expenses_target,
+   annual_income, expected_return_rate, inflation_rate)
+VALUES (1, 30, 50, 40000, 80000, 0.07, 0.03);
