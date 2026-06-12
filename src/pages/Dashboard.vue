@@ -5,9 +5,8 @@ import { useFireProfileStore } from '../stores/fireProfile'
 import { useAccountsStore } from '../stores/accounts'
 import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
-  netWorthOverTime, projectedFiDate, savingsRate,
+  netWorthOverTime, projectedFiDate, savingsRate, activeFireInputs,
 } from '../lib/fire'
-import type { FireAccount, FireBalance } from '../lib/fire/types'
 import StatCard from '../components/StatCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 
@@ -15,10 +14,10 @@ const fp = useFireProfileStore()
 const acc = useAccountsStore()
 onMounted(async () => { await Promise.all([fp.load(), acc.load()]) })
 
-const fireAccounts = computed<FireAccount[]>(() =>
-  acc.accounts.map(a => ({ id: a.id, type: a.type, includeInFireCalculations: a.includeInFireCalculations })))
-const fireBalances = computed<FireBalance[]>(() =>
-  acc.allBalances.map(b => ({ accountId: b.accountId, balance: b.balance, recordedAt: b.recordedAt })))
+// Exclude archived (inactive) accounts and their balances from all metrics.
+const inputs = computed(() => activeFireInputs(acc.accounts, acc.allBalances))
+const fireAccounts = computed(() => inputs.value.accounts)
+const fireBalances = computed(() => inputs.value.balances)
 
 const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 
