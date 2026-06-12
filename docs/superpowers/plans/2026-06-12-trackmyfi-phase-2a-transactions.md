@@ -477,11 +477,13 @@ pub async fn list_transactions(
     // totals over the full filter (transfers excluded)
     let mut agg_params: Vec<Value> = Vec::new();
     let agg_where = build_where(f, &mut agg_params);
+    // CAST(... AS REAL) is required: SQLite SUM can return an Integer value, which
+    // libsql's f64 reader rejects ("invalid value type").
     let agg_sql = format!(
         "SELECT \
            COUNT(*), \
-           COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0), \
-           COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) \
+           CAST(COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0) AS REAL), \
+           CAST(COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) AS REAL) \
          FROM txn {agg_where}"
     );
     let mut agg = conn
