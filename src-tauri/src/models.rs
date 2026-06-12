@@ -68,3 +68,45 @@ pub struct ImportMapping {
     pub config: String,
     pub created_at: String,
 }
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct PaycheckDeduction {
+    pub label: String,
+    pub amount: f64,
+    pub pre_tax: bool,
+    pub contribution_account_type: Option<String>,
+    pub account_id: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct EmployerMatchItem {
+    pub label: String,
+    pub amount: f64,
+    pub account_id: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct Paycheck {
+    pub id: i32,
+    pub pay_date: String,
+    pub employer: String,
+    pub pay_period: String,
+    pub gross_amount: f64,
+    pub net_amount: f64,
+    pub federal_tax: f64,
+    pub state_tax: f64,
+    pub local_tax: f64,
+    pub social_security_tax: f64,
+    pub medicare_tax: f64,
+    pub deductions: Vec<PaycheckDeduction>,
+    pub employer_match: Vec<EmployerMatchItem>,
+    pub import_source: String,
+    pub created_at: String,
+    pub updated_at: String,
+}

@@ -21,6 +21,7 @@ async fn migrations_create_all_tables() {
         "txn",
         "import_mapping",
         "schema_migrations",
+        "paycheck",
     ] {
         assert!(names.contains(t), "missing table {t}");
     }
