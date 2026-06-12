@@ -152,6 +152,20 @@ async fn list_paychecks_date_filter() {
 }
 
 #[tokio::test]
+async fn list_paychecks_end_date_filter() {
+    let conn = setup().await;
+    paychecks::create_paycheck(&conn, &base_paycheck("Acme", "2026-01-15")).await.unwrap();
+    paychecks::create_paycheck(&conn, &base_paycheck("Acme", "2026-06-15")).await.unwrap();
+
+    let filtered = paychecks::list_paychecks(&conn, &PaycheckFilter {
+        end_date: Some("2026-03-01".into()),
+        ..Default::default()
+    }).await.unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].pay_date, "2026-01-15");
+}
+
+#[tokio::test]
 async fn get_paycheck_missing_id_errors() {
     let conn = setup().await;
     assert!(paychecks::get_paycheck(&conn, 9999).await.is_err());

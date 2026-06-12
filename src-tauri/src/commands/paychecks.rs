@@ -66,7 +66,7 @@ async fn auto_create_contributions(
     now: &str,
 ) -> Result<(), String> {
     for ded in deductions {
-        if ded.contribution_account_type.is_some() {
+        if ded.contribution_account_type.as_deref().is_some_and(|s| !s.is_empty()) {
             if let Some(account_id) = ded.account_id {
                 conn.execute(
                     "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
