@@ -387,7 +387,7 @@ pub struct TransactionFilter {
 #[ts(export, export_to = "../../src/lib/types/")]
 pub struct TransactionPage {
     pub rows: Vec<Transaction>,
-    pub total_count: i64,
+    pub total_count: i32, // i32 so ts-rs emits `number`, not `bigint`
     pub total_income: f64,
     pub total_expense: f64,
     pub net: f64,
@@ -501,7 +501,7 @@ pub async fn list_transactions(
 
     Ok(TransactionPage {
         rows: out,
-        total_count,
+        total_count: total_count as i32,
         total_income,
         total_expense,
         net: total_income - total_expense,
