@@ -177,13 +177,115 @@ pub async fn list_transactions(
     })
 }
 
+async fn base_balance(conn: &Connection, account_id: i32, date: &str) -> Result<f64, String> {
+    let mut rows = conn
+        .query(
+            "SELECT balance FROM account_balance WHERE account_id = ?1 AND recorded_at <= ?2 \
+             ORDER BY recorded_at DESC, id DESC LIMIT 1",
+            params![account_id, date],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(r) => r.get::<f64>(0).map_err(|e| e.to_string()),
+        None => Ok(0.0),
+    }
+}
+
+async fn insert_snapshot(
+    conn: &Connection,
+    account_id: i32,
+    balance: f64,
+    recorded_at: &str,
+) -> Result<i32, String> {
+    conn.execute(
+        "INSERT INTO account_balance (account_id, balance, recorded_at) VALUES (?1, ?2, ?3)",
+        params![account_id, balance, recorded_at],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid() as i32)
+}
+
+async fn delete_snapshot(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute("DELETE FROM account_balance WHERE id = ?1", params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// Returns (generated_balance_id, generated_balance_to_id) for a materialized txn.
+async fn materialize_snapshots(
+    conn: &Connection,
+    account_id: i32,
+    transfer_account_id: Option<i32>,
+    amount: f64,
+    ty: &str,
+    date: &str,
+) -> Result<(Option<i32>, Option<i32>), String> {
+    if ty == "transfer" {
+        let to = transfer_account_id.ok_or("transfer requires transferAccountId")?;
+        let src_base = base_balance(conn, account_id, date).await?;
+        let dst_base = base_balance(conn, to, date).await?;
+        let gen = insert_snapshot(conn, account_id, src_base - amount, date).await?;
+        let gen_to = insert_snapshot(conn, to, dst_base + amount, date).await?;
+        Ok((Some(gen), Some(gen_to)))
+    } else {
+        let delta = if ty == "income" { amount } else { -amount };
+        let base = base_balance(conn, account_id, date).await?;
+        let gen = insert_snapshot(conn, account_id, base + delta, date).await?;
+        Ok((Some(gen), None))
+    }
+}
+
+// Reads the current generated ids for a txn (used before re-materializing or deleting).
+async fn generated_ids(conn: &Connection, txn_id: i32) -> Result<(Option<i32>, Option<i32>), String> {
+    let mut rows = conn
+        .query(
+            "SELECT generated_balance_id, generated_balance_to_id FROM txn WHERE id = ?1",
+            params![txn_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(r) => Ok((
+            r.get(0).map_err(|e| e.to_string())?,
+            r.get(1).map_err(|e| e.to_string())?,
+        )),
+        None => Ok((None, None)),
+    }
+}
+
+async fn clear_generated(conn: &Connection, ids: (Option<i32>, Option<i32>)) -> Result<(), String> {
+    if let Some(id) = ids.0 {
+        delete_snapshot(conn, id).await?;
+    }
+    if let Some(id) = ids.1 {
+        delete_snapshot(conn, id).await?;
+    }
+    Ok(())
+}
+
 pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result<i32, String> {
-    // Balance materialization is added in Task 10; for now generated ids are NULL.
+    let (gen_id, gen_to_id) = if t.update_balance {
+        materialize_snapshots(
+            conn,
+            t.account_id,
+            t.transfer_account_id,
+            t.amount,
+            &t.r#type,
+            &t.date,
+        )
+        .await?
+    } else {
+        (None, None)
+    };
+
     conn.execute(
         "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
          category, is_contribution, import_source, generated_balance_id, \
          generated_balance_to_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, ?10, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -194,6 +296,8 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
             t.category.clone(),
             t.is_contribution,
             t.import_source.clone(),
+            gen_id,
+            gen_to_id,
             t.created_at.clone()
         ],
     )
@@ -203,10 +307,28 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
 }
 
 pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Result<(), String> {
-    // Balance re-materialization is added in Task 10.
+    // Remove any previously generated snapshots first, then re-materialize so the
+    // result reflects the new amount/date/account.
+    clear_generated(conn, generated_ids(conn, t.id).await?).await?;
+
+    let (gen_id, gen_to_id) = if t.update_balance {
+        materialize_snapshots(
+            conn,
+            t.account_id,
+            t.transfer_account_id,
+            t.amount,
+            &t.r#type,
+            &t.date,
+        )
+        .await?
+    } else {
+        (None, None)
+    };
+
     conn.execute(
         "UPDATE txn SET account_id=?1, transfer_account_id=?2, amount=?3, description=?4, \
-         date=?5, type=?6, category=?7, is_contribution=?8, updated_at=?9 WHERE id=?10",
+         date=?5, type=?6, category=?7, is_contribution=?8, generated_balance_id=?9, \
+         generated_balance_to_id=?10, updated_at=?11 WHERE id=?12",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -216,6 +338,8 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
             t.r#type.clone(),
             t.category.clone(),
             t.is_contribution,
+            gen_id,
+            gen_to_id,
             t.updated_at.clone(),
             t.id
         ],
@@ -226,7 +350,7 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
 }
 
 pub async fn delete_transaction(conn: &Connection, id: i32) -> Result<(), String> {
-    // Generated-snapshot cleanup is added in Task 10.
+    clear_generated(conn, generated_ids(conn, id).await?).await?;
     conn.execute("DELETE FROM txn WHERE id = ?1", params![id])
         .await
         .map_err(|e| e.to_string())?;
