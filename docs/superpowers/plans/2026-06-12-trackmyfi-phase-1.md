@@ -1144,8 +1144,8 @@ import type { FireAccount, FireBalance } from './types'
 
 describe('projection', () => {
   it('realMonthlyReturn deflates nominal by inflation', () => {
-    // (1.07 / 1.03)^(1/12) - 1 ≈ 0.003159
-    expect(realMonthlyReturn(0.07, 0.03)).toBeCloseTo(0.003159, 5)
+    // (1.07 / 1.03)^(1/12) - 1 ≈ 0.003180
+    expect(realMonthlyReturn(0.07, 0.03)).toBeCloseTo(0.003180, 5)
   })
 
   it('monthsToFire returns 0 when already at the number', () => {

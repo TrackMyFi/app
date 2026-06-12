@@ -160,15 +160,6 @@ pub async fn add_balance_cmd(db: State<'_, Db>, balance: NewBalance) -> Result<(
 }
 
 #[tauri::command]
-pub async fn list_account_balances_cmd(
-    db: State<'_, Db>,
-    account_id: i32,
-) -> Result<Vec<AccountBalance>, String> {
-    let conn = db.conn().await?;
-    list_account_balances(&conn, account_id).await
-}
-
-#[tauri::command]
 pub async fn list_all_balances_cmd(db: State<'_, Db>) -> Result<Vec<AccountBalance>, String> {
     let conn = db.conn().await?;
     list_all_balances(&conn).await
