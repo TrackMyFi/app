@@ -5,8 +5,8 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
 pub struct FireProfile {
-    pub current_age: i64,
-    pub target_retirement_age: i64,
+    pub current_age: i32,
+    pub target_retirement_age: i32,
     pub annual_expenses_target: f64,
     pub lean_fire_annual_expenses: Option<f64>,
     pub fat_fire_annual_expenses: Option<f64>,
@@ -19,7 +19,7 @@ pub struct FireProfile {
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
 pub struct Account {
-    pub id: i64,
+    pub id: i32,
     pub name: String,
     pub r#type: String,
     pub institution: Option<String>,
@@ -32,8 +32,8 @@ pub struct Account {
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
 pub struct AccountBalance {
-    pub id: i64,
-    pub account_id: i64,
+    pub id: i32,
+    pub account_id: i32,
     pub balance: f64,
     pub recorded_at: String,
 }
