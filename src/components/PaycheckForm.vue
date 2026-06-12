@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
@@ -9,12 +9,14 @@ import DateInput from './DateInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 
 const PAY_PERIODS = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'irregular'] as const
+const CONTRIBUTION_ACCOUNT_TYPES = [...INVESTMENT_TYPES].map((t) => ({ label: t, value: t }))
 
 const props = defineProps<{ editing: Paycheck | null }>()
 const emit = defineEmits<{ saved: [] }>()
 
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
+const saveError = ref<string | null>(null)
 
 const today = DateTime.now().toISODate()!
 
@@ -135,42 +137,47 @@ function money(n: number): string {
 }
 
 async function save() {
+  saveError.value = null
   const now = DateTime.now().toISO()!
-  if (props.editing) {
-    await store.update({
-      id: props.editing.id,
-      payDate: form.payDate,
-      employer: form.employer,
-      payPeriod: form.payPeriod,
-      grossAmount: form.grossAmount,
-      netAmount: form.netAmount,
-      federalTax: form.federalTax,
-      stateTax: form.stateTax,
-      localTax: form.localTax,
-      socialSecurityTax: form.socialSecurityTax,
-      medicareTax: form.medicareTax,
-      deductions: form.deductions,
-      employerMatch: form.employerMatch,
-      updatedAt: now,
-    })
-  } else {
-    await store.create({
-      payDate: form.payDate,
-      employer: form.employer,
-      payPeriod: form.payPeriod,
-      grossAmount: form.grossAmount,
-      netAmount: form.netAmount,
-      federalTax: form.federalTax,
-      stateTax: form.stateTax,
-      localTax: form.localTax,
-      socialSecurityTax: form.socialSecurityTax,
-      medicareTax: form.medicareTax,
-      deductions: form.deductions,
-      employerMatch: form.employerMatch,
-      createdAt: now,
-    })
+  try {
+    if (props.editing) {
+      await store.update({
+        id: props.editing.id,
+        payDate: form.payDate,
+        employer: form.employer,
+        payPeriod: form.payPeriod,
+        grossAmount: form.grossAmount,
+        netAmount: form.netAmount,
+        federalTax: form.federalTax,
+        stateTax: form.stateTax,
+        localTax: form.localTax,
+        socialSecurityTax: form.socialSecurityTax,
+        medicareTax: form.medicareTax,
+        deductions: form.deductions,
+        employerMatch: form.employerMatch,
+        updatedAt: now,
+      })
+    } else {
+      await store.create({
+        payDate: form.payDate,
+        employer: form.employer,
+        payPeriod: form.payPeriod,
+        grossAmount: form.grossAmount,
+        netAmount: form.netAmount,
+        federalTax: form.federalTax,
+        stateTax: form.stateTax,
+        localTax: form.localTax,
+        socialSecurityTax: form.socialSecurityTax,
+        medicareTax: form.medicareTax,
+        deductions: form.deductions,
+        employerMatch: form.employerMatch,
+        createdAt: now,
+      })
+    }
+    emit('saved')
+  } catch (err) {
+    saveError.value = String(err)
   }
-  emit('saved')
 }
 </script>
 
@@ -259,7 +266,7 @@ async function save() {
             <p class="text-xs text-muted mb-1">Contribution type (optional)</p>
             <USelect
               v-model="ded.contributionAccountType"
-              :items="[{ label: '401k', value: '401k' }, { label: 'roth_401k', value: 'roth_401k' }, { label: 'traditional_ira', value: 'traditional_ira' }, { label: 'roth_ira', value: 'roth_ira' }, { label: 'hsa', value: 'hsa' }, { label: 'brokerage', value: 'brokerage' }, { label: 'crypto', value: 'crypto' }]"
+              :items="CONTRIBUTION_ACCOUNT_TYPES"
               placeholder="None"
               @update:model-value="onContributionTypeChange(ded)"
             />
@@ -295,11 +302,13 @@ async function save() {
     <!-- Contribution preview -->
     <div v-if="preview.length > 0" class="rounded border border-default p-3 space-y-1">
       <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
-      <div v-for="item in preview" :key="item.accountId + item.label" class="flex justify-between text-sm">
+      <div v-for="item in preview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
         <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
         <span class="tabular-nums text-green-600">{{ money(item.amount) }}</span>
       </div>
     </div>
+
+    <p v-if="saveError" class="text-sm text-red-500">{{ saveError }}</p>
 
     <div class="flex justify-end gap-2 pt-2">
       <UButton type="submit">{{ props.editing ? 'Save' : 'Add paycheck' }}</UButton>
