@@ -67,6 +67,7 @@ function resetForm() {
 watch(
   () => props.editing,
   (e) => {
+    saveError.value = null
     if (e) {
       form.payDate = e.payDate
       form.employer = e.employer
