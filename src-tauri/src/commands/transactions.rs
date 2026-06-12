@@ -357,6 +357,38 @@ pub async fn delete_transaction(conn: &Connection, id: i32) -> Result<(), String
     Ok(())
 }
 
+/// Insert many transactions in one batch. Never materializes balance snapshots,
+/// and forces import_source = "csv".
+pub async fn bulk_create_transactions(
+    conn: &Connection,
+    rows: &[NewTransaction],
+) -> Result<i64, String> {
+    let mut count = 0i64;
+    for t in rows {
+        conn.execute(
+            "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
+             category, is_contribution, import_source, generated_balance_id, \
+             generated_balance_to_id, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'csv', NULL, NULL, ?9, ?9)",
+            params![
+                t.account_id,
+                t.transfer_account_id,
+                t.amount,
+                t.description.clone(),
+                t.date.clone(),
+                t.r#type.clone(),
+                t.category.clone(),
+                t.is_contribution,
+                t.created_at.clone()
+            ],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -390,4 +422,13 @@ pub async fn update_transaction_cmd(
 pub async fn delete_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
     let conn = db.conn().await?;
     delete_transaction(&conn, id).await
+}
+
+#[tauri::command]
+pub async fn bulk_create_transactions_cmd(
+    db: State<'_, Db>,
+    transactions: Vec<NewTransaction>,
+) -> Result<i64, String> {
+    let conn = db.conn().await?;
+    bulk_create_transactions(&conn, &transactions).await
 }
