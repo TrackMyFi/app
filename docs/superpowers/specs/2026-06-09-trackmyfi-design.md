@@ -1,7 +1,7 @@
 # TrackMyFI — High-Level Design
 
-**Date:** 2026-06-09
-**Stack:** AdonisJS 7 · Inertia · Vue 3 · NuxtUI · SQLite (Lucid ORM) · Tuyau · Luxon
+**Date:** 2026-06-09 · **Revised:** 2026-06-12 (local-first Tauri pivot)
+**Stack:** Tauri (Rust core + webview) · Vue 3 · NuxtUI · Vite · libSQL/Turso (embedded replica) · Luxon
 
 ---
 
@@ -9,7 +9,22 @@
 
 TrackMyFI is a personal FIRE (Financial Independence Retire Early) tracking app inspired by YNAB but simplified and tailored toward FIRE goals. It replaces zero-based budgeting with an anti-budget philosophy, and layers FIRE-specific metrics and forecasting on top of net worth and transaction tracking.
 
-**Scope:** Single-user personal tool. Architecture should remain clean enough to support multi-user expansion later without a full rewrite, but multi-tenancy is explicitly out of scope for now.
+**Scope:** Single-user, local-first **desktop app** (macOS + Windows executables). No hosted server, no monthly cost. Architecture should remain clean enough to support multi-user expansion later without a full rewrite, but multi-tenancy is explicitly out of scope for now.
+
+---
+
+## Architecture
+
+TrackMyFI is a **local-first Tauri desktop app**, not a hosted web app — distributed as native macOS and Windows executables with no server and no monthly hosting cost.
+
+- **Shell:** Tauri (Rust core + system webview).
+- **Frontend:** Vue 3 + NuxtUI + Vite, running in the webview. All UI, FIRE calculations, CSV parsing, and forecasting logic live here in TypeScript.
+- **Data layer:** libSQL (SQLite-compatible) as an **embedded replica**. Reads are always local — fast and fully offline. Writes are local and sync to a Turso cloud replica in the background. Because the embedded-replica client is native, the DB layer lives in a thin Rust command layer in the Tauri core (the `libsql` crate + a handful of `#[tauri::command]` functions for queries and `sync()`), exposed to Vue via `invoke()`. The frontend never talks to the network directly for data.
+- **Sync:** A free-tier **Turso** cloud replica reconciles edits across machines automatically. The app works fully offline; sync resumes when connectivity returns. This handles the "opened on two machines" case gracefully rather than last-write-wins.
+- **Encryption:** the local replica file is encrypted at rest (libSQL `encryption_key`), since it holds financial data. Sync tokens and the encryption key are stored in the OS keychain via Tauri.
+- **No auth:** single-user local app — there is no login or `User` entity. (An optional app-level passcode is a possible later addition.)
+
+This replaces the original AdonisJS / Inertia / Lucid / Tuyau server stack that the repo was scaffolded with. The Vue + NuxtUI frontend carries over; the Node server, ORM, Inertia bridge, and auth layers are removed.
 
 ---
 
@@ -166,7 +181,10 @@ Deductions tagged with a `contributionAccountType` generate a contribution trans
 Investment contribution deposits are regular transactions with `isContribution: true`. The Contributions page is a query, not a separate data store.
 
 ### Import layer is swappable
-Both CSV import and future live sync providers (Teller.io for US banks, SimpleFIN Bridge as an alternative) feed the same transaction and paycheck stores. The `importSource` field is recorded for provenance but the rest of the app is agnostic to it.
+Both CSV import and future live sync providers (Teller.io for US banks, SimpleFIN Bridge as an alternative — both callable directly from a desktop app with the user's own tokens) feed the same transaction and paycheck stores. The `importSource` field is recorded for provenance but the rest of the app is agnostic to it.
+
+### Local-first, no server
+The app reads and writes a local libSQL file and runs fully offline. Cloud sync (Turso) is a background replica, not a dependency for normal use — if sync is unavailable the app still works, and reconciles later. This is what keeps it free to run and fast to use.
 
 ### FIRE calculations are profile-driven
 All FIRE numbers, projections, and scenario variants derive from `FireProfile`. Lean and Fat FIRE are the same calculation with different `annualExpensesTarget` values — no separate data model needed.
@@ -177,8 +195,7 @@ All FIRE numbers, projections, and scenario variants derive from `FireProfile`. 
 
 | Entity | Key Fields |
 |---|---|
-| `User` | Already scaffolded (auth) |
-| `FireProfile` | `currentAge`, `targetRetirementAge`, `annualExpensesTarget`, `leanFireAnnualExpenses?`, `fatFireAnnualExpenses?`, `annualIncome`, `expectedReturnRate`, `inflationRate` |
+| `FireProfile` | Single row — also serves as app settings. `currentAge`, `targetRetirementAge`, `annualExpensesTarget`, `leanFireAnnualExpenses?`, `fatFireAnnualExpenses?`, `annualIncome`, `expectedReturnRate`, `inflationRate` |
 | `Account` | `name`, `type`, `institution`, `isActive`, `includeInFireCalculations` |
 | `AccountBalance` | `accountId`, `balance`, `recordedAt` |
 | `Transaction` | `accountId`, `amount`, `description`, `date`, `type`, `category`, `isContribution`, `importSource` |
@@ -197,3 +214,8 @@ Contributions and net worth are derived views — no separate tables.
 - Mobile app
 - Email / push notifications
 - Currency conversion / multi-currency
+- App-level passcode / DB unlock UI (encryption-at-rest is in; the passcode UX is a later addition)
+
+## Migration Note
+
+The repo was initially scaffolded as AdonisJS 7 + Inertia + Vue 3 + NuxtUI with auth. The Tauri pivot keeps the Vue/NuxtUI frontend and discards the Adonis server, Lucid ORM, Inertia, Tuyau, and the auth layer. Phase 1 implementation planning should account for standing up the Tauri shell and libSQL data layer before (or alongside) the first feature.
