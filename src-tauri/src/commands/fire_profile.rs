@@ -58,10 +58,7 @@ pub async fn get_fire_profile(db: State<'_, Db>) -> Result<FireProfile, String> 
 }
 
 #[tauri::command]
-pub async fn upsert_fire_profile(
-    db: State<'_, Db>,
-    profile: FireProfile,
-) -> Result<(), String> {
+pub async fn upsert_fire_profile(db: State<'_, Db>, profile: FireProfile) -> Result<(), String> {
     let conn = db.conn().await?;
     upsert_profile(&conn, &profile).await
 }

@@ -36,10 +36,7 @@ pub async fn run(conn: &Connection) -> Result<(), String> {
             continue;
         }
         // execute_batch returns Result<BatchRows>; bind to _ to drop it
-        let _ = conn
-            .execute_batch(m.sql)
-            .await
-            .map_err(|e| e.to_string())?;
+        let _ = conn.execute_batch(m.sql).await.map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
             libsql::params![m.version, m.name],

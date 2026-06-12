@@ -5,6 +5,7 @@ import AccountForm from '../components/AccountForm.vue'
 import BalanceForm from '../components/BalanceForm.vue'
 import type { Account } from '../lib/types/Account'
 import type { AccountBalance } from '../lib/types/AccountBalance'
+import { confirm } from '@tauri-apps/plugin-dialog';
 
 const store = useAccountsStore()
 
@@ -47,9 +48,10 @@ async function unarchive(id: number) {
 }
 
 async function remove(account: Account) {
-  const ok = window.confirm(
+  const ok = await confirm(
     `Permanently delete "${account.name}" and all of its balance snapshots? This cannot be undone.`,
-  )
+    { title: 'Delete Account?', kind: 'warning' }
+  );
   if (ok) await store.remove(account.id)
 }
 </script>

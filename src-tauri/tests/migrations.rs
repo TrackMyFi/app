@@ -14,7 +14,12 @@ async fn migrations_create_all_tables() {
     while let Some(row) = rows.next().await.unwrap() {
         names.insert(row.get::<String>(0).unwrap());
     }
-    for t in ["fire_profile", "account", "account_balance", "schema_migrations"] {
+    for t in [
+        "fire_profile",
+        "account",
+        "account_balance",
+        "schema_migrations",
+    ] {
         assert!(names.contains(t), "missing table {t}");
     }
 }
