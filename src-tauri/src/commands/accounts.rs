@@ -23,6 +23,14 @@ pub struct NewBalance {
     pub recorded_at: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateBalance {
+    pub id: i32,
+    pub balance: f64,
+    pub recorded_at: String,
+}
+
 fn row_to_account(row: &libsql::Row) -> Result<Account, String> {
     Ok(Account {
         id: row.get(0).map_err(|e| e.to_string())?,
@@ -79,6 +87,24 @@ pub async fn create_account(conn: &Connection, a: &NewAccount) -> Result<i32, St
     Ok(conn.last_insert_rowid() as i32)
 }
 
+pub async fn update_account(conn: &Connection, id: i32, a: &NewAccount) -> Result<(), String> {
+    conn.execute(
+        "UPDATE account SET name = ?1, type = ?2, institution = ?3, \
+         include_in_fire_calculations = ?4, created_at = ?5 WHERE id = ?6",
+        libsql::params![
+            a.name.clone(),
+            a.r#type.clone(),
+            a.institution.clone(),
+            a.include_in_fire_calculations,
+            a.created_at.clone(),
+            id
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub async fn archive_account(conn: &Connection, id: i32) -> Result<(), String> {
     conn.execute(
         "UPDATE account SET is_active = 0 WHERE id = ?1",
@@ -119,6 +145,26 @@ pub async fn add_balance(conn: &Connection, b: &NewBalance) -> Result<(), String
     conn.execute(
         "INSERT INTO account_balance (account_id, balance, recorded_at) VALUES (?1, ?2, ?3)",
         libsql::params![b.account_id, b.balance, b.recorded_at.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn update_balance(conn: &Connection, b: &UpdateBalance) -> Result<(), String> {
+    conn.execute(
+        "UPDATE account_balance SET balance = ?1, recorded_at = ?2 WHERE id = ?3",
+        libsql::params![b.balance, b.recorded_at.clone(), b.id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn delete_balance(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM account_balance WHERE id = ?1",
+        libsql::params![id],
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -171,6 +217,28 @@ pub async fn list_accounts_cmd(db: State<'_, Db>) -> Result<Vec<Account>, String
 pub async fn create_account_cmd(db: State<'_, Db>, account: NewAccount) -> Result<i32, String> {
     let conn = db.conn().await?;
     create_account(&conn, &account).await
+}
+
+#[tauri::command]
+pub async fn update_account_cmd(
+    db: State<'_, Db>,
+    id: i32,
+    account: NewAccount,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    update_account(&conn, id, &account).await
+}
+
+#[tauri::command]
+pub async fn update_balance_cmd(db: State<'_, Db>, balance: UpdateBalance) -> Result<(), String> {
+    let conn = db.conn().await?;
+    update_balance(&conn, &balance).await
+}
+
+#[tauri::command]
+pub async fn delete_balance_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+    let conn = db.conn().await?;
+    delete_balance(&conn, id).await
 }
 
 #[tauri::command]
