@@ -1,13 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAccountsStore } from '../stores/accounts'
 import AccountForm from '../components/AccountForm.vue'
 import BalanceForm from '../components/BalanceForm.vue'
+import BalanceRow from '../components/BalanceRow.vue'
 import type { Account } from '../lib/types/Account'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 const store = useAccountsStore()
+
+const isAccountModalOpen = ref(false)
+const editingAccount = ref<Account | null>(null)
+
+function openAdd() {
+  editingAccount.value = null
+  isAccountModalOpen.value = true
+}
+
+function openEdit(account: Account) {
+  editingAccount.value = account
+  isAccountModalOpen.value = true
+}
+
+function onAccountSaved() {
+  isAccountModalOpen.value = false
+}
+
+watch(isAccountModalOpen, (open) => {
+  if (!open) editingAccount.value = null
+})
 
 onMounted(async () => {
   await store.load()
@@ -60,10 +82,25 @@ async function remove(account: Account) {
   <div class="p-6 max-w-4xl">
     <h1 class="text-2xl font-bold mb-6">Accounts</h1>
 
-    <AccountForm />
+    <div class="mb-6">
+      <UButton icon="i-lucide-plus" @click="openAdd">Add Account</UButton>
+    </div>
+
+    <UModal
+      v-model:open="isAccountModalOpen"
+      :title="editingAccount ? 'Edit Account' : 'Add Account'"
+    >
+      <template #body>
+        <AccountForm
+          :key="editingAccount?.id ?? 'new'"
+          :account="editingAccount ?? undefined"
+          @saved="onAccountSaved"
+        />
+      </template>
+    </UModal>
 
     <div v-if="activeAccounts.length === 0" class="text-gray-500 text-sm mt-4">
-      No active accounts. Add one above.
+      No active accounts. Click "Add Account" to get started.
     </div>
 
     <div class="space-y-4">
@@ -82,6 +119,13 @@ async function remove(account: Account) {
                 </span>
               </span>
               <span class="font-semibold">{{ latestBalance(account.id) }}</span>
+              <UButton
+                size="sm"
+                variant="ghost"
+                @click="openEdit(account)"
+              >
+                Edit
+              </UButton>
               <UButton
                 size="sm"
                 color="error"
@@ -105,19 +149,15 @@ async function remove(account: Account) {
                   <tr class="text-left text-gray-500 border-b">
                     <th class="pb-1 pr-6 font-medium">Date</th>
                     <th class="pb-1 font-medium text-right">Balance</th>
+                    <th class="pb-1 font-medium text-right"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
+                  <BalanceRow
                     v-for="b in accountBalances(account.id)"
                     :key="b.id"
-                    class="border-b border-gray-100 last:border-0"
-                  >
-                    <td class="py-1 pr-6 text-gray-600">{{ b.recordedAt }}</td>
-                    <td class="py-1 text-right font-mono">
-                      {{ b.balance.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) }}
-                    </td>
-                  </tr>
+                    :balance="b"
+                  />
                 </tbody>
               </table>
             </div>

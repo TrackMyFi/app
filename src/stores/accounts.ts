@@ -17,6 +17,9 @@ export const useAccountsStore = defineStore('accounts', () => {
   async function unarchive(id: number) { await api.unarchiveAccount(id); await load() }
   async function remove(id: number) { await api.deleteAccount(id); await load() }
   async function addBalanceSnapshot(b: Parameters<typeof api.addBalance>[0]) { await api.addBalance(b); await load() }
+  async function update(id: number, a: Parameters<typeof api.updateAccount>[1]) { await api.updateAccount(id, a); await load() }
+  async function updateBalanceSnapshot(b: Parameters<typeof api.updateBalance>[0]) { await api.updateBalance(b); await load() }
+  async function removeBalanceSnapshot(id: number) { await api.deleteBalance(id); await load() }
 
-  return { accounts, allBalances, load, create, archive, unarchive, remove, addBalanceSnapshot }
+  return { accounts, allBalances, load, create, update, archive, unarchive, remove, addBalanceSnapshot, updateBalanceSnapshot, removeBalanceSnapshot }
 })

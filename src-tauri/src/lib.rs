@@ -26,6 +26,9 @@ pub fn run() {
             commands::accounts::unarchive_account_cmd,
             commands::accounts::delete_account_cmd,
             commands::accounts::add_balance_cmd,
+            commands::accounts::update_account_cmd,
+            commands::accounts::update_balance_cmd,
+            commands::accounts::delete_balance_cmd,
             commands::accounts::list_all_balances_cmd,
         ])
         .run(tauri::generate_context!())

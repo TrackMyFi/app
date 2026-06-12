@@ -12,4 +12,11 @@ export const unarchiveAccount = (id: number) => invoke<void>('unarchive_account_
 export const deleteAccount = (id: number) => invoke<void>('delete_account_cmd', { id })
 export const addBalance = (balance: { accountId: number; balance: number; recordedAt: string }) =>
   invoke<void>('add_balance_cmd', { balance })
+export const updateAccount = (id: number, account: {
+  name: string; type: string; institution: string | null;
+  includeInFireCalculations: boolean; createdAt: string
+}) => invoke<void>('update_account_cmd', { id, account })
+export const updateBalance = (balance: { id: number; balance: number; recordedAt: string }) =>
+  invoke<void>('update_balance_cmd', { balance })
+export const deleteBalance = (id: number) => invoke<void>('delete_balance_cmd', { id })
 export const listAllBalances = () => invoke<AccountBalance[]>('list_all_balances_cmd')

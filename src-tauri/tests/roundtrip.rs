@@ -1,5 +1,5 @@
 use libsql::Builder;
-use trackmyfi_app_lib::commands::accounts::{self, NewAccount, NewBalance};
+use trackmyfi_app_lib::commands::accounts::{self, NewAccount, NewBalance, UpdateBalance};
 use trackmyfi_app_lib::commands::fire_profile::{get_profile, upsert_profile};
 use trackmyfi_app_lib::migrations;
 use trackmyfi_app_lib::models::FireProfile;
@@ -97,6 +97,53 @@ async fn account_and_balance_roundtrip() {
     accounts::unarchive_account(&conn, id).await.unwrap();
     let restored = accounts::list_accounts(&conn).await.unwrap();
     assert_eq!(restored[0].is_active, true);
+
+    // edit account: editable fields change, is_active is preserved
+    accounts::update_account(
+        &conn,
+        id,
+        &NewAccount {
+            name: "Brokerage (edited)".into(),
+            r#type: "roth_ira".into(),
+            institution: None,
+            include_in_fire_calculations: false,
+            created_at: "2025-12-15".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let edited = accounts::list_accounts(&conn).await.unwrap();
+    assert_eq!(edited[0].name, "Brokerage (edited)");
+    assert_eq!(edited[0].r#type, "roth_ira");
+    assert_eq!(edited[0].institution, None);
+    assert_eq!(edited[0].include_in_fire_calculations, false);
+    assert_eq!(edited[0].created_at, "2025-12-15");
+    assert_eq!(edited[0].is_active, true); // unchanged by edit
+
+    // edit a single balance snapshot
+    let bals_before = accounts::list_account_balances(&conn, id).await.unwrap();
+    let target = bals_before[0].id; // the 2026-01-01 / 12345.67 row
+    accounts::update_balance(
+        &conn,
+        &UpdateBalance {
+            id: target,
+            balance: 99999.99,
+            recorded_at: "2026-01-15".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let bals_after = accounts::list_account_balances(&conn, id).await.unwrap();
+    let edited_bal = bals_after.iter().find(|b| b.id == target).unwrap();
+    assert_eq!(edited_bal.balance, 99999.99);
+    assert_eq!(edited_bal.recorded_at, "2026-01-15");
+    assert_eq!(bals_after.len(), 2); // still two rows
+
+    // delete one snapshot: target gone, sibling intact
+    accounts::delete_balance(&conn, target).await.unwrap();
+    let bals_final = accounts::list_account_balances(&conn, id).await.unwrap();
+    assert_eq!(bals_final.len(), 1);
+    assert!(bals_final.iter().all(|b| b.id != target));
 
     // permanent delete removes the account AND its balance snapshots
     accounts::delete_account(&conn, id).await.unwrap();
