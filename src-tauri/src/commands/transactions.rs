@@ -66,7 +66,7 @@ pub struct TransactionPage {
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, import_source, generated_balance_id, generated_balance_to_id, \
-    created_at, updated_at";
+    paycheck_id, created_at, updated_at";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -82,8 +82,9 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         import_source: row.get(9).map_err(|e| e.to_string())?,
         generated_balance_id: row.get(10).map_err(|e| e.to_string())?,
         generated_balance_to_id: row.get(11).map_err(|e| e.to_string())?,
-        created_at: row.get(12).map_err(|e| e.to_string())?,
-        updated_at: row.get(13).map_err(|e| e.to_string())?,
+        paycheck_id: row.get(12).map_err(|e| e.to_string())?,
+        created_at: row.get(13).map_err(|e| e.to_string())?,
+        updated_at: row.get(14).map_err(|e| e.to_string())?,
     })
 }
 

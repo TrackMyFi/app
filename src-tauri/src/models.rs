@@ -55,6 +55,7 @@ pub struct Transaction {
     pub import_source: String,
     pub generated_balance_id: Option<i32>,
     pub generated_balance_to_id: Option<i32>,
+    pub paycheck_id: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
 }
