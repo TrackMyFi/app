@@ -2,7 +2,7 @@
 const links = [
   { label: 'Dashboard', to: '/', icon: 'i-lucide-layout-dashboard' },
   { label: 'Accounts', to: '/accounts', icon: 'i-lucide-wallet' },
-  { label: 'Transactions', icon: 'i-lucide-receipt', disabled: true },
+  { label: 'Transactions', to: '/transactions', icon: 'i-lucide-receipt' },
   { label: 'Paychecks', icon: 'i-lucide-banknote', disabled: true },
   { label: 'Contributions', icon: 'i-lucide-piggy-bank', disabled: true },
   { label: 'Budget', icon: 'i-lucide-calculator', disabled: true },

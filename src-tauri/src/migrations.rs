@@ -8,11 +8,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "transactions",
+        sql: include_str!("../migrations/0002_transactions.sql"),
+    },
+];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {
     conn.execute(

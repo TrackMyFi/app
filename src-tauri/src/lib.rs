@@ -30,6 +30,14 @@ pub fn run() {
             commands::accounts::update_balance_cmd,
             commands::accounts::delete_balance_cmd,
             commands::accounts::list_all_balances_cmd,
+            commands::transactions::list_transactions_cmd,
+            commands::transactions::create_transaction_cmd,
+            commands::transactions::update_transaction_cmd,
+            commands::transactions::delete_transaction_cmd,
+            commands::transactions::bulk_create_transactions_cmd,
+            commands::import_mappings::list_import_mappings_cmd,
+            commands::import_mappings::create_import_mapping_cmd,
+            commands::import_mappings::delete_import_mapping_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

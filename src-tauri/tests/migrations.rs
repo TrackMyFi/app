@@ -18,6 +18,8 @@ async fn migrations_create_all_tables() {
         "fire_profile",
         "account",
         "account_balance",
+        "txn",
+        "import_mapping",
         "schema_migrations",
     ] {
         assert!(names.contains(t), "missing table {t}");
