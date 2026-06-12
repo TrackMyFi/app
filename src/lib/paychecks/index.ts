@@ -45,8 +45,8 @@ export function paycheckTotals(paychecks: Paycheck[]): {
   let totalGross = 0
   let totalNet = 0
   for (const p of paychecks) {
-    totalGross += p.grossAmount
-    totalNet += p.netAmount
+    totalGross = Math.round((totalGross + p.grossAmount) * 100) / 100
+    totalNet = Math.round((totalNet + p.netAmount) * 100) / 100
   }
   return { totalGross, totalNet, count: paychecks.length }
 }

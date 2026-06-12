@@ -68,4 +68,12 @@ describe('paycheckTotals', () => {
   it('returns zeros for an empty array', () => {
     expect(paycheckTotals([])).toEqual({ totalGross: 0, totalNet: 0, count: 0 })
   })
+
+  it('handles fractional dollar amounts without floating-point drift', () => {
+    const paychecks = [
+      { grossAmount: 5000.50, netAmount: 3200.47 },
+      { grossAmount: 4999.50, netAmount: 3199.53 },
+    ] as Paycheck[]
+    expect(paycheckTotals(paychecks)).toEqual({ totalGross: 10000, totalNet: 6400, count: 2 })
+  })
 })
