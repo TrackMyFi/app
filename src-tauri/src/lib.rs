@@ -31,6 +31,7 @@ pub fn run() {
             commands::accounts::delete_balance_cmd,
             commands::accounts::list_all_balances_cmd,
             commands::transactions::list_transactions_cmd,
+            commands::transactions::get_transaction_cmd,
             commands::transactions::create_transaction_cmd,
             commands::transactions::update_transaction_cmd,
             commands::transactions::delete_transaction_cmd,

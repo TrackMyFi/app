@@ -301,3 +301,25 @@ async fn transfer_balances_link_to_same_transaction() {
     assert_eq!(src.linked_transaction_id, Some(txn_id));
     assert_eq!(dst.linked_transaction_id, Some(txn_id));
 }
+
+#[tokio::test]
+async fn get_transaction_returns_row() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &NewAccount {
+        name: "Checking".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    let id = transactions::create_transaction(&conn, &new_txn(acct, 1000.0, "income"))
+        .await.unwrap();
+
+    let txn = transactions::get_transaction(&conn, id).await.unwrap();
+    assert_eq!(txn.id, id);
+    assert_eq!(txn.amount, 1000.0);
+    assert_eq!(txn.r#type, "income");
+}
+
+#[tokio::test]
+async fn get_transaction_missing_id_errors() {
+    let conn = setup().await;
+    let result = transactions::get_transaction(&conn, 9999).await;
+    assert!(result.is_err());
+}

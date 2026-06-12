@@ -177,6 +177,18 @@ pub async fn list_transactions(
     })
 }
 
+pub async fn get_transaction(conn: &Connection, id: i32) -> Result<Transaction, String> {
+    let sql = format!("SELECT {COLS} FROM txn WHERE id = ?1");
+    let mut rows = conn
+        .query(&sql, params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => row_to_txn(&row),
+        None => Err(format!("transaction {id} not found")),
+    }
+}
+
 async fn base_balance(conn: &Connection, account_id: i32, date: &str) -> Result<f64, String> {
     let mut rows = conn
         .query(
@@ -398,6 +410,12 @@ pub async fn list_transactions_cmd(
 ) -> Result<TransactionPage, String> {
     let conn = db.conn().await?;
     list_transactions(&conn, &filter).await
+}
+
+#[tauri::command]
+pub async fn get_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<Transaction, String> {
+    let conn = db.conn().await?;
+    get_transaction(&conn, id).await
 }
 
 #[tauri::command]
