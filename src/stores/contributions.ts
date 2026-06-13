@@ -7,7 +7,6 @@ import * as api from '../lib/api/contributions'
 export const useContributionsStore = defineStore('contributions', () => {
   const txns = ref<Transaction[]>([])
   const years = ref<number[]>([])
-  const selectedYear = ref<number>(DateTime.now().year)
 
   async function loadYears() {
     const raw = await api.listContributionYears()
@@ -19,10 +18,10 @@ export const useContributionsStore = defineStore('contributions', () => {
     }
   }
 
+  // The selected year is owned by the page; the store just fetches its window.
   async function load(year: number) {
-    selectedYear.value = year
     txns.value = await api.listContributionTxns(year)
   }
 
-  return { txns, years, selectedYear, loadYears, load }
+  return { txns, years, loadYears, load }
 })
