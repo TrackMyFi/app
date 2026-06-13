@@ -7,6 +7,7 @@ import {
   listBudgetTxns,
   getBudgetMonthTarget,
   setBudgetMonthTarget,
+  getBudgetPaycheckSummary,
 } from '../lib/api/budget'
 import type { BudgetMonth } from '../lib/api/budget'
 
@@ -26,12 +27,13 @@ export const useBudgetStore = defineStore('budget', () => {
     selectedYear.value = year
     selectedMonth.value = month
 
-    const [txns, rawTarget] = await Promise.all([
+    const [txns, rawTarget, paycheckSummary] = await Promise.all([
       listBudgetTxns(year, month),
       getBudgetMonthTarget(year, month),
+      getBudgetPaycheckSummary(year, month),
     ])
 
-    summary.value = buildBudgetMonth(txns)
+    summary.value = buildBudgetMonth(txns, paycheckSummary)
 
     if (rawTarget) {
       target.value = {

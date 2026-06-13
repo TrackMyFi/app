@@ -5,9 +5,18 @@ export type BudgetLineItem = {
   transactions: Transaction[]
 }
 
+export type PaycheckSummary = {
+  grossIncome: number
+  netIncome: number
+  taxes: number
+}
+
 export type BudgetMonthSummary = {
+  grossIncome: number
+  netIncome: number
   income: BudgetLineItem
   savings: BudgetLineItem
+  taxes: number
   fixed: BudgetLineItem
   discretionary: BudgetLineItem
   freeMoney: number
@@ -25,9 +34,9 @@ function sumAmount(txns: Transaction[]): number {
   return txns.reduce((acc, t) => acc + t.amount, 0)
 }
 
-export function buildBudgetMonth(txns: Transaction[]): BudgetMonthSummary {
+export function buildBudgetMonth(txns: Transaction[], paycheckSummary: PaycheckSummary): BudgetMonthSummary {
   const savings = txns.filter((t) => t.isContribution === true)
-  const income = txns.filter((t) => t.type === 'income' && !t.isContribution)
+  const income = txns.filter((t) => t.type === 'income' && !t.isContribution && t.importSource !== 'paycheck')
   const fixed = txns.filter((t) => t.type === 'expense' && t.category === 'fixed' && !t.isContribution)
   const discretionary = txns.filter((t) => t.type === 'expense' && t.category === 'discretionary' && !t.isContribution)
 
@@ -36,12 +45,19 @@ export function buildBudgetMonth(txns: Transaction[]): BudgetMonthSummary {
   const fixedItem: BudgetLineItem = { total: sumAmount(fixed), transactions: fixed }
   const discretionaryItem: BudgetLineItem = { total: sumAmount(discretionary), transactions: discretionary }
 
-  const freeMoney = incomeItem.total - savingsItem.total - fixedItem.total
+  const nonPaycheckIncomeTotal = incomeItem.total
+  const grossIncome = paycheckSummary.grossIncome + nonPaycheckIncomeTotal
+  const netIncome = paycheckSummary.netIncome + nonPaycheckIncomeTotal
+  const taxes = paycheckSummary.taxes
+  const freeMoney = grossIncome - savingsItem.total - taxes - fixedItem.total
   const freeMoneyRemaining = freeMoney - discretionaryItem.total
 
   return {
+    grossIncome,
+    netIncome,
     income: incomeItem,
     savings: savingsItem,
+    taxes,
     fixed: fixedItem,
     discretionary: discretionaryItem,
     freeMoney,
