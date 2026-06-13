@@ -24,6 +24,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "paychecks",
         sql: include_str!("../migrations/0003_paychecks.sql"),
     },
+    Migration {
+        version: 4,
+        name: "hsa_coverage",
+        sql: include_str!("../migrations/0004_hsa_coverage.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {

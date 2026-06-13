@@ -8,7 +8,7 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
         .query(
             "SELECT current_age, target_retirement_age, annual_expenses_target, \
              lean_fire_annual_expenses, fat_fire_annual_expenses, annual_income, \
-             expected_return_rate, inflation_rate FROM fire_profile WHERE id = 1",
+             expected_return_rate, inflation_rate, hsa_coverage FROM fire_profile WHERE id = 1",
             (),
         )
         .await
@@ -27,6 +27,7 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
         annual_income: row.get(5).map_err(|e| e.to_string())?,
         expected_return_rate: row.get(6).map_err(|e| e.to_string())?,
         inflation_rate: row.get(7).map_err(|e| e.to_string())?,
+        hsa_coverage: row.get(8).map_err(|e| e.to_string())?,
     })
 }
 
@@ -34,7 +35,7 @@ pub async fn upsert_profile(conn: &Connection, p: &FireProfile) -> Result<(), St
     conn.execute(
         "UPDATE fire_profile SET current_age=?1, target_retirement_age=?2, \
          annual_expenses_target=?3, lean_fire_annual_expenses=?4, fat_fire_annual_expenses=?5, \
-         annual_income=?6, expected_return_rate=?7, inflation_rate=?8 WHERE id = 1",
+         annual_income=?6, expected_return_rate=?7, inflation_rate=?8, hsa_coverage=?9 WHERE id = 1",
         libsql::params![
             p.current_age,
             p.target_retirement_age,
@@ -43,7 +44,8 @@ pub async fn upsert_profile(conn: &Connection, p: &FireProfile) -> Result<(), St
             p.fat_fire_annual_expenses,
             p.annual_income,
             p.expected_return_rate,
-            p.inflation_rate
+            p.inflation_rate,
+            p.hsa_coverage.clone()
         ],
     )
     .await

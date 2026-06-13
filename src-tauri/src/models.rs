@@ -13,6 +13,7 @@ pub struct FireProfile {
     pub annual_income: f64,
     pub expected_return_rate: f64,
     pub inflation_rate: f64,
+    pub hsa_coverage: String,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

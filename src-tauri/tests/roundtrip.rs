@@ -15,6 +15,7 @@ async fn fire_profile_roundtrip() {
     assert_eq!(p.current_age, 30);
     assert_eq!(p.annual_expenses_target, 40000.0);
     assert_eq!(p.lean_fire_annual_expenses, None);
+    assert_eq!(p.hsa_coverage, "self");
 
     // update and read back
     let updated = FireProfile {
@@ -26,6 +27,7 @@ async fn fire_profile_roundtrip() {
         annual_income: 90000.0,
         expected_return_rate: 0.06,
         inflation_rate: 0.025,
+        hsa_coverage: "family".into(),
     };
     upsert_profile(&conn, &updated).await.unwrap();
     let p2 = get_profile(&conn).await.unwrap();
@@ -33,6 +35,7 @@ async fn fire_profile_roundtrip() {
     assert_eq!(p2.annual_expenses_target, 50000.0);
     assert_eq!(p2.lean_fire_annual_expenses, Some(35000.0));
     assert_eq!(p2.fat_fire_annual_expenses, None);
+    assert_eq!(p2.hsa_coverage, "family");
 }
 
 #[tokio::test]
