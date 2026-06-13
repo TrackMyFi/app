@@ -18,6 +18,14 @@ const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
 const saveError = ref<string | null>(null)
 
+const knownEmployers = computed(() =>
+  [...new Set(store.paychecks.map((p) => p.employer).filter(Boolean))]
+)
+
+const knownDeductionLabels = computed(() =>
+  [...new Set(store.paychecks.flatMap((p) => p.deductions.map((d) => d.label)).filter(Boolean))]
+)
+
 const today = DateTime.now().toISODate()!
 
 interface DeductionRow {
@@ -195,7 +203,7 @@ async function save() {
         </div>
         <div>
           <p class="text-xs text-muted mb-1">Employer</p>
-          <UInput v-model="form.employer" placeholder="Employer" />
+          <UInputMenu v-model="form.employer" mode="autocomplete" :items="knownEmployers" placeholder="Employer" />
         </div>
         <div>
           <p class="text-xs text-muted mb-1">Pay period</p>
@@ -257,7 +265,7 @@ async function save() {
       </div>
       <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
         <div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
-          <UInput v-model="ded.label" placeholder="Label" />
+          <UInputMenu v-model="ded.label" mode="autocomplete" :items="knownDeductionLabels" placeholder="Label" />
           <UInput v-model.number="ded.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
           <UCheckbox v-model="ded.preTax" label="Pre-tax" />
           <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeDeduction(i)" />
