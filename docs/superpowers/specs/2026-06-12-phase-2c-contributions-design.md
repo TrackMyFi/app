@@ -80,6 +80,21 @@ No other schema changes. All contribution data already exists in `txn`.
 New file `src-tauri/src/commands/contributions.rs`. Follows the established pattern: testable inner `async fn(conn, year)` + thin `#[tauri::command]` `_cmd` wrapper.
 
 ```
+list_contribution_years() → Vec<String>
+```
+
+```sql
+SELECT DISTINCT strftime('%Y', date) AS year
+FROM txn
+WHERE is_contribution = 1
+ORDER BY year DESC
+```
+
+Returns all years that have at least one contribution txn. Used once on mount to populate the year picker.
+
+---
+
+```
 list_contribution_txns(year: i32) → Vec<Transaction>
 ```
 
@@ -196,8 +211,8 @@ export function buildContributionRows(
 | `src/lib/contributions/irsLimits.ts` | Year-keyed IRS limits constants + `resolveYearLimits()` |
 | `src/lib/contributions/index.ts` | `buildContributionRows()` and supporting helpers |
 | `src/lib/contributions/index.test.ts` | Vitest unit tests |
-| `src/lib/api/contributions.ts` | `invoke()` wrapper for `list_contribution_txns_cmd` |
-| `src/stores/contributions.ts` | Pinia store — `selectedYear`, `txns`, `load(year)` |
+| `src/lib/api/contributions.ts` | `invoke()` wrappers for `list_contribution_years_cmd` and `list_contribution_txns_cmd` |
+| `src/stores/contributions.ts` | Pinia store — `years`, `selectedYear`, `txns`, `loadYears()`, `load(year)` |
 | `src/pages/Contributions.vue` | Card grid + grouped transaction table + year picker |
 
 ### Modified files
@@ -216,11 +231,11 @@ export function buildContributionRows(
 
 ### `Contributions.vue` structure
 
-- `onMounted`: load accounts store, fire profile store (for `current_age` and `hsaCoverage`), contributions store for current year
-- **Year picker**: `USelect` populated from the set of years present in all contribution txn dates (union of both years loaded), defaulting to `DateTime.now().year`. On change, calls `store.load(year)`
+- `onMounted`: load accounts store, fire profile store (for `current_age` and `hsaCoverage`), contributions store — calls `store.loadYears()` then `store.load(currentYear)`
+- **Year picker**: `USelect` populated from `store.years` (full list of years with contribution data, from `list_contribution_years_cmd`), defaulting to `DateTime.now().year`. On change, calls `store.load(year)`
 - **Estimated limits banner**: shown when `resolveYearLimits` returns `estimated: true` — "IRS limits estimated from [estimatedFrom] — update `irsLimits.ts` when [selectedYear] limits are announced"
 - **Card grid**: one card per `ContributionRow`
-  - Progress bar: green (< 80%), amber (80–99%), green (100%)
+  - Progress bar: green (< 80%), amber (80–99%), green (= 100% maxed), amber (> 100% over-contribution)
   - Shows: label, YTD total, limit string (e.g. "$31,000 (incl. $7,500 catch-up)"), % used, YoY delta (colored green/red/muted)
   - Trad/Roth breakdown shown as a footnote line (only for merged pairs)
   - Brokerage/crypto cards: omit progress bar, show "No IRS limit"
@@ -248,6 +263,7 @@ export function buildContributionRows(
 
 ### Rust round-trip (within `contributions.rs` test module)
 
+- `list_contribution_years` returns distinct years sorted DESC; excludes years with no contribution txns
 - `list_contribution_txns` with `year = 2026` returns only rows with dates in 2026 and 2025
 - Rows with `is_contribution = 0` excluded
 - Returns empty vec when no matching rows
