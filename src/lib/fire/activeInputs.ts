@@ -22,6 +22,6 @@ export function activeFireInputs(
     })),
     balances: balances
       .filter(b => activeIds.has(b.accountId))
-      .map(b => ({ accountId: b.accountId, balance: b.balance, recordedAt: b.recordedAt })),
+      .map(b => ({ id: b.id, accountId: b.accountId, balance: b.balance, recordedAt: b.recordedAt })),
   }
 }

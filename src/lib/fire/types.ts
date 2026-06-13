@@ -1,2 +1,2 @@
 export interface FireAccount { id: number; type: string; includeInFireCalculations: boolean }
-export interface FireBalance { accountId: number; balance: number; recordedAt: string } // ISO date
+export interface FireBalance { accountId: number; balance: number; recordedAt: string; id?: number } // ISO date

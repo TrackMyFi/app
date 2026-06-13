@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon'
 import type { FireAccount, FireBalance } from './types'
 import { isInvestment } from '../accountTypes'
+import { isNewer } from '../balances/recency'
 
 const MAX_MONTHS = 1200 // 100-year cap
 
@@ -31,14 +32,14 @@ export function projectedFiDate(
 
 function investmentBalanceAt(accounts: FireAccount[], balances: FireBalance[], isoDate: string): number {
   const invest = new Set(accounts.filter(a => isInvestment(a.type)).map(a => a.id))
-  const latest = new Map<number, { at: string; bal: number }>()
+  const latest = new Map<number, FireBalance>()
   for (const b of balances) {
     if (!invest.has(b.accountId) || b.recordedAt > isoDate) continue
     const seen = latest.get(b.accountId)
-    if (!seen || b.recordedAt > seen.at) latest.set(b.accountId, { at: b.recordedAt, bal: b.balance })
+    if (!seen || isNewer(b, seen)) latest.set(b.accountId, b)
   }
   let total = 0
-  for (const { bal } of latest.values()) total += bal
+  for (const b of latest.values()) total += b.balance
   return total
 }
 

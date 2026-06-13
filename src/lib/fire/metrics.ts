@@ -1,15 +1,17 @@
 import type { FireAccount, FireBalance } from './types'
 import { isLiability } from '../accountTypes'
+import { isNewer } from '../balances/recency'
 
 export const fireNumber = (annualExpensesTarget: number) => annualExpensesTarget * 25
 
 export function latestBalances(balances: FireBalance[]): Map<number, number> {
-  const latestAt = new Map<number, string>()
-  const value = new Map<number, number>()
+  const latest = new Map<number, FireBalance>()
   for (const b of balances) {
-    const seen = latestAt.get(b.accountId)
-    if (!seen || b.recordedAt > seen) { latestAt.set(b.accountId, b.recordedAt); value.set(b.accountId, b.balance) }
+    const seen = latest.get(b.accountId)
+    if (!seen || isNewer(b, seen)) latest.set(b.accountId, b)
   }
+  const value = new Map<number, number>()
+  for (const [accountId, b] of latest) value.set(accountId, b.balance)
   return value
 }
 
