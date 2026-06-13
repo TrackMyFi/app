@@ -6,13 +6,18 @@ import { useAccountsStore } from '../stores/accounts'
 import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
   netWorthOverTime, projectedFiDate, savingsRate, activeFireInputs,
+  derivedMonthlyContribution,
 } from '../lib/fire'
+import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
-onMounted(async () => { await Promise.all([fp.load(), acc.load()]) })
+const contrib = useContributionsStore()
+onMounted(async () => {
+  await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
+})
 
 // Exclude archived (inactive) accounts and their balances from all metrics.
 const inputs = computed(() => activeFireInputs(acc.accounts, acc.allBalances))
@@ -26,14 +31,19 @@ const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
 const progress = computed(() => fiProgress(investable.value, fireNum.value))
 const series = computed(() => netWorthOverTime(fireAccounts.value, fireBalances.value))
-const rate = computed(() => fp.profile
-  ? savingsRate(fireAccounts.value, fireBalances.value, fp.profile.annualIncome, DateTime.now().toISODate()!)
-  : 0)
-const fiDate = computed(() => {
-  if (!fp.profile) return null
-  const monthly = (fp.profile.annualIncome * rate.value) / 12
-  return projectedFiDate(investable.value, monthly, fp.profile.expectedReturnRate, fp.profile.inflationRate, fireNum.value)
+const asOf = computed(() => DateTime.now().toISODate()!)
+const contribution = computed(() => {
+  if (!fp.profile) return { monthly: 0, estimated: true }
+  const estRate = savingsRate(fireAccounts.value, fireBalances.value, fp.profile.annualIncome, asOf.value)
+  const estimateMonthly = (fp.profile.annualIncome * estRate) / 12
+  return derivedMonthlyContribution(contrib.txns, asOf.value, estimateMonthly)
 })
+const rate = computed(() => fp.profile && fp.profile.annualIncome > 0
+  ? (contribution.value.monthly * 12) / fp.profile.annualIncome
+  : 0)
+const fiDate = computed(() => fp.profile
+  ? projectedFiDate(investable.value, contribution.value.monthly, fp.profile.expectedReturnRate, fp.profile.inflationRate, fireNum.value)
+  : null)
 </script>
 
 <template>
@@ -45,7 +55,11 @@ const fiDate = computed(() => {
       <StatCard label="Investable Net Worth" :value="fmt(investable)" />
       <StatCard label="FI Progress" :value="`${progress.toFixed(1)}%`" />
       <StatCard label="Projected FI Date" :value="fiDate ? fiDate.toFormat('LLL yyyy') : '—'" />
-      <StatCard label="Savings Rate" :value="`${(rate * 100).toFixed(1)}%`" hint="Approximate — refined in Phase 2" />
+      <StatCard
+        label="Savings Rate"
+        :value="`${(rate * 100).toFixed(1)}%`"
+        :hint="contribution.estimated ? 'Estimated — under 12 months of contribution history' : undefined"
+      />
     </div>
     <div class="border border-default rounded-lg p-4">
       <h2 class="font-semibold mb-2">Net Worth Over Time</h2>
