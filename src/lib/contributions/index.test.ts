@@ -131,4 +131,37 @@ describe('buildContributionRows', () => {
     const ira = rows.find((r) => r.label === 'Traditional / Roth IRA')!
     expect(ira.pctUsed).toBeGreaterThan(1)
   })
+
+  it('sums multiple accounts of the same type into one row', () => {
+    const accounts = [acct(1, '401k'), acct(2, '401k')]
+    const txns = [
+      txn(10, 1, 4000, '2025-03-01'),
+      txn(11, 2, 3000, '2025-04-01'),
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const k401 = rows.find((r) => r.label === '401k / Roth 401k')!
+    expect(k401.total).toBe(7000)
+  })
+
+  it('ignores contributions whose account no longer exists (orphan txn)', () => {
+    const accounts = [acct(1, '401k')]
+    const txns = [
+      txn(10, 1, 1000, '2025-03-01'),
+      txn(11, 99, 5000, '2025-03-01'), // accountId 99 has no matching account
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].total).toBe(1000)
+  })
+
+  it('nets down a row total with a negative (refund) contribution amount', () => {
+    const accounts = [acct(1, '401k')]
+    const txns = [
+      txn(10, 1, 5000, '2025-03-01'),
+      txn(11, 1, -1000, '2025-04-01'), // correcting refund of contribution
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const k401 = rows.find((r) => r.label === '401k / Roth 401k')!
+    expect(k401.total).toBe(4000)
+  })
 })

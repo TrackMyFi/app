@@ -84,7 +84,9 @@ function sumByType(
   for (const t of txns) {
     if (!t.date.startsWith(yearPrefix)) continue
     const type = typeOf.get(t.accountId)
-    if (!type) continue
+    if (!type) continue // orphan txn (account deleted) — excluded
+    // Amounts are summed signed: a negative (refund/correction) contribution
+    // legitimately nets the type total down.
     out.set(type, (out.get(type) ?? 0) + t.amount)
   }
   return out
