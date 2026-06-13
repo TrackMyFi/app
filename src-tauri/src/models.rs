@@ -108,6 +108,7 @@ pub struct Paycheck {
     pub medicare_tax: f64,
     pub deductions: Vec<PaycheckDeduction>,
     pub employer_match: Vec<EmployerMatchItem>,
+    pub income_account_id: Option<i32>,
     pub import_source: String,
     pub created_at: String,
     pub updated_at: String,

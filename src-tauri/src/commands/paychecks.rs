@@ -19,6 +19,7 @@ pub struct NewPaycheck {
     pub medicare_tax: f64,
     pub deductions: Vec<PaycheckDeduction>,
     pub employer_match: Vec<EmployerMatchItem>,
+    pub income_account_id: Option<i32>,
     pub created_at: String,
 }
 
@@ -38,6 +39,7 @@ pub struct UpdatePaycheck {
     pub medicare_tax: f64,
     pub deductions: Vec<PaycheckDeduction>,
     pub employer_match: Vec<EmployerMatchItem>,
+    pub income_account_id: Option<i32>,
     pub updated_at: String,
 }
 
@@ -51,7 +53,7 @@ pub struct PaycheckFilter {
 
 const COLS: &str = "id, pay_date, employer, pay_period, gross_amount, net_amount, \
     federal_tax, state_tax, local_tax, social_security_tax, medicare_tax, \
-    deductions, employer_match, import_source, created_at, updated_at";
+    deductions, employer_match, income_account_id, import_source, created_at, updated_at";
 
 fn row_to_paycheck(row: &libsql::Row) -> Result<Paycheck, String> {
     let deductions_json: String = row.get(11).map_err(|e| e.to_string())?;
@@ -70,9 +72,10 @@ fn row_to_paycheck(row: &libsql::Row) -> Result<Paycheck, String> {
         medicare_tax: row.get(10).map_err(|e| e.to_string())?,
         deductions: serde_json::from_str(&deductions_json).map_err(|e| e.to_string())?,
         employer_match: serde_json::from_str(&employer_match_json).map_err(|e| e.to_string())?,
-        import_source: row.get(13).map_err(|e| e.to_string())?,
-        created_at: row.get(14).map_err(|e| e.to_string())?,
-        updated_at: row.get(15).map_err(|e| e.to_string())?,
+        income_account_id: row.get(13).map_err(|e| e.to_string())?,
+        import_source: row.get(14).map_err(|e| e.to_string())?,
+        created_at: row.get(15).map_err(|e| e.to_string())?,
+        updated_at: row.get(16).map_err(|e| e.to_string())?,
     })
 }
 
@@ -114,6 +117,32 @@ async fn auto_create_contributions(
             .map_err(|e| e.to_string())?;
         }
     }
+    Ok(())
+}
+
+async fn auto_create_income_txn(
+    conn: &Connection,
+    paycheck_id: i32,
+    income_account_id: Option<i32>,
+    net_amount: f64,
+    employer: &str,
+    pay_date: &str,
+    now: &str,
+) -> Result<(), String> {
+    let Some(account_id) = income_account_id else {
+        return Ok(());
+    };
+    let description = format!("Paycheck – {}", employer);
+    conn.execute(
+        "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
+         type, category, is_contribution, import_source, paycheck_id, \
+         generated_balance_id, generated_balance_to_id, created_at, updated_at) \
+         VALUES (?1, NULL, ?2, ?3, ?4, 'income', 'fixed', 0, 'paycheck', ?5, \
+         NULL, NULL, ?6, ?6)",
+        params![account_id, net_amount, description, pay_date, paycheck_id, now],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -169,13 +198,13 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
     conn.execute(
         "INSERT INTO paycheck (pay_date, employer, pay_period, gross_amount, net_amount, \
          federal_tax, state_tax, local_tax, social_security_tax, medicare_tax, \
-         deductions, employer_match, import_source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'manual', ?13, ?13)",
+         deductions, employer_match, income_account_id, import_source, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'manual', ?14, ?14)",
         params![
             p.pay_date.clone(), p.employer.clone(), p.pay_period.clone(),
             p.gross_amount, p.net_amount,
             p.federal_tax, p.state_tax, p.local_tax, p.social_security_tax, p.medicare_tax,
-            deductions_json, employer_match_json, p.created_at.clone()
+            deductions_json, employer_match_json, p.income_account_id, p.created_at.clone()
         ],
     )
     .await
@@ -183,6 +212,7 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
 
     let id = conn.last_insert_rowid() as i32;
     auto_create_contributions(conn, id, &p.pay_date, &p.deductions, &p.employer_match, &p.created_at).await?;
+    auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at).await?;
     get_paycheck(conn, id).await
 }
 
@@ -190,7 +220,7 @@ pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Pa
     // Verify the paycheck exists before modifying anything
     get_paycheck(conn, p.id).await?;
 
-    // Delete all contribution txns previously created by this paycheck
+    // Delete ALL txns previously created by this paycheck (contributions + income)
     conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![p.id])
         .await
         .map_err(|e| e.to_string())?;
@@ -201,18 +231,20 @@ pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Pa
     conn.execute(
         "UPDATE paycheck SET pay_date=?1, employer=?2, pay_period=?3, gross_amount=?4, \
          net_amount=?5, federal_tax=?6, state_tax=?7, local_tax=?8, social_security_tax=?9, \
-         medicare_tax=?10, deductions=?11, employer_match=?12, updated_at=?13 WHERE id=?14",
+         medicare_tax=?10, deductions=?11, employer_match=?12, income_account_id=?13, \
+         updated_at=?14 WHERE id=?15",
         params![
             p.pay_date.clone(), p.employer.clone(), p.pay_period.clone(),
             p.gross_amount, p.net_amount,
             p.federal_tax, p.state_tax, p.local_tax, p.social_security_tax, p.medicare_tax,
-            deductions_json, employer_match_json, p.updated_at.clone(), p.id
+            deductions_json, employer_match_json, p.income_account_id, p.updated_at.clone(), p.id
         ],
     )
     .await
     .map_err(|e| e.to_string())?;
 
     auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, &p.updated_at).await?;
+    auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at).await?;
     get_paycheck(conn, p.id).await
 }
 
