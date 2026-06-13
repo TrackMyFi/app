@@ -46,6 +46,10 @@ pub fn run() {
             commands::paychecks::delete_paycheck_cmd,
             commands::contributions::list_contribution_txns_cmd,
             commands::contributions::list_contribution_years_cmd,
+            commands::budget::list_budget_months_cmd,
+            commands::budget::list_budget_txns_cmd,
+            commands::budget::get_budget_month_target_cmd,
+            commands::budget::set_budget_month_target_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
