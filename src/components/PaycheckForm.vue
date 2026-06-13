@@ -49,6 +49,7 @@ const form = reactive({
   payPeriod: 'biweekly',
   grossAmount: 0,
   netAmount: 0,
+  incomeAccountId: null as number | null,
   federalTax: 0,
   stateTax: 0,
   localTax: 0,
@@ -64,6 +65,7 @@ function resetForm() {
   form.payPeriod = 'biweekly'
   form.grossAmount = 0
   form.netAmount = 0
+  form.incomeAccountId = null
   form.federalTax = 0
   form.stateTax = 0
   form.localTax = 0
@@ -83,6 +85,7 @@ watch(
       form.payPeriod = e.payPeriod
       form.grossAmount = e.grossAmount
       form.netAmount = e.netAmount
+      form.incomeAccountId = e.incomeAccountId ?? null
       form.federalTax = e.federalTax
       form.stateTax = e.stateTax
       form.localTax = e.localTax
@@ -106,6 +109,7 @@ watch(
       form.payPeriod = c.payPeriod
       form.grossAmount = c.grossAmount
       form.netAmount = c.netAmount
+      form.incomeAccountId = c.incomeAccountId ?? null
       form.federalTax = c.federalTax
       form.stateTax = c.stateTax
       form.localTax = c.localTax
@@ -140,6 +144,12 @@ function accountsForType(type: string | null) {
 const investmentAccountItems = computed(() =>
   accountsStore.accounts
     .filter((a) => INVESTMENT_TYPES.has(a.type) && a.isActive)
+    .map((a) => ({ label: a.name, value: a.id })),
+)
+
+const depositAccountItems = computed(() =>
+  accountsStore.accounts
+    .filter((a) => !INVESTMENT_TYPES.has(a.type) && a.type !== 'liability' && a.isActive)
     .map((a) => ({ label: a.name, value: a.id })),
 )
 
@@ -188,6 +198,7 @@ async function save() {
         medicareTax: form.medicareTax,
         deductions: form.deductions,
         employerMatch: form.employerMatch,
+        incomeAccountId: form.incomeAccountId,
         updatedAt: now,
       })
     } else {
@@ -204,6 +215,7 @@ async function save() {
         medicareTax: form.medicareTax,
         deductions: form.deductions,
         employerMatch: form.employerMatch,
+        incomeAccountId: form.incomeAccountId,
         createdAt: now,
       })
     }
@@ -252,6 +264,16 @@ async function save() {
           <UInput v-model.number="form.netAmount" type="number" step="0.01" placeholder="0.00" />
         </div>
       </div>
+    </div>
+
+    <!-- Deposit account -->
+    <div class="space-y-3">
+      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Deposit to account</p>
+      <USelect
+        v-model="form.incomeAccountId"
+        :items="depositAccountItems"
+        placeholder="None (optional)"
+      />
     </div>
 
     <!-- Taxes -->

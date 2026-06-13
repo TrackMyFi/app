@@ -34,6 +34,7 @@ export interface NewPaycheck {
   medicareTax: number
   deductions: PaycheckDeductionInput[]
   employerMatch: EmployerMatchInput[]
+  incomeAccountId?: number | null
   createdAt: string
 }
 
@@ -51,6 +52,7 @@ export interface UpdatePaycheck {
   medicareTax: number
   deductions: PaycheckDeductionInput[]
   employerMatch: EmployerMatchInput[]
+  incomeAccountId?: number | null
   updatedAt: string
 }
 
