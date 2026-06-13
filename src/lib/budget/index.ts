@@ -1,4 +1,4 @@
-import type { Transaction } from '@/lib/types/Transaction'
+import type { Transaction } from '../types/Transaction'
 
 export type BudgetLineItem = {
   total: number
