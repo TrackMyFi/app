@@ -23,6 +23,7 @@ declare module 'vue' {
     StatCard: typeof import('./src/components/StatCard.vue')['default']
     TransactionDetail: typeof import('./src/components/TransactionDetail.vue')['default']
     TransactionForm: typeof import('./src/components/TransactionForm.vue')['default']
+    UAlert: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']
     UApp: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/App.vue')['default']
     UButton: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Button.vue')['default']
     UCalendar: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Calendar.vue')['default']
