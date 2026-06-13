@@ -64,6 +64,9 @@ async fn list_contribution_txns_returns_selected_and_prior_year() {
     let rows = contributions::list_contribution_txns(&conn, 2026).await.unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|t| t.date.starts_with("2026") || t.date.starts_with("2025")));
+    // Ordered date DESC: 2026 row precedes 2025 row.
+    assert_eq!(rows[0].date, "2026-03-01");
+    assert_eq!(rows[1].date, "2025-03-01");
 }
 
 #[tokio::test]
