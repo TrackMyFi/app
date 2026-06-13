@@ -13,9 +13,11 @@ const accountsStore = useAccountsStore()
 
 const isModalOpen = ref(false)
 const editing = ref<Paycheck | null>(null)
+const copySource = ref<Paycheck | null>(null)
 
-function openAdd() { editing.value = null; isModalOpen.value = true }
-function openEdit(p: Paycheck) { editing.value = p; isModalOpen.value = true }
+function openAdd() { editing.value = null; copySource.value = null; isModalOpen.value = true }
+function openEdit(p: Paycheck) { editing.value = p; copySource.value = null; isModalOpen.value = true }
+function openCopy(p: Paycheck) { editing.value = null; copySource.value = p; isModalOpen.value = true }
 function onSaved() { isModalOpen.value = false }
 
 async function removeRow(p: Paycheck) {
@@ -98,6 +100,7 @@ onMounted(async () => {
           <td class="text-right tabular-nums">{{ money(p.federalTax) }}</td>
           <td class="text-right tabular-nums">{{ money(p.socialSecurityTax + p.medicareTax) }}</td>
           <td class="text-right">
+            <UButton size="xs" variant="ghost" icon="i-lucide-copy" @click="openCopy(p)" />
             <UButton size="xs" variant="ghost" icon="i-lucide-pencil" @click="openEdit(p)" />
             <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash-2" @click="removeRow(p)" />
           </td>
@@ -108,9 +111,9 @@ onMounted(async () => {
       </tbody>
     </table>
 
-    <UModal v-model:open="isModalOpen" :title="editing ? 'Edit paycheck' : 'Add paycheck'">
+    <UModal v-model:open="isModalOpen" :title="editing ? 'Edit paycheck' : copySource ? 'Copy paycheck' : 'Add paycheck'">
       <template #body>
-        <PaycheckForm :editing="editing" @saved="onSaved" />
+        <PaycheckForm :editing="editing" :copy-from="copySource" @saved="onSaved" />
       </template>
     </UModal>
   </div>
