@@ -14,7 +14,9 @@ declare module 'vue' {
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
     BalanceForm: typeof import('./src/components/BalanceForm.vue')['default']
     BalanceRow: typeof import('./src/components/BalanceRow.vue')['default']
+    ComboboxInput: typeof import('./src/components/ComboboxInput.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']
+    ForecastChart: typeof import('./src/components/ForecastChart.vue')['default']
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']
     NetWorthChart: typeof import('./src/components/NetWorthChart.vue')['default']
     PaycheckForm: typeof import('./src/components/PaycheckForm.vue')['default']
@@ -34,9 +36,12 @@ declare module 'vue' {
     UIcon: typeof import('./node_modules/@nuxt/ui/dist/runtime/vue/components/Icon.vue')['default']
     UInput: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Input.vue')['default']
     UInputDate: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/InputDate.vue')['default']
+    UInputMenu: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/InputMenu.vue')['default']
     UModal: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Modal.vue')['default']
     UPopover: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Popover.vue')['default']
     USelect: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Select.vue')['default']
+    USlideover: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Slideover.vue')['default']
+    USlider: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Slider.vue')['default']
     USwitch: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Switch.vue')['default']
   }
 }

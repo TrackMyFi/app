@@ -6,7 +6,7 @@ const links = [
   { label: 'Paychecks', to: '/paychecks', icon: 'i-lucide-banknote' },
   { label: 'Contributions', to: '/contributions', icon: 'i-lucide-piggy-bank' },
   { label: 'Budget', to: '/budget', icon: 'i-lucide-calculator' },
-  { label: 'Forecast', icon: 'i-lucide-trending-up', disabled: true },
+  { label: 'Forecast', to: '/forecast', icon: 'i-lucide-trending-up' },
   { label: 'Settings', to: '/settings', icon: 'i-lucide-settings' },
 ]
 </script>

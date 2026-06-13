@@ -7,6 +7,7 @@ const routes = [
   { path: '/paychecks', name: 'paychecks', component: () => import('./pages/Paychecks.vue') },
   { path: '/contributions', name: 'contributions', component: () => import('./pages/Contributions.vue') },
   { path: '/budget', name: 'budget', component: () => import('./pages/Budget.vue') },
+  { path: '/forecast', name: 'forecast', component: () => import('./pages/Forecast.vue') },
   { path: '/settings', name: 'settings', component: () => import('./pages/Settings.vue') },
 ]
 
