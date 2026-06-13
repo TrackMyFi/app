@@ -12,6 +12,7 @@ interface FireProfileForm {
   annualIncome: number
   expectedReturnRate: number
   inflationRate: number
+  hsaCoverage: string
 }
 
 const store = useFireProfileStore()
@@ -24,6 +25,7 @@ const form = reactive<FireProfileForm>({
   annualIncome: 0,
   expectedReturnRate: 0,
   inflationRate: 0,
+  hsaCoverage: 'self',
 })
 
 onMounted(async () => {
@@ -41,6 +43,7 @@ async function onSubmit() {
     annualIncome: form.annualIncome,
     expectedReturnRate: form.expectedReturnRate,
     inflationRate: form.inflationRate,
+    hsaCoverage: form.hsaCoverage,
   }
   await store.save(profile)
 }
@@ -73,6 +76,16 @@ async function onSubmit() {
       </UFormField>
       <UFormField label="Inflation rate (e.g. 0.03)">
         <UInput v-model.number="form.inflationRate" type="number" step="0.01" />
+      </UFormField>
+      <UFormField label="HSA coverage">
+        <USelect
+          v-model="form.hsaCoverage"
+          :items="[
+            { label: 'Self-only', value: 'self' },
+            { label: 'Family', value: 'family' },
+          ]"
+          class="w-44"
+        />
       </UFormField>
       <UButton type="submit">Save</UButton>
     </UForm>
