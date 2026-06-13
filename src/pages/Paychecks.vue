@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { paycheckTotals } from '../lib/paychecks/index'
@@ -19,6 +19,13 @@ function openAdd() { editing.value = null; copySource.value = null; isModalOpen.
 function openEdit(p: Paycheck) { editing.value = p; copySource.value = null; isModalOpen.value = true }
 function openCopy(p: Paycheck) { editing.value = null; copySource.value = p; isModalOpen.value = true }
 function onSaved() { isModalOpen.value = false }
+
+watch(isModalOpen, (open) => {
+  if (!open) {
+    editing.value = null
+    copySource.value = null
+  }
+})
 
 async function removeRow(p: Paycheck) {
   const ok = await confirm(`Delete paycheck from "${p.employer}" on ${p.payDate}?`, {
