@@ -100,7 +100,7 @@ watch(
         accountId: m.accountId ?? null,
       }))
     } else if (c) {
-      form.payDate = today
+      form.payDate = DateTime.now().toISODate()!
       form.employer = c.employer
       form.payPeriod = c.payPeriod
       form.grossAmount = c.grossAmount
