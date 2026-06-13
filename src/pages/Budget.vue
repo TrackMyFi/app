@@ -27,6 +27,10 @@ function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
+function formatMoney(n: number): string {
+  return money(n)
+}
+
 function accountName(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
 }
@@ -124,27 +128,28 @@ onMounted(async () => {
     <!-- Formula row + detail panel -->
     <template v-else-if="store.summary">
       <!-- Formula columns -->
-      <div class="grid grid-cols-5 border border-default rounded-lg overflow-hidden">
+      <div class="grid border border-default rounded-lg overflow-hidden" style="grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr 1fr">
         <!-- Income -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors border-r border-default"
+          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors"
           :class="store.activeSection === 'income' ? 'bg-elevated' : ''"
           @click="setActiveSection('income')"
         >
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Income</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.income.total) }}</span>
-          <span class="text-xs text-muted">
-            {{ store.summary.income.transactions.length }} transaction{{ store.summary.income.transactions.length === 1 ? '' : 's' }}
-          </span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.grossIncome) }}</span>
+          <span class="text-xs text-muted">Net: {{ formatMoney(store.summary.netIncome) }}</span>
         </button>
+
+        <!-- Operator: − -->
+        <div class="flex items-center justify-center px-2 text-sm text-muted select-none border-x border-default">−</div>
 
         <!-- Savings -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors border-r border-default"
+          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors"
           :class="store.activeSection === 'savings' ? 'bg-elevated' : ''"
           @click="setActiveSection('savings')"
         >
-          <span class="text-xs font-semibold uppercase tracking-wide text-muted">− Savings</span>
+          <span class="text-xs font-semibold uppercase tracking-wide text-muted">Savings</span>
           <span class="text-xl font-bold tabular-nums">{{ money(store.summary.savings.total) }}</span>
 
           <!-- Inline target edit -->
@@ -179,22 +184,38 @@ onMounted(async () => {
           </template>
         </button>
 
+        <!-- Operator: − -->
+        <div class="flex items-center justify-center px-2 text-sm text-muted select-none border-x border-default">−</div>
+
+        <!-- Taxes (non-clickable) -->
+        <div class="flex flex-col gap-1 p-4">
+          <span class="text-xs font-semibold uppercase tracking-wide text-muted">Taxes</span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.taxes) }}</span>
+          <span class="text-xs text-muted">withheld</span>
+        </div>
+
+        <!-- Operator: − -->
+        <div class="flex items-center justify-center px-2 text-sm text-muted select-none border-x border-default">−</div>
+
         <!-- Fixed -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors border-r border-default"
+          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors"
           :class="store.activeSection === 'fixed' ? 'bg-elevated' : ''"
           @click="setActiveSection('fixed')"
         >
-          <span class="text-xs font-semibold uppercase tracking-wide text-muted">− Fixed</span>
+          <span class="text-xs font-semibold uppercase tracking-wide text-muted">Fixed</span>
           <span class="text-xl font-bold tabular-nums">{{ money(store.summary.fixed.total) }}</span>
           <span class="text-xs text-muted">
             {{ store.summary.fixed.transactions.length }} transaction{{ store.summary.fixed.transactions.length === 1 ? '' : 's' }}
           </span>
         </button>
 
+        <!-- Operator: = -->
+        <div class="flex items-center justify-center px-2 text-sm text-muted select-none border-x border-default">=</div>
+
         <!-- Free Money (non-clickable, green bg) -->
         <div class="flex flex-col gap-1 p-4 border-r border-default bg-green-500/10">
-          <span class="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">= Free Money</span>
+          <span class="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">Free Money</span>
           <span class="text-xl font-bold tabular-nums text-green-700 dark:text-green-400">{{ money(store.summary.freeMoney) }}</span>
           <span class="text-xs text-green-600/70 dark:text-green-500/70">&nbsp;</span>
         </div>
@@ -219,7 +240,10 @@ onMounted(async () => {
       <!-- Detail panel -->
       <div class="border border-default rounded-lg overflow-hidden">
         <div class="bg-elevated px-4 py-2 border-b border-default">
-          <span class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
+          <span v-if="store.activeSection === 'income'" class="text-sm font-medium uppercase tracking-wide">
+            INCOME — {{ store.summary.income.transactions.length }} transaction{{ store.summary.income.transactions.length === 1 ? '' : 's' }}
+          </span>
+          <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
         </div>
         <table class="w-full text-sm">
           <thead class="text-left text-muted border-b border-default">
