@@ -2,4 +2,4 @@
 import type { EmployerMatchItem } from "./EmployerMatchItem";
 import type { PaycheckDeduction } from "./PaycheckDeduction";
 
-export type Paycheck = { id: number, payDate: string, employer: string, payPeriod: string, grossAmount: number, netAmount: number, federalTax: number, stateTax: number, localTax: number, socialSecurityTax: number, medicareTax: number, deductions: Array<PaycheckDeduction>, employerMatch: Array<EmployerMatchItem>, importSource: string, createdAt: string, updatedAt: string, };
+export type Paycheck = { id: number, payDate: string, employer: string, payPeriod: string, grossAmount: number, netAmount: number, federalTax: number, stateTax: number, localTax: number, socialSecurityTax: number, medicareTax: number, deductions: Array<PaycheckDeduction>, employerMatch: Array<EmployerMatchItem>, incomeAccountId: number | null, importSource: string, createdAt: string, updatedAt: string, };

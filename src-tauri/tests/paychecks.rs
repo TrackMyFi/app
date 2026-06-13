@@ -35,6 +35,7 @@ fn base_paycheck(employer: &str, pay_date: &str) -> NewPaycheck {
         medicare_tax: 72.5,
         deductions: vec![],
         employer_match: vec![],
+        income_account_id: None,
         created_at: "2026-06-01T00:00:00Z".into(),
     }
 }
@@ -209,6 +210,7 @@ async fn update_paycheck_recreates_contributions() {
             },
         ],
         employer_match: vec![],
+        income_account_id: None,
         updated_at: "2026-06-16T00:00:00Z".into(),
     }).await.unwrap();
 
@@ -267,6 +269,7 @@ async fn update_nonexistent_paycheck_errors_with_no_orphaned_txns() {
             },
         ],
         employer_match: vec![],
+        income_account_id: None,
         updated_at: "2026-06-16T00:00:00Z".into(),
     }).await;
 
