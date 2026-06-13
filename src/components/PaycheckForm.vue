@@ -343,7 +343,7 @@ async function save() {
     <p v-if="saveError" class="text-sm text-red-500">{{ saveError }}</p>
 
     <div class="flex justify-end gap-2 pt-2">
-      <UButton type="submit">{{ props.editing ? 'Save' : 'Add paycheck' }}</UButton>
+      <UButton type="submit">{{ props.editing ? 'Save' : props.copyFrom ? 'Copy paycheck' : 'Add paycheck' }}</UButton>
     </div>
 
   </form>
