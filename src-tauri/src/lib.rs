@@ -50,6 +50,7 @@ pub fn run() {
             commands::budget::list_budget_txns_cmd,
             commands::budget::get_budget_month_target_cmd,
             commands::budget::set_budget_month_target_cmd,
+            commands::budget::get_budget_paycheck_summary_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
