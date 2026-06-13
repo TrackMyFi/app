@@ -5,7 +5,7 @@ const links = [
   { label: 'Transactions', to: '/transactions', icon: 'i-lucide-receipt' },
   { label: 'Paychecks', to: '/paychecks', icon: 'i-lucide-banknote' },
   { label: 'Contributions', to: '/contributions', icon: 'i-lucide-piggy-bank' },
-  { label: 'Budget', icon: 'i-lucide-calculator', disabled: true },
+  { label: 'Budget', to: '/budget', icon: 'i-lucide-calculator' },
   { label: 'Forecast', icon: 'i-lucide-trending-up', disabled: true },
   { label: 'Settings', to: '/settings', icon: 'i-lucide-settings' },
 ]
