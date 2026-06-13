@@ -41,8 +41,11 @@ export interface ResolvedLimits {
 
 /**
  * Resolve IRS limits for a year. If the exact year is known, returns it
- * un-estimated. Otherwise falls back to the nearest known year (clamped to the
- * available range) and flags `estimated` with the source year in `estimatedFrom`.
+ * un-estimated. Otherwise clamps to the known range — years above the max use
+ * the latest known year; any other unknown year (below the min, or an in-range
+ * gap) uses the earliest known year — and flags `estimated` with the source
+ * year in `estimatedFrom`. The table is maintained contiguously, so in-range
+ * gaps do not occur in practice.
  */
 export function resolveYearLimits(year: number): ResolvedLimits {
   if (IRS_LIMITS[year]) {
