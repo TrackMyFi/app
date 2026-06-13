@@ -6,6 +6,7 @@ import { useAccountsStore } from '../stores/accounts'
 import { contributionItems } from '../lib/paychecks/index'
 import { INVESTMENT_TYPES } from '../lib/accountTypes'
 import DateInput from './DateInput.vue'
+import ComboboxInput from './ComboboxInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 
 const PAY_PERIODS = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'irregular'] as const
@@ -226,7 +227,7 @@ async function save() {
         </div>
         <div>
           <p class="text-xs text-muted mb-1">Employer</p>
-          <UInputMenu v-model="form.employer" mode="autocomplete" :items="knownEmployers" placeholder="Employer" />
+          <ComboboxInput v-model="form.employer" :items="knownEmployers" placeholder="Employer" />
         </div>
         <div>
           <p class="text-xs text-muted mb-1">Pay period</p>
@@ -288,7 +289,7 @@ async function save() {
       </div>
       <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
         <div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
-          <UInputMenu v-model="ded.label" mode="autocomplete" :items="knownDeductionLabels" placeholder="Label" />
+          <ComboboxInput v-model="ded.label" :items="knownDeductionLabels" placeholder="Label" />
           <UInput v-model.number="ded.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
           <UCheckbox v-model="ded.preTax" label="Pre-tax" />
           <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeDeduction(i)" />
