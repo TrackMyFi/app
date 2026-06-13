@@ -10,6 +10,7 @@ import {
   getBudgetPaycheckSummary,
 } from '../lib/api/budget'
 import type { BudgetMonth } from '../lib/api/budget'
+import { listPaychecks } from '../lib/api/paychecks'
 
 export const useBudgetStore = defineStore('budget', () => {
   const months = ref<BudgetMonth[]>([])
@@ -18,6 +19,7 @@ export const useBudgetStore = defineStore('budget', () => {
   const target = ref<BudgetMonthTarget | null>(null)
   const summary = ref<BudgetMonthSummary | null>(null)
   const activeSection = ref<'income' | 'savings' | 'fixed' | 'discretionary' | null>(null)
+  const paycheckGrossMap = ref<Record<number, number>>({})
 
   async function loadMonths() {
     months.value = await listBudgetMonths()
@@ -27,11 +29,19 @@ export const useBudgetStore = defineStore('budget', () => {
     selectedYear.value = year
     selectedMonth.value = month
 
-    const [txns, rawTarget, paycheckSummary] = await Promise.all([
+    const monthStr = String(month).padStart(2, '0')
+    const lastDay = new Date(year, month, 0).getDate()
+    const startDate = `${year}-${monthStr}-01`
+    const endDate = `${year}-${monthStr}-${String(lastDay).padStart(2, '0')}`
+
+    const [txns, rawTarget, paycheckSummary, paychecks] = await Promise.all([
       listBudgetTxns(year, month),
       getBudgetMonthTarget(year, month),
       getBudgetPaycheckSummary(year, month),
+      listPaychecks({ startDate, endDate }),
     ])
+
+    paycheckGrossMap.value = Object.fromEntries(paychecks.map((p) => [p.id, p.grossAmount]))
 
     summary.value = buildBudgetMonth(txns, paycheckSummary)
 
@@ -73,6 +83,7 @@ export const useBudgetStore = defineStore('budget', () => {
     target,
     summary,
     activeSection,
+    paycheckGrossMap,
     loadMonths,
     load,
     setTarget,

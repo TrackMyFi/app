@@ -87,7 +87,6 @@ const savingsSubLabel = computed(() => {
   return `target ${money(store.target.savingsTarget)}`
 })
 
-const savingsSubLabelMuted = computed(() => !!store.target?.isInherited)
 
 const discretionaryRemaining = computed(() => {
   if (!store.summary) return 0
@@ -125,27 +124,22 @@ onMounted(async () => {
     <!-- Formula row + detail panel -->
     <template v-else-if="store.summary">
       <!-- Formula columns -->
-      <div class="flex border border-default rounded-lg overflow-hidden">
+      <div class="flex border border-default rounded-lg">
         <!-- Income -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0"
+          class="relative flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0 rounded-l-lg border-r border-default"
           :class="store.activeSection === 'income' ? 'bg-elevated' : ''"
           @click="setActiveSection('income')"
         >
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Income</span>
           <span class="text-xl font-bold tabular-nums">{{ money(store.summary.grossIncome) }}</span>
           <span class="text-xs text-muted">Net: {{ money(store.summary.netIncome) }}</span>
+          <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">−</span>
         </button>
-
-        <!-- Separator − -->
-        <div class="relative w-6 shrink-0 flex items-center justify-center">
-          <div class="absolute inset-y-0 border-l border-default left-1/2" />
-          <div class="relative z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none" style="background: var(--ui-bg)">−</div>
-        </div>
 
         <!-- Savings -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0"
+          class="relative flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0 border-r border-default"
           :class="store.activeSection === 'savings' ? 'bg-elevated' : ''"
           @click="setActiveSection('savings')"
         >
@@ -168,10 +162,7 @@ onMounted(async () => {
             </div>
           </template>
           <template v-else>
-            <span
-              class="text-xs flex items-center gap-1"
-              :class="savingsSubLabelMuted ? 'text-muted' : 'text-muted'"
-            >
+            <span class="text-xs flex items-center gap-1 text-muted">
               {{ savingsSubLabel }}
               <button
                 class="ml-1 opacity-50 hover:opacity-100 transition-opacity"
@@ -182,30 +173,20 @@ onMounted(async () => {
               </button>
             </span>
           </template>
+          <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">−</span>
         </button>
 
-        <!-- Separator − -->
-        <div class="relative w-6 shrink-0 flex items-center justify-center">
-          <div class="absolute inset-y-0 border-l border-default left-1/2" />
-          <div class="relative z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none" style="background: var(--ui-bg)">−</div>
-        </div>
-
         <!-- Taxes (non-clickable) -->
-        <div class="flex flex-col gap-1 p-4 flex-1 min-w-0">
+        <div class="relative flex flex-col gap-1 p-4 flex-1 min-w-0 border-r border-default">
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Taxes</span>
           <span class="text-xl font-bold tabular-nums">{{ money(store.summary.taxes) }}</span>
           <span class="text-xs text-muted">withheld</span>
-        </div>
-
-        <!-- Separator − -->
-        <div class="relative w-6 shrink-0 flex items-center justify-center">
-          <div class="absolute inset-y-0 border-l border-default left-1/2" />
-          <div class="relative z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none" style="background: var(--ui-bg)">−</div>
+          <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">−</span>
         </div>
 
         <!-- Fixed -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0"
+          class="relative flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0 border-r border-default"
           :class="store.activeSection === 'fixed' ? 'bg-elevated' : ''"
           @click="setActiveSection('fixed')"
         >
@@ -214,13 +195,8 @@ onMounted(async () => {
           <span class="text-xs text-muted">
             {{ store.summary.fixed.transactions.length }} transaction{{ store.summary.fixed.transactions.length === 1 ? '' : 's' }}
           </span>
+          <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">=</span>
         </button>
-
-        <!-- Separator = -->
-        <div class="relative w-6 shrink-0 flex items-center justify-center">
-          <div class="absolute inset-y-0 border-l border-default left-1/2" />
-          <div class="relative z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none" style="background: var(--ui-bg)">=</div>
-        </div>
 
         <!-- Free Money (non-clickable, green bg) -->
         <div class="flex flex-col gap-1 p-4 border-r border-default bg-green-500/10 flex-1 min-w-0">
@@ -231,7 +207,7 @@ onMounted(async () => {
 
         <!-- Discretionary -->
         <button
-          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0"
+          class="flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0 rounded-r-lg"
           :class="store.activeSection === 'discretionary' ? 'bg-elevated' : ''"
           @click="setActiveSection('discretionary')"
         >
@@ -254,7 +230,37 @@ onMounted(async () => {
           </span>
           <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
         </div>
-        <table class="w-full text-sm">
+        <!-- Income table: Gross + Net columns -->
+        <table v-if="store.activeSection === 'income'" class="w-full text-sm">
+          <thead class="text-left text-muted border-b border-default">
+            <tr>
+              <th class="px-4 py-2 font-normal w-28">Date</th>
+              <th class="py-2 font-normal">Description</th>
+              <th class="py-2 font-normal">Account</th>
+              <th class="px-4 py-2 font-normal text-right">Gross</th>
+              <th class="px-4 py-2 font-normal text-right">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="t in detailTransactions"
+              :key="t.id"
+              class="border-t border-default/50"
+            >
+              <td class="px-4 py-2 text-muted w-28">{{ t.date }}</td>
+              <td class="py-2">{{ t.description }}</td>
+              <td class="py-2 text-muted">{{ accountName(t.accountId) }}</td>
+              <td class="px-4 py-2 text-right tabular-nums">{{ money(t.paycheckId != null ? (store.paycheckGrossMap[t.paycheckId] ?? t.amount) : t.amount) }}</td>
+              <td class="px-4 py-2 text-right tabular-nums">{{ money(t.amount) }}</td>
+            </tr>
+            <tr v-if="!detailTransactions.length">
+              <td colspan="5" class="px-4 py-6 text-center text-muted">{{ emptyMessage }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- All other sections: single Amount column -->
+        <table v-else class="w-full text-sm">
           <thead class="text-left text-muted border-b border-default">
             <tr>
               <th class="px-4 py-2 font-normal w-28">Date</th>
