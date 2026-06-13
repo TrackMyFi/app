@@ -11,7 +11,7 @@ import type { Paycheck } from '../lib/types/Paycheck'
 const PAY_PERIODS = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'irregular'] as const
 const CONTRIBUTION_ACCOUNT_TYPES = [...INVESTMENT_TYPES].map((t) => ({ label: t, value: t }))
 
-const props = defineProps<{ editing: Paycheck | null }>()
+const props = defineProps<{ editing: Paycheck | null; copyFrom: Paycheck | null }>()
 const emit = defineEmits<{ saved: [] }>()
 
 const store = usePaychecksStore()
@@ -73,8 +73,8 @@ function resetForm() {
 }
 
 watch(
-  () => props.editing,
-  (e) => {
+  () => [props.editing, props.copyFrom] as const,
+  ([e, c]) => {
     saveError.value = null
     if (e) {
       form.payDate = e.payDate
@@ -95,6 +95,29 @@ watch(
         accountId: d.accountId ?? null,
       }))
       form.employerMatch = e.employerMatch.map((m) => ({
+        label: m.label,
+        amount: m.amount,
+        accountId: m.accountId ?? null,
+      }))
+    } else if (c) {
+      form.payDate = today
+      form.employer = c.employer
+      form.payPeriod = c.payPeriod
+      form.grossAmount = c.grossAmount
+      form.netAmount = c.netAmount
+      form.federalTax = c.federalTax
+      form.stateTax = c.stateTax
+      form.localTax = c.localTax
+      form.socialSecurityTax = c.socialSecurityTax
+      form.medicareTax = c.medicareTax
+      form.deductions = c.deductions.map((d) => ({
+        label: d.label,
+        amount: d.amount,
+        preTax: d.preTax,
+        contributionAccountType: d.contributionAccountType ?? null,
+        accountId: d.accountId ?? null,
+      }))
+      form.employerMatch = c.employerMatch.map((m) => ({
         label: m.label,
         amount: m.amount,
         accountId: m.accountId ?? null,
