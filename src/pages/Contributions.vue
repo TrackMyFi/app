@@ -54,11 +54,11 @@ function pct(n: number | undefined): string {
   return n === undefined ? '—' : `${(n * 100).toFixed(0)}%`
 }
 
+// Amber when near the cap (80-99%) or over it (>100%); green when on track or exactly maxed.
 function barColor(pctUsed: number | undefined): string {
-  if (pctUsed === undefined) return 'bg-gray-400'
+  if (pctUsed === undefined) return 'bg-green-500'
   if (pctUsed > 1) return 'bg-amber-500'
-  if (pctUsed >= 1) return 'bg-green-500'
-  if (pctUsed >= 0.8) return 'bg-amber-500'
+  if (pctUsed >= 0.8 && pctUsed < 1) return 'bg-amber-500'
   return 'bg-green-500'
 }
 
@@ -168,6 +168,15 @@ onMounted(async () => {
         </div>
       </div>
       <table class="w-full text-sm">
+        <thead class="text-left text-muted border-t border-default">
+          <tr>
+            <th class="px-4 py-2 font-normal w-28">Date</th>
+            <th class="py-2 font-normal">Description</th>
+            <th class="py-2 font-normal">Account</th>
+            <th class="py-2 font-normal">Source</th>
+            <th class="px-4 py-2 font-normal text-right">Amount</th>
+          </tr>
+        </thead>
         <tbody>
           <tr
             v-for="t in rowTxns(row)"
