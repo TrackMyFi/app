@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest'
-import { realMonthlyReturn, monthsToFire, savingsRate } from './projection'
+import { DateTime } from 'luxon'
+import { realMonthlyReturn, monthsToFire, savingsRate, projectionSeries } from './projection'
 import type { FireAccount, FireBalance } from './types'
+
+describe('projectionSeries', () => {
+  const from = DateTime.fromISO('2026-01-01')
+
+  it('emits months+1 points starting at the present value', () => {
+    const pts = projectionSeries(1000, 100, 0.07, 0, 3, from)
+    expect(pts).toHaveLength(4)
+    expect(pts[0]).toEqual({ date: '2026-01-01', value: 1000 })
+  })
+
+  it('compounds each month then adds the contribution', () => {
+    const r = Math.pow(1.07, 1 / 12) - 1
+    const pts = projectionSeries(1000, 100, 0.07, 0, 1, from)
+    expect(pts[1].value).toBeCloseTo(1000 * (1 + r) + 100, 6)
+    expect(pts[1].date).toBe('2026-02-01')
+  })
+})
 
 describe('projection', () => {
   it('realMonthlyReturn deflates nominal by inflation', () => {

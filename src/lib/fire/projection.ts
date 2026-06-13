@@ -52,3 +52,25 @@ export function savingsRate(
   const prior = investmentBalanceAt(accounts, balances, yearAgoIso)
   return (now - prior) / annualIncome
 }
+
+export interface ProjectionPoint { date: string; value: number }
+
+/**
+ * Month-by-month projected investable value, `months + 1` points (index 0 = the
+ * present value at `from`). Each subsequent month compounds at the monthly real
+ * return then adds the monthly contribution.
+ */
+export function projectionSeries(
+  presentValue: number, monthlyContribution: number,
+  expectedReturnRate: number, inflationRate: number,
+  months: number, from: DateTime = DateTime.now(),
+): ProjectionPoint[] {
+  const mr = realMonthlyReturn(expectedReturnRate, inflationRate)
+  const pts: ProjectionPoint[] = []
+  let fv = presentValue
+  for (let m = 0; m <= months; m++) {
+    if (m > 0) fv = fv * (1 + mr) + monthlyContribution
+    pts.push({ date: from.plus({ months: m }).toISODate()!, value: fv })
+  }
+  return pts
+}
