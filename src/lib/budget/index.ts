@@ -36,12 +36,11 @@ function sumAmount(txns: Transaction[]): number {
 
 export function buildBudgetMonth(txns: Transaction[], paycheckSummary: PaycheckSummary): BudgetMonthSummary {
   const savings = txns.filter((t) => t.isContribution === true)
-  const income = txns.filter((t) => t.type === 'income' && !t.isContribution)
   const nonPaycheckIncome = txns.filter((t) => t.type === 'income' && !t.isContribution && t.importSource !== 'paycheck')
   const fixed = txns.filter((t) => t.type === 'expense' && t.category === 'fixed' && !t.isContribution)
   const discretionary = txns.filter((t) => t.type === 'expense' && t.category === 'discretionary' && !t.isContribution)
 
-  const incomeItem: BudgetLineItem = { total: sumAmount(income), transactions: income }
+  const incomeItem: BudgetLineItem = { total: sumAmount(nonPaycheckIncome), transactions: nonPaycheckIncome }
   const savingsItem: BudgetLineItem = { total: sumAmount(savings), transactions: savings }
   const fixedItem: BudgetLineItem = { total: sumAmount(fixed), transactions: fixed }
   const discretionaryItem: BudgetLineItem = { total: sumAmount(discretionary), transactions: discretionary }
