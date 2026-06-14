@@ -18,11 +18,22 @@ pub enum DbSource {
     LocalOriginal,
 }
 
-/// Pure decision: which file/builder to use given config + whether the replica file exists.
-pub fn decide_db_source(sync_enabled: bool, has_creds: bool, replica_exists: bool) -> DbSource {
+/// Pure decision: which file/builder to use.
+///
+/// The replica file is preferred over the original ONLY when sync was actually
+/// completed (`bootstrapped`) — either still enabled, or deliberately disabled
+/// after a real sync. A replica file left behind by a failed/aborted setup,
+/// with no bootstrapped config, is ignored so it can never hide the real local
+/// DB.
+pub fn decide_db_source(
+    sync_enabled: bool,
+    has_creds: bool,
+    bootstrapped: bool,
+    replica_exists: bool,
+) -> DbSource {
     if sync_enabled && has_creds {
         DbSource::RemoteReplica
-    } else if replica_exists {
+    } else if bootstrapped && replica_exists {
         DbSource::LocalReplicaFile
     } else {
         DbSource::LocalOriginal
@@ -63,7 +74,7 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
     let replica_path = dir.join(REPLICA_DB);
     let replica_exists = replica_path.exists();
 
-    let source = decide_db_source(cfg.enabled, has_creds, replica_exists);
+    let source = decide_db_source(cfg.enabled, has_creds, cfg.bootstrapped, replica_exists);
 
     let (db, mode) = match source {
         DbSource::RemoteReplica => {
@@ -102,22 +113,33 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
 mod tests {
     use super::*;
 
+    // decide_db_source(sync_enabled, has_creds, bootstrapped, replica_exists)
+
     #[test]
     fn synced_when_enabled_with_creds() {
-        assert_eq!(decide_db_source(true, true, false), DbSource::RemoteReplica);
-        assert_eq!(decide_db_source(true, true, true), DbSource::RemoteReplica);
+        assert_eq!(decide_db_source(true, true, true, false), DbSource::RemoteReplica);
+        assert_eq!(decide_db_source(true, true, true, true), DbSource::RemoteReplica);
     }
 
     #[test]
     fn falls_back_to_replica_file_when_disabled_but_synced_before() {
-        assert_eq!(decide_db_source(false, true, true), DbSource::LocalReplicaFile);
-        assert_eq!(decide_db_source(false, false, true), DbSource::LocalReplicaFile);
+        // Deliberately disabled after a real sync (bootstrapped) => keep using the replica.
+        assert_eq!(decide_db_source(false, true, true, true), DbSource::LocalReplicaFile);
+        assert_eq!(decide_db_source(false, false, true, true), DbSource::LocalReplicaFile);
     }
 
     #[test]
     fn uses_original_when_never_synced() {
-        assert_eq!(decide_db_source(false, false, false), DbSource::LocalOriginal);
+        assert_eq!(decide_db_source(false, false, false, false), DbSource::LocalOriginal);
         // Enabled flag set but creds missing => not synced yet.
-        assert_eq!(decide_db_source(true, false, false), DbSource::LocalOriginal);
+        assert_eq!(decide_db_source(true, false, false, false), DbSource::LocalOriginal);
+    }
+
+    #[test]
+    fn ignores_stale_replica_without_bootstrap() {
+        // A replica file left by a failed/aborted setup (no bootstrapped config)
+        // must NOT be opened — it would hide the real local DB.
+        assert_eq!(decide_db_source(false, false, false, true), DbSource::LocalOriginal);
+        assert_eq!(decide_db_source(false, true, false, true), DbSource::LocalOriginal);
     }
 }
