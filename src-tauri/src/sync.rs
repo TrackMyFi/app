@@ -101,10 +101,16 @@ pub async fn list_data_tables(conn: &Connection) -> Result<Vec<String>, String> 
     Ok(out)
 }
 
+// Makes `dst.table` mirror `src.table`. Clears the destination first so any rows
+// the migrations seeded into the freshly-created replica (e.g. the default
+// `fire_profile` id=1) are replaced rather than colliding on primary key.
 // Relies on `SELECT *` column order matching the destination's positional
 // `INSERT ... VALUES`; this holds only because src and dst share an identical
 // schema (both run the same migrations).
 async fn copy_table(src: &Connection, dst: &Connection, table: &str) -> Result<usize, String> {
+    dst.execute(&format!("DELETE FROM \"{table}\""), ())
+        .await
+        .map_err(|e| e.to_string())?;
     let mut rows = src
         .query(&format!("SELECT * FROM \"{table}\""), ())
         .await
@@ -256,6 +262,53 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Best-effort removal of the embedded-replica file and its libSQL sidecars.
+/// Used to clean up after a failed bootstrap so a retry starts from scratch.
+fn remove_replica_files(dir: &Path) {
+    let _ = std::fs::remove_file(dir.join(REPLICA_DB));
+    for suffix in ["-info", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(dir.join(format!("{REPLICA_DB}{suffix}")));
+    }
+}
+
+/// Validate credentials (initial sync), then either seed an empty cloud from the
+/// local DB or adopt a populated cloud. Returns the user-facing outcome string.
+/// Any error here leaves the replica file for the caller to clean up.
+async fn run_bootstrap(db: &libsql::Database, local_path: &Path) -> Result<String, String> {
+    // Initial sync doubles as credential validation (bad URL/token fails here).
+    db.sync()
+        .await
+        .map_err(|e| format!("Could not connect to Turso (check the URL and token): {e}"))?;
+
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let cloud_tables = list_data_tables(&conn).await?;
+
+    if cloud_tables.is_empty() {
+        // Empty cloud: create schema locally (this seeds default rows such as
+        // fire_profile id=1), then copy existing local data up. copy_all_data
+        // clears each destination table first so seeded rows don't collide.
+        crate::migrations::run(&conn).await?;
+        if local_path.exists() {
+            let old = libsql::Builder::new_local(local_path.to_path_buf())
+                .build()
+                .await
+                .map_err(|e| e.to_string())?;
+            let old_conn = old.connect().map_err(|e| e.to_string())?;
+            let copied = copy_all_data(&old_conn, &conn).await?;
+            db.sync().await.map_err(|e| e.to_string())?; // push everything up
+            Ok(format!("Sync enabled. Uploaded your existing data ({copied} records) to Turso."))
+        } else {
+            db.sync().await.map_err(|e| e.to_string())?;
+            Ok("Sync enabled. Started a fresh cloud database.".to_string())
+        }
+    } else {
+        // Populated cloud (another device seeded it). Adopt it; do not merge.
+        Ok("Sync enabled. This device now mirrors your existing cloud data. \
+            Your previous local data on this device was kept as a backup but not merged."
+            .to_string())
+    }
+}
+
 /// Enable sync: validate creds, bootstrap (seed empty cloud from local OR adopt
 /// populated cloud), back up the old local file, persist config + token.
 /// Returns a human-readable outcome string for the UI.
@@ -270,46 +323,25 @@ pub async fn save_sync_config(app: AppHandle, url: String, token: String) -> Res
         return Err("Sync is already set up on this device. Disable it first to reconfigure.".into());
     }
 
-    // Build replica + validate credentials via an initial sync (pull).
+    // Build replica (this creates the replica file on disk). From here on ANY
+    // failure must remove the partial replica, otherwise a retry is blocked by
+    // the guard above and a restart would open a half-bootstrapped replica
+    // instead of the real local DB.
     let db = libsql::Builder::new_remote_replica(replica_path.clone(), url.clone(), token.clone())
         .build()
         .await
         .map_err(|e| format!("Could not connect to Turso: {e}"))?;
-    if let Err(e) = db.sync().await {
-        // Clean up the partial replica so a retry starts clean.
-        drop(db);
-        let _ = std::fs::remove_file(&replica_path);
-        return Err(format!("Could not connect to Turso (check the URL and token): {e}"));
-    }
 
-    let conn = db.connect().map_err(|e| e.to_string())?;
-    let cloud_tables = list_data_tables(&conn).await?;
-
-    let outcome = if cloud_tables.is_empty() {
-        // Empty cloud: create schema locally, copy existing local data up.
-        crate::migrations::run(&conn).await?;
-        if local_path.exists() {
-            let old = libsql::Builder::new_local(local_path.clone())
-                .build()
-                .await
-                .map_err(|e| e.to_string())?;
-            let old_conn = old.connect().map_err(|e| e.to_string())?;
-            let copied = copy_all_data(&old_conn, &conn).await?;
-            db.sync().await.map_err(|e| e.to_string())?; // push everything up
-            format!("Sync enabled. Uploaded your existing data ({copied} records) to Turso.")
-        } else {
-            db.sync().await.map_err(|e| e.to_string())?;
-            "Sync enabled. Started a fresh cloud database.".to_string()
+    let outcome = match run_bootstrap(&db, &local_path).await {
+        Ok(o) => o,
+        Err(e) => {
+            drop(db);
+            remove_replica_files(&dir);
+            return Err(e);
         }
-    } else {
-        // Populated cloud (another device seeded it). Adopt it; do not merge.
-        "Sync enabled. This device now mirrors your existing cloud data. \
-         Your previous local data on this device was kept as a backup but not merged."
-            .to_string()
     };
 
     // Release the replica handle before the app re-opens it on restart.
-    drop(conn);
     drop(db);
 
     // Back up the old local file (never auto-deleted).
@@ -403,5 +435,43 @@ mod tests {
         let mut mig = dst.query("SELECT count(*) FROM schema_migrations", ()).await.unwrap();
         let m: i64 = mig.next().await.unwrap().unwrap().get(0).unwrap();
         assert_eq!(m, 0, "schema_migrations must not be copied");
+    }
+
+    #[tokio::test]
+    async fn copy_overwrites_migration_seeded_rows() {
+        // Reproduces the bootstrap bug: migrations::run seeds a default
+        // fire_profile (id=1) into the destination before copy_all_data runs,
+        // so copying the local fire_profile (also id=1) must not collide.
+        let src_db = open_local("seed_src").await;
+        let dst_db = open_local("seed_dst").await;
+        let src = src_db.connect().unwrap();
+        let dst = dst_db.connect().unwrap();
+
+        for c in [&src, &dst] {
+            c.execute(
+                "CREATE TABLE fire_profile (id INTEGER PRIMARY KEY CHECK (id = 1), age INTEGER)",
+                (),
+            )
+            .await
+            .unwrap();
+            c.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT)", ())
+                .await
+                .unwrap();
+        }
+        // dst already holds the migration-seeded default row (what migrations::run does).
+        dst.execute("INSERT INTO fire_profile VALUES (1, 30)", ()).await.unwrap();
+        // src (the user's local DB) holds the real, edited row at the same id.
+        src.execute("INSERT INTO fire_profile VALUES (1, 42)", ()).await.unwrap();
+
+        let copied = copy_all_data(&src, &dst).await.unwrap();
+        assert_eq!(copied, 1);
+
+        // The local row must replace the seeded default — exactly one row, with src's value.
+        let mut rows = dst.query("SELECT age FROM fire_profile WHERE id = 1", ()).await.unwrap();
+        let age: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(age, 42, "local row must overwrite the migration-seeded default");
+        let mut cnt = dst.query("SELECT count(*) FROM fire_profile", ()).await.unwrap();
+        let n: i64 = cnt.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(n, 1);
     }
 }
