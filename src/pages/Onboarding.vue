@@ -119,6 +119,7 @@ async function finish() {
       <!-- Step 1: Ages -->
       <div v-if="step === 1" class="space-y-6">
         <div>
+          <img src="/logo-icon.svg" alt="TrackMyFI" class="w-12 h-12 mb-4" />
           <h1 class="text-2xl font-bold">Welcome to TrackMyFI</h1>
           <p class="text-muted mt-1">Let's set up your FIRE profile. You can change any of this later in Settings.</p>
         </div>

@@ -232,7 +232,7 @@ async function save() {
     <!-- Paycheck info -->
     <div class="space-y-3">
       <p class="text-xs font-semibold uppercase tracking-wide text-muted">Paycheck info</p>
-      <div class="grid grid-cols-3 gap-3">
+      <div class="grid grid-cols-[1fr_2fr_1fr] gap-3">
         <div>
           <p class="text-xs text-muted mb-1">Pay date</p>
           <DateInput v-model="form.payDate" />

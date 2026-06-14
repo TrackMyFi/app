@@ -37,6 +37,10 @@ const links = [
   <UApp>
     <div class="flex h-screen">
       <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 space-y-1">
+        <div class="flex items-center gap-2 px-3 py-3 mb-2">
+          <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
+          <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
+        </div>
         <template v-for="l in links" :key="l.label">
           <RouterLink
             v-if="l.to"

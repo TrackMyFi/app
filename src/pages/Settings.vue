@@ -130,31 +130,37 @@ async function runSyncNow() {
 <template>
   <div class="p-6 max-w-xl">
     <h1 class="text-2xl font-bold mb-4">FIRE Profile</h1>
-    <UForm :state="form" @submit="onSubmit" class="space-y-3">
-      <UFormField label="Current age">
-        <UInput v-model.number="form.currentAge" type="number" />
-      </UFormField>
-      <UFormField label="Target retirement age">
-        <UInput v-model.number="form.targetRetirementAge" type="number" />
-      </UFormField>
+    <UForm :state="form" @submit="onSubmit" class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <UFormField label="Current age">
+          <UInput v-model.number="form.currentAge" type="number" />
+        </UFormField>
+        <UFormField label="Target retirement age">
+          <UInput v-model.number="form.targetRetirementAge" type="number" />
+        </UFormField>
+      </div>
       <UFormField label="Annual expenses target">
         <UInput v-model.number="form.annualExpensesTarget" type="number" />
       </UFormField>
-      <UFormField label="Lean FIRE expenses (optional)">
-        <UInput v-model.number="form.leanFireAnnualExpenses" type="number" />
-      </UFormField>
-      <UFormField label="Fat FIRE expenses (optional)">
-        <UInput v-model.number="form.fatFireAnnualExpenses" type="number" />
-      </UFormField>
+      <div class="grid grid-cols-2 gap-3">
+        <UFormField label="Lean FIRE expenses (optional)">
+          <UInput v-model.number="form.leanFireAnnualExpenses" type="number" />
+        </UFormField>
+        <UFormField label="Fat FIRE expenses (optional)">
+          <UInput v-model.number="form.fatFireAnnualExpenses" type="number" />
+        </UFormField>
+      </div>
       <UFormField label="Annual income">
         <UInput v-model.number="form.annualIncome" type="number" />
       </UFormField>
-      <UFormField label="Expected return rate (e.g. 0.07)">
-        <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" />
-      </UFormField>
-      <UFormField label="Inflation rate (e.g. 0.03)">
-        <UInput v-model.number="form.inflationRate" type="number" step="0.01" />
-      </UFormField>
+      <div class="grid grid-cols-2 gap-3">
+        <UFormField label="Expected return rate (e.g. 0.07)">
+          <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" />
+        </UFormField>
+        <UFormField label="Inflation rate (e.g. 0.03)">
+          <UInput v-model.number="form.inflationRate" type="number" step="0.01" />
+        </UFormField>
+      </div>
       <UFormField label="HSA coverage">
         <USelect
           v-model="form.hsaCoverage"

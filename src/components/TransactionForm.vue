@@ -124,17 +124,35 @@ async function save() {
 </script>
 
 <template>
-  <form class="space-y-3" @submit.prevent="save">
-    <USelect v-model="form.type" :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))" />
-    <USelect v-model="form.accountId" :items="accountItems" :placeholder="isTransfer ? 'From account' : 'Account'" />
-    <USelect v-if="isTransfer" v-model="form.transferAccountId" :items="accountItems" placeholder="To account" />
-    <UInput v-model.number="form.amount" type="number" step="0.01" placeholder="Amount" />
-    <UInput v-model="form.description" placeholder="Description" />
-    <DateInput v-model="form.date" />
-    <USelect v-if="!isTransfer" v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" />
+  <form class="space-y-4" @submit.prevent="save">
+    <div class="grid grid-cols-2 gap-3">
+      <UFormField label="Type">
+        <USelect v-model="form.type" :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))" />
+      </UFormField>
+      <UFormField :label="isTransfer ? 'From account' : 'Account'">
+        <USelect v-model="form.accountId" :items="accountItems" placeholder="Select account" />
+      </UFormField>
+    </div>
+    <UFormField v-if="isTransfer" label="To account">
+      <USelect v-model="form.transferAccountId" :items="accountItems" placeholder="Select account" />
+    </UFormField>
+    <div class="grid grid-cols-2 gap-3">
+      <UFormField label="Amount">
+        <UInput v-model.number="form.amount" type="number" step="0.01" placeholder="0.00" />
+      </UFormField>
+      <UFormField label="Date">
+        <DateInput v-model="form.date" />
+      </UFormField>
+    </div>
+    <UFormField label="Description">
+      <UInput v-model="form.description" placeholder="Optional" />
+    </UFormField>
+    <UFormField v-if="!isTransfer" label="Category">
+      <USelect v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" />
+    </UFormField>
     <UCheckbox v-if="!isTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
 
-    <div class="rounded border border-default p-3 space-y-2">
+    <div class="rounded-lg border border-default p-3 space-y-2">
       <USwitch v-model="updateBalance" label="Update account balance" />
       <p class="text-xs text-muted">
         Writes a new balance snapshot reflecting this transaction, so the change shows up in your
