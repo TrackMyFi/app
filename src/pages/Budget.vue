@@ -169,7 +169,7 @@ onMounted(async () => {
                 title="Edit savings target"
                 @click.stop="openTargetEdit"
               >
-                <span class="i-lucide-pencil w-3 h-3 inline-block" />
+                <span class="i-ph-pencil w-3 h-3 inline-block" />
               </button>
             </span>
           </template>

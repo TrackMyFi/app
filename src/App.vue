@@ -22,14 +22,14 @@ onMounted(async () => {
 })
 
 const links = [
-  { label: 'Dashboard', to: '/', icon: 'i-lucide-layout-dashboard' },
-  { label: 'Accounts', to: '/accounts', icon: 'i-lucide-wallet' },
-  { label: 'Transactions', to: '/transactions', icon: 'i-lucide-receipt' },
-  { label: 'Paychecks', to: '/paychecks', icon: 'i-lucide-banknote' },
-  { label: 'Contributions', to: '/contributions', icon: 'i-lucide-piggy-bank' },
-  { label: 'Budget', to: '/budget', icon: 'i-lucide-calculator' },
-  { label: 'Forecast', to: '/forecast', icon: 'i-lucide-trending-up' },
-  { label: 'Settings', to: '/settings', icon: 'i-lucide-settings' },
+  { label: 'Dashboard', to: '/', icon: 'i-ph-squares-four' },
+  { label: 'Accounts', to: '/accounts', icon: 'i-ph-wallet' },
+  { label: 'Transactions', to: '/transactions', icon: 'i-ph-receipt' },
+  { label: 'Paychecks', to: '/paychecks', icon: 'i-ph-money' },
+  { label: 'Contributions', to: '/contributions', icon: 'i-ph-piggy-bank' },
+  { label: 'Budget', to: '/budget', icon: 'i-ph-calculator' },
+  { label: 'Forecast', to: '/forecast', icon: 'i-ph-trend-up' },
+  { label: 'Settings', to: '/settings', icon: 'i-ph-gear' },
 ]
 </script>
 

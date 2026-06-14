@@ -11,9 +11,33 @@ export default defineConfig(async () => ({
     vue(), 
     ui({
       ui: {
+        modal: {
+          slots: {
+            content: 'bg-default divide-none flex flex-col focus:outline-none',
+            body: 'flex-1 p-4 sm:p-6',
+            header: 'flex items-center gap-1.5 p-4 pb-0 sm:px-6 sm:pt-6 min-h-0',
+            footer: 'flex items-center gap-1.5 p-4 pt-0 sm:px-6 sm:pb-6',
+          },
+        },
         colors: {
           primary: 'emerald',
           neutral: 'mist'
+        },
+        button: {
+          variants: {
+            size: {
+              md: { leadingIcon: 'size-4', trailingIcon: 'size-4' },
+              lg: { leadingIcon: 'size-4', trailingIcon: 'size-4' },
+            },
+          },
+        },
+        input: {
+          variants: {
+            size: {
+              md: { leadingIcon: 'size-4', trailingIcon: 'size-4' },
+              lg: { leadingIcon: 'size-4', trailingIcon: 'size-4' },
+            },
+          },
         },
         icons: {
           arrowDown: 'i-ph-arrow-down',

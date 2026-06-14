@@ -62,8 +62,8 @@ onMounted(async () => {
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Transactions</h1>
       <div class="flex gap-2">
-        <UButton variant="soft" icon="i-lucide-upload" @click="isImportOpen = true">Import CSV</UButton>
-        <UButton icon="i-lucide-plus" @click="openAdd">Add transaction</UButton>
+        <UButton variant="soft" icon="i-ph-upload" @click="isImportOpen = true">Import CSV</UButton>
+        <UButton icon="i-ph-plus" @click="openAdd">Add transaction</UButton>
       </div>
     </div>
 
@@ -121,8 +121,8 @@ onMounted(async () => {
           <td>{{ t.category }}</td>
           <td class="text-right tabular-nums">{{ money(t.amount) }}</td>
           <td class="text-right">
-            <UButton size="xs" variant="ghost" icon="i-lucide-pencil" @click="openEdit(t)" />
-            <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash-2" @click="removeRow(t)" />
+            <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(t)" />
+            <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(t)" />
           </td>
         </tr>
         <tr v-if="!rows.length">

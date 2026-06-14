@@ -229,137 +229,140 @@ async function save() {
 <template>
   <form class="space-y-5" @submit.prevent="save">
 
-    <!-- Paycheck info -->
-    <div class="space-y-3">
-      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Paycheck info</p>
-      <div class="grid grid-cols-[1fr_2fr_1fr] gap-3">
-        <div>
-          <p class="text-xs text-muted mb-1">Pay date</p>
-          <DateInput v-model="form.payDate" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Employer</p>
-          <ComboboxInput v-model="form.employer" :items="knownEmployers" placeholder="Employer" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Pay period</p>
-          <USelect
-            v-model="form.payPeriod"
-            :items="PAY_PERIODS.map((p) => ({ label: p, value: p }))"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- Amounts -->
-    <div class="space-y-3">
-      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amounts</p>
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <p class="text-xs text-muted mb-1">Gross</p>
-          <UInput v-model.number="form.grossAmount" type="number" step="0.01" placeholder="0.00" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Net (take-home)</p>
-          <UInput v-model.number="form.netAmount" type="number" step="0.01" placeholder="0.00" />
-        </div>
-      </div>
-    </div>
-
-    <!-- Deposit account -->
-    <div class="space-y-3">
-      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Deposit to account</p>
-      <USelect
-        v-model="form.incomeAccountId"
-        :items="depositAccountItems"
-        placeholder="None (optional)"
-      />
-    </div>
-
-    <!-- Taxes -->
-    <div class="space-y-3">
-      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Taxes withheld</p>
-      <div class="grid grid-cols-3 gap-3">
-        <div>
-          <p class="text-xs text-muted mb-1">Federal</p>
-          <UInput v-model.number="form.federalTax" type="number" step="0.01" placeholder="0.00" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">State</p>
-          <UInput v-model.number="form.stateTax" type="number" step="0.01" placeholder="0.00" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Local</p>
-          <UInput v-model.number="form.localTax" type="number" step="0.01" placeholder="0.00" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Social Security</p>
-          <UInput v-model.number="form.socialSecurityTax" type="number" step="0.01" placeholder="0.00" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Medicare</p>
-          <UInput v-model.number="form.medicareTax" type="number" step="0.01" placeholder="0.00" />
-        </div>
-      </div>
-    </div>
-
-    <!-- Deductions -->
-    <div class="space-y-2">
-      <div class="flex items-center justify-between">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Deductions</p>
-        <UButton size="xs" variant="soft" icon="i-lucide-plus" @click="addDeduction">Add</UButton>
-      </div>
-      <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
-        <div class="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
-          <ComboboxInput v-model="ded.label" :items="knownDeductionLabels" placeholder="Label" />
-          <UInput v-model.number="ded.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
-          <UCheckbox v-model="ded.preTax" label="Pre-tax" />
-          <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeDeduction(i)" />
-        </div>
-        <div class="grid grid-cols-2 gap-2">
+    <div class="flex flex-wrap lg:flex-nowrap gap-3 space-y-5">
+      <div class="flex-1 space-y-5">
+        <!-- Paycheck info -->
+        <div class="space-y-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-muted">Paycheck info</p>
+          <div class="flex gap-3">
+            <div class="flex-1">
+              <p class="text-xs text-muted mb-1">Pay date</p>
+              <DateInput v-model="form.payDate" class="w-full" />
+            </div>
+            <div class="w-42">
+              <p class="text-xs text-muted mb-1">Pay period</p>
+              <USelect
+                v-model="form.payPeriod"
+                :items="PAY_PERIODS.map((p) => ({ label: p, value: p }))"
+                class="w-full"
+              />
+            </div>
+          </div>
           <div>
-            <p class="text-xs text-muted mb-1">Contribution type (optional)</p>
-            <USelect
-              v-model="ded.contributionAccountType"
-              :items="CONTRIBUTION_ACCOUNT_TYPES"
-              placeholder="None"
-              @update:model-value="onContributionTypeChange(ded)"
-            />
+            <p class="text-xs text-muted mb-1">Employer</p>
+            <ComboboxInput v-model="form.employer" :items="knownEmployers" placeholder="Employer" class="w-full" />
           </div>
-          <div v-if="ded.contributionAccountType">
-            <p class="text-xs text-muted mb-1">Account</p>
+          <div>
+            <p class="text-xs text-muted mb-1">Deposit to account</p>
             <USelect
-              v-model="ded.accountId"
-              :items="accountsForType(ded.contributionAccountType)"
-              placeholder="Select account"
+              v-model="form.incomeAccountId"
+              :items="depositAccountItems"
+              placeholder="None (optional)"
+              class="w-full"
             />
           </div>
         </div>
-      </div>
-      <p v-if="form.deductions.length === 0" class="text-xs text-muted">No deductions added.</p>
-    </div>
 
-    <!-- Employer Match -->
-    <div class="space-y-2">
-      <div class="flex items-center justify-between">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Employer Match</p>
-        <UButton size="xs" variant="soft" icon="i-lucide-plus" @click="addMatch">Add</UButton>
-      </div>
-      <div v-for="(em, i) in form.employerMatch" :key="i" class="grid grid-cols-[1fr_auto_1fr_auto] gap-2 items-center">
-        <UInput v-model="em.label" placeholder="Label" />
-        <UInput v-model.number="em.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
-        <USelect v-model="em.accountId" :items="investmentAccountItems" placeholder="Account" />
-        <UButton size="xs" variant="ghost" color="error" icon="i-lucide-x" @click="removeMatch(i)" />
-      </div>
-      <p v-if="form.employerMatch.length === 0" class="text-xs text-muted">No employer match added.</p>
-    </div>
+        <!-- Amounts -->
+        <div class="space-y-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amounts</p>
+          <div>
+            <p class="text-xs text-muted mb-1">Gross</p>
+            <UInput v-model.number="form.grossAmount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+          </div>
+          <div>
+            <p class="text-xs text-muted mb-1">Net (take-home)</p>
+            <UInput v-model.number="form.netAmount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+          </div>
+        </div>
 
-    <!-- Contribution preview -->
-    <div v-if="preview.length > 0" class="rounded border border-default p-3 space-y-1">
-      <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
-      <div v-for="item in preview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
-        <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
-        <span class="tabular-nums text-green-600">{{ money(item.amount) }}</span>
+        <!-- Taxes -->
+        <div class="space-y-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-muted">Taxes withheld</p>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <p class="text-xs text-muted mb-1">Federal</p>
+              <UInput v-model.number="form.federalTax" type="number" step="0.01" placeholder="0.00" />
+            </div>
+            <div>
+              <p class="text-xs text-muted mb-1">State</p>
+              <UInput v-model.number="form.stateTax" type="number" step="0.01" placeholder="0.00" />
+            </div>
+            <div>
+              <p class="text-xs text-muted mb-1">Local</p>
+              <UInput v-model.number="form.localTax" type="number" step="0.01" placeholder="0.00" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <p class="text-xs text-muted mb-1">Social Security</p>
+              <UInput v-model.number="form.socialSecurityTax" type="number" step="0.01" placeholder="0.00" class="w-full" />
+            </div>
+            <div>
+              <p class="text-xs text-muted mb-1">Medicare</p>
+              <UInput v-model.number="form.medicareTax" type="number" step="0.01" placeholder="0.00" class="w-full" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="w-full lg:w-1/2 bg-muted border border-default/50 rounded-xl space-y-5 lg:-my-4 lg:ml-3 p-4">
+        <!-- Deductions -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Deductions</p>
+            <UButton size="xs" variant="soft" icon="i-ph-plus" @click="addDeduction">Add</UButton>
+          </div>
+          <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
+            <div class="flex gap-2 items-center">
+              <ComboboxInput v-model="ded.label" :items="knownDeductionLabels" placeholder="Label" class="flex-1 min-w-0" />
+              <UInput v-model.number="ded.amount" type="number" step="0.01" placeholder="0.00" class="w-24" />
+              <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeDeduction(i)" />
+            </div>
+            <div class="flex gap-2 items-center">
+              <USelect
+                v-model="ded.contributionAccountType"
+                :items="CONTRIBUTION_ACCOUNT_TYPES"
+                placeholder="Contribution type"
+                class="flex-1"
+                @update:model-value="onContributionTypeChange(ded)"
+              />
+              <USelect
+                v-if="ded.contributionAccountType"
+                v-model="ded.accountId"
+                :items="accountsForType(ded.contributionAccountType)"
+                placeholder="Account"
+                class="flex-1"
+              />
+              <UCheckbox v-model="ded.preTax" label="Pre-tax" class="shrink-0" />
+            </div>
+          </div>
+          <p v-if="form.deductions.length === 0" class="text-xs text-muted">No deductions added.</p>
+        </div>
+
+        <!-- Employer Match -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Employer Match</p>
+            <UButton size="xs" variant="soft" icon="i-ph-plus" @click="addMatch">Add</UButton>
+          </div>
+          <div v-for="(em, i) in form.employerMatch" :key="i" class="grid grid-cols-[1fr_auto_1fr_auto] gap-2 items-center">
+            <UInput v-model="em.label" placeholder="Label" />
+            <UInput v-model.number="em.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
+            <USelect v-model="em.accountId" :items="investmentAccountItems" placeholder="Account" />
+            <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeMatch(i)" />
+          </div>
+          <p v-if="form.employerMatch.length === 0" class="text-xs text-muted">No employer match added.</p>
+        </div>
+
+        <!-- Contribution preview -->
+        <div v-if="preview.length > 0" class="rounded border border-default p-3 space-y-1">
+          <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
+          <div v-for="item in preview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
+            <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
+            <span class="tabular-nums text-green-600">{{ money(item.amount) }}</span>
+          </div>
+        </div>
       </div>
     </div>
 

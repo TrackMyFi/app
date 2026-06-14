@@ -125,30 +125,28 @@ async function save() {
 
 <template>
   <form class="space-y-4" @submit.prevent="save">
-    <div class="grid grid-cols-2 gap-3">
-      <UFormField label="Type">
-        <USelect v-model="form.type" :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))" />
-      </UFormField>
-      <UFormField :label="isTransfer ? 'From account' : 'Account'">
-        <USelect v-model="form.accountId" :items="accountItems" placeholder="Select account" />
-      </UFormField>
-    </div>
-    <UFormField v-if="isTransfer" label="To account">
-      <USelect v-model="form.transferAccountId" :items="accountItems" placeholder="Select account" />
+    <UFormField label="Type">
+      <USelect v-model="form.type" :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))" class="w-full" />
     </UFormField>
     <div class="grid grid-cols-2 gap-3">
-      <UFormField label="Amount">
-        <UInput v-model.number="form.amount" type="number" step="0.01" placeholder="0.00" />
+      <UFormField :label="isTransfer ? 'From account' : 'Account'">
+        <USelect v-model="form.accountId" :items="accountItems" placeholder="Select account" class="w-full" />
       </UFormField>
-      <UFormField label="Date">
-        <DateInput v-model="form.date" />
+      <UFormField v-if="isTransfer" label="To account">
+        <USelect v-model="form.transferAccountId" :items="accountItems" placeholder="Select account" class="w-full" />
       </UFormField>
     </div>
+    <UFormField label="Amount">
+      <UInput v-model.number="form.amount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+    </UFormField>
+    <UFormField label="Date">
+      <DateInput v-model="form.date" class="w-full" />
+    </UFormField>
     <UFormField label="Description">
-      <UInput v-model="form.description" placeholder="Optional" />
+      <UInput v-model="form.description" placeholder="Optional" class="w-full" />
     </UFormField>
     <UFormField v-if="!isTransfer" label="Category">
-      <USelect v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" />
+      <USelect v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" class="w-full" />
     </UFormField>
     <UCheckbox v-if="!isTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
 
@@ -166,7 +164,7 @@ async function save() {
     </div>
 
     <div class="flex justify-end gap-2 pt-2">
-      <UButton type="submit">{{ props.editing ? 'Save' : 'Add' }}</UButton>
+      <UButton type="submit">{{ props.editing ? 'Save' : 'Add' }} Transaction</UButton>
     </div>
   </form>
 </template>

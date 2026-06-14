@@ -97,12 +97,13 @@ async function remove(account: Account) {
     <h1 class="text-2xl font-bold mb-6">Accounts</h1>
 
     <div class="mb-6">
-      <UButton icon="i-lucide-plus" @click="openAdd">Add Account</UButton>
+      <UButton icon="i-ph-plus" @click="openAdd">Add Account</UButton>
     </div>
 
     <UModal
       v-model:open="isAccountModalOpen"
       :title="editingAccount ? 'Edit Account' : 'Add Account'"
+      class="w-112"
     >
       <template #body>
         <AccountForm

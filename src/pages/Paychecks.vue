@@ -62,7 +62,7 @@ onMounted(async () => {
   <div class="p-6 space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Paychecks</h1>
-      <UButton icon="i-lucide-plus" @click="openAdd">Add paycheck</UButton>
+      <UButton icon="i-ph-plus" @click="openAdd">Add paycheck</UButton>
     </div>
 
     <div class="flex flex-wrap gap-2 items-end">
@@ -107,9 +107,9 @@ onMounted(async () => {
           <td class="text-right tabular-nums">{{ money(p.federalTax) }}</td>
           <td class="text-right tabular-nums">{{ money(p.socialSecurityTax + p.medicareTax) }}</td>
           <td class="text-right">
-            <UButton size="xs" variant="ghost" icon="i-lucide-copy" @click="openCopy(p)" />
-            <UButton size="xs" variant="ghost" icon="i-lucide-pencil" @click="openEdit(p)" />
-            <UButton size="xs" variant="ghost" color="error" icon="i-lucide-trash-2" @click="removeRow(p)" />
+            <UButton size="xs" variant="ghost" icon="i-ph-copy" @click="openCopy(p)" />
+            <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(p)" />
+            <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(p)" />
           </td>
         </tr>
         <tr v-if="!store.paychecks.length">
@@ -118,7 +118,7 @@ onMounted(async () => {
       </tbody>
     </table>
 
-    <UModal v-model:open="isModalOpen" :title="editing ? 'Edit paycheck' : copySource ? 'Copy paycheck' : 'Add paycheck'">
+    <UModal v-model:open="isModalOpen" :title="editing ? 'Edit paycheck' : copySource ? 'Copy paycheck' : 'Add paycheck'" class="lg:w-[900px] max-w-full">
       <template #body>
         <PaycheckForm :editing="editing" :copy-from="copySource" @saved="onSaved" />
       </template>

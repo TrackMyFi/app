@@ -75,7 +75,7 @@ const formatted = (n: number) =>
             v-if="balance.linkedTransactionId != null"
             size="xs"
             variant="ghost"
-            icon="i-lucide-receipt"
+            icon="i-ph-receipt"
             title="View linked transaction"
             @click="emit('view-transaction', balance.linkedTransactionId)"
           />

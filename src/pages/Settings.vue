@@ -128,53 +128,57 @@ async function runSyncNow() {
 </script>
 
 <template>
-  <div class="p-6 max-w-xl">
-    <h1 class="text-2xl font-bold mb-4">FIRE Profile</h1>
-    <UForm :state="form" @submit="onSubmit" class="space-y-4">
-      <div class="grid grid-cols-2 gap-3">
-        <UFormField label="Current age">
-          <UInput v-model.number="form.currentAge" type="number" />
+  <div class="p-6 max-w-2xl space-y-8">
+    <section class="space-y-4">
+      <h1 class="text-2xl font-bold">FIRE Profile</h1>
+      <UForm :state="form" @submit="onSubmit" class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <UFormField label="Current age">
+            <UInput v-model.number="form.currentAge" type="number" class="w-full" />
+          </UFormField>
+          <UFormField label="Target retirement age">
+            <UInput v-model.number="form.targetRetirementAge" type="number" class="w-full" />
+          </UFormField>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <UFormField label="Annual expenses target">
+            <UInput v-model.number="form.annualExpensesTarget" type="number" class="w-full" />
+          </UFormField>
+          <UFormField label="Annual income">
+            <UInput v-model.number="form.annualIncome" type="number" class="w-full" />
+          </UFormField>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <UFormField label="Lean FIRE expenses (optional)">
+            <UInput v-model.number="form.leanFireAnnualExpenses" type="number" class="w-full" />
+          </UFormField>
+          <UFormField label="Fat FIRE expenses (optional)">
+            <UInput v-model.number="form.fatFireAnnualExpenses" type="number" class="w-full" />
+          </UFormField>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <UFormField label="Expected return rate (e.g. 0.07)">
+            <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" class="w-full" />
+          </UFormField>
+          <UFormField label="Inflation rate (e.g. 0.03)">
+            <UInput v-model.number="form.inflationRate" type="number" step="0.01" class="w-full" />
+          </UFormField>
+        </div>
+        <UFormField label="HSA coverage">
+          <USelect
+            v-model="form.hsaCoverage"
+            :items="[
+              { label: 'Self-only', value: 'self' },
+              { label: 'Family', value: 'family' },
+            ]"
+            class="w-44"
+          />
         </UFormField>
-        <UFormField label="Target retirement age">
-          <UInput v-model.number="form.targetRetirementAge" type="number" />
-        </UFormField>
-      </div>
-      <UFormField label="Annual expenses target">
-        <UInput v-model.number="form.annualExpensesTarget" type="number" />
-      </UFormField>
-      <div class="grid grid-cols-2 gap-3">
-        <UFormField label="Lean FIRE expenses (optional)">
-          <UInput v-model.number="form.leanFireAnnualExpenses" type="number" />
-        </UFormField>
-        <UFormField label="Fat FIRE expenses (optional)">
-          <UInput v-model.number="form.fatFireAnnualExpenses" type="number" />
-        </UFormField>
-      </div>
-      <UFormField label="Annual income">
-        <UInput v-model.number="form.annualIncome" type="number" />
-      </UFormField>
-      <div class="grid grid-cols-2 gap-3">
-        <UFormField label="Expected return rate (e.g. 0.07)">
-          <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" />
-        </UFormField>
-        <UFormField label="Inflation rate (e.g. 0.03)">
-          <UInput v-model.number="form.inflationRate" type="number" step="0.01" />
-        </UFormField>
-      </div>
-      <UFormField label="HSA coverage">
-        <USelect
-          v-model="form.hsaCoverage"
-          :items="[
-            { label: 'Self-only', value: 'self' },
-            { label: 'Family', value: 'family' },
-          ]"
-          class="w-44"
-        />
-      </UFormField>
-      <UButton type="submit">Save</UButton>
-    </UForm>
+        <UButton type="submit">Save</UButton>
+      </UForm>
+    </section>
 
-    <hr class="my-8 border-default" />
+    <hr class="border-default" />
 
     <section class="space-y-3">
       <h2 class="text-xl font-bold">Cloud Sync (Turso)</h2>
@@ -218,7 +222,7 @@ async function runSyncNow() {
       <p v-if="syncMessage" class="text-sm text-error" aria-live="polite">{{ syncMessage }}</p>
 
       <UAccordion
-        :items="[{ label: 'How to set this up', slot: 'help', icon: 'i-lucide-circle-help' }]"
+        :items="[{ label: 'How to set this up', slot: 'help', icon: 'i-ph-question' }]"
       >
         <template #help>
           <div class="text-sm space-y-4 p-2">
@@ -249,7 +253,7 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
       </UAccordion>
     </section>
 
-    <hr class="my-8 border-default" />
+    <hr class="border-default" />
 
     <section class="space-y-3">
       <h2 class="text-xl font-bold text-error">Danger Zone</h2>

@@ -102,7 +102,7 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
   <div class="p-6 space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Forecast</h1>
-      <UButton icon="i-lucide-sliders-horizontal" color="neutral" variant="outline" @click="open = true">
+      <UButton icon="i-ph-sliders-horizontal" color="neutral" variant="outline" @click="open = true">
         What-if
       </UButton>
     </div>

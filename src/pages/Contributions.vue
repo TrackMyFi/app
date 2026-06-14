@@ -107,7 +107,7 @@ onMounted(async () => {
       v-if="resolved.estimated"
       color="warning"
       variant="soft"
-      icon="i-lucide-info"
+      icon="i-ph-info"
       :title="`IRS limits estimated from ${resolved.estimatedFrom}`"
       :description="`Update irsLimits.ts when ${selectedYear} limits are announced.`"
     />

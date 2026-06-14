@@ -33,7 +33,7 @@ const dateValue = computed<DateValue | undefined>({
           color="neutral"
           variant="link"
           size="sm"
-          icon="i-lucide-calendar"
+          icon="i-ph-calendar"
           aria-label="Open calendar"
         />
         <template #content>

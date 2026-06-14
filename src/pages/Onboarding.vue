@@ -204,7 +204,7 @@ async function finish() {
           <USwitch v-model="syncEnabled" />
           <span class="text-sm font-medium">Enable cloud sync</span>
           <UButton
-            icon="i-lucide-circle-help"
+            icon="i-ph-question"
             variant="ghost"
             size="xs"
             @click="showSyncHelp = true"

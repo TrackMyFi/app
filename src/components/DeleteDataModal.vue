@@ -138,7 +138,7 @@ function previewSummary(p: DeletionPreview) {
         />
 
         <div v-if="previewLoading" class="flex items-center gap-2 text-sm text-muted">
-          <UIcon name="i-lucide-loader-circle" class="animate-spin" />
+          <UIcon name="i-ph-circle-notch" class="animate-spin" />
           Counting affected records…
         </div>
 

@@ -16,7 +16,7 @@ const form = reactive({
   name: props.account?.name ?? '',
   type: (props.account?.type ?? 'checking') as AccountType,
   institution: props.account?.institution ?? '',
-  includeInFireCalculations: props.account?.includeInFireCalculations ?? false,
+  includeInFireCalculations: props.account?.includeInFireCalculations ?? true,
   createdAt: props.account?.createdAt ?? DateTime.now().toISODate()!,
 })
 
@@ -53,33 +53,39 @@ async function onSubmit() {
 
 <template>
   <UForm :state="form" @submit="onSubmit" class="space-y-4">
-    <div class="grid grid-cols-2 gap-3">
-      <UFormField label="Name" required>
-        <UInput v-model="form.name" placeholder="e.g. Fidelity Brokerage" />
-      </UFormField>
-      <UFormField label="Type" required>
-        <USelect
-          v-model="form.type"
-          :items="accountTypeItems"
-          value-key="value"
-          placeholder="Select account type"
-        />
-      </UFormField>
+    <UFormField label="Name" required>
+      <UInput v-model="form.name" class="w-full" placeholder="e.g. Fidelity Brokerage" />
+    </UFormField>
+
+    <UFormField label="Type" required>
+      <USelect
+        class="w-full"
+        v-model="form.type"
+        :items="accountTypeItems"
+        value-key="value"
+        placeholder="Select account type"
+      />
+    </UFormField>
+
+    <UFormField label="Institution (optional)">
+      <UInput v-model="form.institution" class="w-full" placeholder="e.g. Fidelity" />
+    </UFormField>
+    
+    <UFormField label="Opened">
+      <DateInput v-model="form.createdAt" class="w-full" />
+    </UFormField>
+    
+    <div class="pt-1.5">
+      <div class="flex items-center justify-between rounded-lg border border-default px-4 py-3">
+        <span class="text-sm font-medium">Include in FIRE calculations</span>
+        <USwitch v-model="form.includeInFireCalculations" />
+      </div>
     </div>
-    <div class="grid grid-cols-2 gap-3">
-      <UFormField label="Institution (optional)">
-        <UInput v-model="form.institution" placeholder="e.g. Fidelity" />
-      </UFormField>
-      <UFormField label="Opened">
-        <DateInput v-model="form.createdAt" />
-      </UFormField>
+    
+    <div class="pt-4 sm:pt-6 flex justify-end items-center gap-3">
+      <UButton type="submit" :disabled="!form.name">
+        {{ isEdit ? 'Save Changes' : 'Add Account' }}
+      </UButton>
     </div>
-    <div class="flex items-center justify-between rounded-lg border border-default px-4 py-3">
-      <span class="text-sm font-medium">Include in FIRE calculations</span>
-      <USwitch v-model="form.includeInFireCalculations" />
-    </div>
-    <UButton type="submit" :disabled="!form.name">
-      {{ isEdit ? 'Save Changes' : 'Add Account' }}
-    </UButton>
   </UForm>
 </template>
