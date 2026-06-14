@@ -95,7 +95,7 @@ async function save() {
       id: props.editing.id,
       accountId: form.accountId,
       transferAccountId: isTransfer.value ? form.transferAccountId : null,
-      amount: form.amount,
+      amount: form.amount ?? 0,
       description: form.description,
       date: form.date,
       type: form.type,
@@ -108,7 +108,7 @@ async function save() {
     await store.create({
       accountId: form.accountId,
       transferAccountId: isTransfer.value ? form.transferAccountId : null,
-      amount: form.amount,
+      amount: form.amount ?? 0,
       description: form.description,
       date: form.date,
       type: form.type,
@@ -137,7 +137,7 @@ async function save() {
       </UFormField>
     </div>
     <UFormField label="Amount">
-      <UInput v-model.number="form.amount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+      <CurrencyInput v-model="form.amount" class="w-full" />
     </UFormField>
     <UFormField label="Date">
       <DateInput v-model="form.date" class="w-full" />
