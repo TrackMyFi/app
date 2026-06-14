@@ -11,6 +11,8 @@ import {
 } from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
 import DeleteDataModal from '../components/DeleteDataModal.vue'
+import CurrencyInput from '../components/CurrencyInput.vue'
+import PercentInput from '../components/PercentInput.vue'
 
 interface FireProfileForm {
   currentAge: number
@@ -46,12 +48,12 @@ async function onSubmit() {
   const profile: FireProfile = {
     currentAge: form.currentAge,
     targetRetirementAge: form.targetRetirementAge,
-    annualExpensesTarget: form.annualExpensesTarget,
+    annualExpensesTarget: form.annualExpensesTarget ?? 0,
     leanFireAnnualExpenses: form.leanFireAnnualExpenses,
     fatFireAnnualExpenses: form.fatFireAnnualExpenses,
-    annualIncome: form.annualIncome,
-    expectedReturnRate: form.expectedReturnRate,
-    inflationRate: form.inflationRate,
+    annualIncome: form.annualIncome ?? 0,
+    expectedReturnRate: form.expectedReturnRate ?? 0,
+    inflationRate: form.inflationRate ?? 0,
     hsaCoverage: form.hsaCoverage,
   }
   await store.save(profile)
@@ -142,26 +144,26 @@ async function runSyncNow() {
         </div>
         <div class="grid grid-cols-2 gap-3">
           <UFormField label="Annual expenses target">
-            <UInput v-model.number="form.annualExpensesTarget" type="number" class="w-full" />
+            <CurrencyInput v-model="form.annualExpensesTarget" class="w-full" />
           </UFormField>
           <UFormField label="Annual income">
-            <UInput v-model.number="form.annualIncome" type="number" class="w-full" />
+            <CurrencyInput v-model="form.annualIncome" class="w-full" />
           </UFormField>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <UFormField label="Lean FIRE expenses (optional)">
-            <UInput v-model.number="form.leanFireAnnualExpenses" type="number" class="w-full" />
+            <CurrencyInput v-model="form.leanFireAnnualExpenses" class="w-full" />
           </UFormField>
           <UFormField label="Fat FIRE expenses (optional)">
-            <UInput v-model.number="form.fatFireAnnualExpenses" type="number" class="w-full" />
+            <CurrencyInput v-model="form.fatFireAnnualExpenses" class="w-full" />
           </UFormField>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <UFormField label="Expected return rate (e.g. 0.07)">
-            <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" class="w-full" />
+          <UFormField label="Expected return rate">
+            <PercentInput v-model="form.expectedReturnRate" class="w-full" />
           </UFormField>
-          <UFormField label="Inflation rate (e.g. 0.03)">
-            <UInput v-model.number="form.inflationRate" type="number" step="0.01" class="w-full" />
+          <UFormField label="Inflation rate">
+            <PercentInput v-model="form.inflationRate" class="w-full" />
           </UFormField>
         </div>
         <UFormField label="HSA coverage">
