@@ -25,6 +25,40 @@ pub fn write_config(path: &Path, cfg: &SyncConfig) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
+const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app";
+const KEYCHAIN_USER: &str = "turso-sync-token";
+
+/// Abstraction over secret storage so tests never touch the real OS keychain.
+pub trait TokenStore: Send + Sync {
+    fn get(&self) -> Result<Option<String>, String>;
+    fn set(&self, token: &str) -> Result<(), String>;
+    fn delete(&self) -> Result<(), String>;
+}
+
+pub struct KeyringStore;
+
+impl TokenStore for KeyringStore {
+    fn get(&self) -> Result<Option<String>, String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
+        match entry.get_password() {
+            Ok(p) => Ok(Some(p)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    fn set(&self, token: &str) -> Result<(), String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
+        entry.set_password(token).map_err(|e| e.to_string())
+    }
+    fn delete(&self) -> Result<(), String> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
