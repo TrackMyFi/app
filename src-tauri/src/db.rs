@@ -1,6 +1,20 @@
 use crate::sync::TokenStore;
 use libsql::{Builder, Connection, Database};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+
+/// Isolates debug builds (`tauri dev`) into a `dev/` subdirectory so they can
+/// never share a database — or sync config — with a release build (the `.dmg`).
+///
+/// This is decided by the binary at compile time, so it holds no matter which
+/// command launched it: you cannot accidentally point `tauri dev` at real data.
+pub fn resolve_app_dir(base: PathBuf) -> PathBuf {
+    if cfg!(debug_assertions) {
+        base.join("dev")
+    } else {
+        base
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DbMode {
@@ -59,7 +73,7 @@ pub const REPLICA_DB: &str = "trackmyfi-replica.db";
 pub const BACKUP_DB: &str = "trackmyfi.db.pre-sync-backup";
 
 pub async fn init(app: &AppHandle) -> Result<Db, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = resolve_app_dir(app.path().app_data_dir().map_err(|e| e.to_string())?);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let cfg = crate::sync::read_app_config(app);
@@ -141,5 +155,17 @@ mod tests {
         // must NOT be opened — it would hide the real local DB.
         assert_eq!(decide_db_source(false, false, false, true), DbSource::LocalOriginal);
         assert_eq!(decide_db_source(false, true, false, true), DbSource::LocalOriginal);
+    }
+
+    #[test]
+    fn debug_builds_isolate_into_dev_subdir() {
+        let base = PathBuf::from("/tmp/app");
+        let resolved = resolve_app_dir(base.clone());
+        // Debug builds (tauri dev) must never share a dir with a release build.
+        if cfg!(debug_assertions) {
+            assert_eq!(resolved, base.join("dev"));
+        } else {
+            assert_eq!(resolved, base);
+        }
     }
 }

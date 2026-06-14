@@ -31,7 +31,7 @@ pub fn write_config(path: &Path, cfg: &SyncConfig) -> Result<(), String> {
 use tauri::{AppHandle, Emitter, Manager};
 
 pub fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let dir = crate::db::resolve_app_dir(app.path().app_config_dir().map_err(|e| e.to_string())?);
     Ok(dir.join("sync.json"))
 }
 
@@ -47,6 +47,12 @@ pub fn write_app_config(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String>
     write_config(&p, cfg)
 }
 
+/// Keychain service name. Debug builds (`tauri dev`) use a separate entry so a
+/// dev session can never read or overwrite the real app's sync token — mirroring
+/// the data-dir isolation in `crate::db::resolve_app_dir`.
+#[cfg(debug_assertions)]
+const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app.dev";
+#[cfg(not(debug_assertions))]
 const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app";
 const KEYCHAIN_USER: &str = "turso-sync-token";
 
@@ -249,7 +255,7 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 use crate::db::{BACKUP_DB, LOCAL_DB, REPLICA_DB};
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::db::resolve_app_dir(app.path().app_data_dir().map_err(|e| e.to_string())?);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }

@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "seed:dev": "bash scripts/seed-dev-db.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },
