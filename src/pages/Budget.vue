@@ -3,12 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { DateTime } from 'luxon'
 import { useBudgetStore } from '../stores/budget'
 import { useAccountsStore } from '../stores/accounts'
+import CurrencyInput from '../components/CurrencyInput.vue'
 
 const store = useBudgetStore()
 const accountsStore = useAccountsStore()
 
 const editingTarget = ref(false)
-const targetInput = ref<number | string>('')
+const targetInput = ref<number | null>(null)
 
 const monthItems = computed(() =>
   store.months.map((m) => ({
@@ -44,22 +45,21 @@ function setActiveSection(section: 'income' | 'savings' | 'fixed' | 'discretiona
 }
 
 function openTargetEdit() {
-  targetInput.value = store.target?.savingsTarget ?? ''
+  targetInput.value = store.target?.savingsTarget ?? null
   editingTarget.value = true
 }
 
 function cancelTargetEdit() {
   editingTarget.value = false
-  targetInput.value = ''
+  targetInput.value = null
 }
 
 async function saveTarget() {
-  const val = Number(targetInput.value)
-  if (!isNaN(val) && val >= 0) {
-    await store.setTarget(val)
+  if (targetInput.value !== null && targetInput.value >= 0) {
+    await store.setTarget(targetInput.value)
   }
   editingTarget.value = false
-  targetInput.value = ''
+  targetInput.value = null
 }
 
 const detailTransactions = computed(() => {
@@ -149,12 +149,10 @@ onMounted(async () => {
           <!-- Inline target edit -->
           <template v-if="editingTarget">
             <div class="flex items-center gap-1 mt-1" @click.stop>
-              <UInput
+              <CurrencyInput
                 v-model="targetInput"
-                type="number"
                 size="xs"
                 class="w-24"
-                placeholder="0"
                 @keyup.enter="saveTarget"
                 @keyup.escape="cancelTargetEdit"
               />
