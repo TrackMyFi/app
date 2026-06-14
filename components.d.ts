@@ -16,6 +16,7 @@ declare module 'vue' {
     BalanceRow: typeof import('./src/components/BalanceRow.vue')['default']
     ComboboxInput: typeof import('./src/components/ComboboxInput.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']
+    DeleteDataModal: typeof import('./src/components/DeleteDataModal.vue')['default']
     ForecastChart: typeof import('./src/components/ForecastChart.vue')['default']
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']
     NetWorthChart: typeof import('./src/components/NetWorthChart.vue')['default']

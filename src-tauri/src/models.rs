@@ -14,6 +14,18 @@ pub struct FireProfile {
     pub expected_return_rate: f64,
     pub inflation_rate: f64,
     pub hsa_coverage: String,
+    #[serde(default)]
+    pub onboarding_completed: bool,
+}
+
+#[derive(Serialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct DeletionPreview {
+    pub transactions: i64,
+    pub paychecks: i64,
+    pub balance_snapshots: i64,
+    pub budget_months: i64,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

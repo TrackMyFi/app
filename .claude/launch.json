@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "trackmyfi",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "export PATH=\"/Users/tomgobich/Library/Application Support/fnm/node-versions/v24.12.0/installation/bin:$PATH\" && npm run dev"],
+      "port": 1420
+    }
+  ]
+}

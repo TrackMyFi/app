@@ -10,6 +10,7 @@ import {
   restartApp,
 } from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
+import DeleteDataModal from '../components/DeleteDataModal.vue'
 
 interface FireProfileForm {
   currentAge: number
@@ -61,6 +62,8 @@ const syncUrl = ref('')
 const syncToken = ref('')
 const syncBusy = ref(false)
 const syncMessage = ref('')
+
+const showDeleteModal = ref(false)
 
 const isSynced = computed(() => syncStore.status?.mode === 'synced')
 const lastSynced = computed(() => {
@@ -239,5 +242,20 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
         </template>
       </UAccordion>
     </section>
+
+    <hr class="my-8 border-default" />
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-bold text-error">Danger Zone</h2>
+      <div class="border border-error rounded-lg p-4 space-y-3">
+        <div>
+          <p class="text-sm font-medium">Delete data</p>
+          <p class="text-sm text-muted">Permanently remove transactions, paychecks, balance snapshots, and budget months for a selected time range. This cannot be undone.</p>
+        </div>
+        <UButton color="error" variant="soft" @click="showDeleteModal = true">Delete Data</UButton>
+      </div>
+    </section>
+
+    <DeleteDataModal v-model:open="showDeleteModal" />
   </div>
 </template>

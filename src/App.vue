@@ -1,10 +1,24 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useSyncStore } from './stores/sync'
+import { useFireProfileStore } from './stores/fireProfile'
 
+const router = useRouter()
+const route = useRoute()
 const syncStore = useSyncStore()
-onMounted(() => {
+const fireProfileStore = useFireProfileStore()
+
+onMounted(async () => {
   syncStore.init()
+  try {
+    await fireProfileStore.load()
+  } catch {
+    // load failed; profile stays null — still redirect to onboarding below
+  }
+  if (!fireProfileStore.profile?.onboardingCompleted) {
+    router.push('/onboarding')
+  }
 })
 
 const links = [
@@ -22,7 +36,7 @@ const links = [
 <template>
   <UApp>
     <div class="flex h-screen">
-      <nav class="w-56 border-r border-default p-3 space-y-1">
+      <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 space-y-1">
         <template v-for="l in links" :key="l.label">
           <RouterLink
             v-if="l.to"

@@ -8,7 +8,8 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
         .query(
             "SELECT current_age, target_retirement_age, annual_expenses_target, \
              lean_fire_annual_expenses, fat_fire_annual_expenses, annual_income, \
-             expected_return_rate, inflation_rate, hsa_coverage FROM fire_profile WHERE id = 1",
+             expected_return_rate, inflation_rate, hsa_coverage, onboarding_completed \
+             FROM fire_profile WHERE id = 1",
             (),
         )
         .await
@@ -28,6 +29,7 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
         expected_return_rate: row.get(6).map_err(|e| e.to_string())?,
         inflation_rate: row.get(7).map_err(|e| e.to_string())?,
         hsa_coverage: row.get(8).map_err(|e| e.to_string())?,
+        onboarding_completed: row.get::<i32>(9).map_err(|e| e.to_string())? != 0,
     })
 }
 
@@ -63,4 +65,16 @@ pub async fn get_fire_profile(db: State<'_, Db>) -> Result<FireProfile, String> 
 pub async fn upsert_fire_profile(db: State<'_, Db>, profile: FireProfile) -> Result<(), String> {
     let conn = db.conn().await?;
     upsert_profile(&conn, &profile).await
+}
+
+#[tauri::command]
+pub async fn mark_onboarding_complete(db: State<'_, Db>) -> Result<(), String> {
+    let conn = db.conn().await?;
+    conn.execute(
+        "UPDATE fire_profile SET onboarding_completed = 1 WHERE id = 1",
+        (),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

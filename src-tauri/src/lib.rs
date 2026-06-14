@@ -45,6 +45,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::fire_profile::get_fire_profile,
             commands::fire_profile::upsert_fire_profile,
+            commands::fire_profile::mark_onboarding_complete,
+            commands::data_management::preview_data_deletion,
+            commands::data_management::delete_data,
             commands::accounts::list_accounts_cmd,
             commands::accounts::create_account_cmd,
             commands::accounts::archive_account_cmd,
