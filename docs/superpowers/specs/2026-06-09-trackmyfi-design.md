@@ -21,7 +21,7 @@ TrackMyFI is a **local-first Tauri desktop app**, not a hosted web app — distr
 - **Frontend:** Vue 3 + NuxtUI + Vite, running in the webview. All UI, FIRE calculations, CSV parsing, and forecasting logic live here in TypeScript.
 - **Data layer:** libSQL (SQLite-compatible) as an **embedded replica**. Reads are always local — fast and fully offline. Writes are local and sync to a Turso cloud replica in the background. Because the embedded-replica client is native, the DB layer lives in a thin Rust command layer in the Tauri core (the `libsql` crate + a handful of `#[tauri::command]` functions for queries and `sync()`), exposed to Vue via `invoke()`. The frontend never talks to the network directly for data.
 - **Sync:** A free-tier **Turso** cloud replica reconciles edits across machines automatically. The app works fully offline; sync resumes when connectivity returns. This handles the "opened on two machines" case gracefully rather than last-write-wins.
-- **Encryption:** the local replica file is encrypted at rest (libSQL `encryption_key`), since it holds financial data. Sync tokens and the encryption key are stored in the OS keychain via Tauri.
+- **Encryption at rest:** provided by **OS full-disk encryption** (FileVault on macOS, BitLocker on Windows), which encrypts the whole disk including `trackmyfi.db`. App-level libSQL file encryption was evaluated and **deliberately not adopted** — it requires CMake (or migrating off libSQL to SQLCipher) and adds little over FileVault when the key sits transparently in the keychain. See decision record `docs/superpowers/specs/2026-06-13-encryption-at-rest-design.md`. (A future Turso sync token, when that feature lands, would be stored in the OS keychain.)
 - **No auth:** single-user local app — there is no login or `User` entity. (An optional app-level passcode is a possible later addition.)
 
 This replaces the original AdonisJS / Inertia / Lucid / Tuyau server stack that the repo was scaffolded with. The Vue + NuxtUI frontend carries over; the Node server, ORM, Inertia bridge, and auth layers are removed.
@@ -214,7 +214,7 @@ Contributions and net worth are derived views — no separate tables.
 - Mobile app
 - Email / push notifications
 - Currency conversion / multi-currency
-- App-level passcode / DB unlock UI (encryption-at-rest is in; the passcode UX is a later addition)
+- App-level passcode / DB unlock UI (encryption-at-rest is delegated to OS full-disk encryption; an app-level passcode is a later addition)
 
 ## Migration Note
 
