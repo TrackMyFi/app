@@ -248,6 +248,99 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
     do_sync(&app).await
 }
 
+use crate::db::{BACKUP_DB, LOCAL_DB, REPLICA_DB};
+
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Enable sync: validate creds, bootstrap (seed empty cloud from local OR adopt
+/// populated cloud), back up the old local file, persist config + token.
+/// Returns a human-readable outcome string for the UI.
+#[tauri::command]
+pub async fn save_sync_config(app: AppHandle, url: String, token: String) -> Result<String, String> {
+    let dir = data_dir(&app)?;
+    let replica_path = dir.join(REPLICA_DB);
+    let local_path = dir.join(LOCAL_DB);
+
+    // Fresh bootstrap only. If a replica file already exists, do not re-seed.
+    if replica_path.exists() {
+        return Err("Sync is already set up on this device. Disable it first to reconfigure.".into());
+    }
+
+    // Build replica + validate credentials via an initial sync (pull).
+    let db = libsql::Builder::new_remote_replica(replica_path.clone(), url.clone(), token.clone())
+        .build()
+        .await
+        .map_err(|e| format!("Could not connect to Turso: {e}"))?;
+    if let Err(e) = db.sync().await {
+        // Clean up the partial replica so a retry starts clean.
+        drop(db);
+        let _ = std::fs::remove_file(&replica_path);
+        return Err(format!("Could not connect to Turso (check the URL and token): {e}"));
+    }
+
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let cloud_tables = list_data_tables(&conn).await?;
+
+    let outcome = if cloud_tables.is_empty() {
+        // Empty cloud: create schema locally, copy existing local data up.
+        crate::migrations::run(&conn).await?;
+        if local_path.exists() {
+            let old = libsql::Builder::new_local(local_path.clone())
+                .build()
+                .await
+                .map_err(|e| e.to_string())?;
+            let old_conn = old.connect().map_err(|e| e.to_string())?;
+            let copied = copy_all_data(&old_conn, &conn).await?;
+            db.sync().await.map_err(|e| e.to_string())?; // push everything up
+            format!("Sync enabled. Uploaded your existing data ({copied} records) to Turso.")
+        } else {
+            db.sync().await.map_err(|e| e.to_string())?;
+            "Sync enabled. Started a fresh cloud database.".to_string()
+        }
+    } else {
+        // Populated cloud (another device seeded it). Adopt it; do not merge.
+        "Sync enabled. This device now mirrors your existing cloud data. \
+         Your previous local data on this device was kept as a backup but not merged."
+            .to_string()
+    };
+
+    // Release the replica handle before the app re-opens it on restart.
+    drop(conn);
+    drop(db);
+
+    // Back up the old local file (never auto-deleted).
+    if local_path.exists() {
+        let _ = std::fs::rename(&local_path, dir.join(BACKUP_DB));
+    }
+
+    // Persist token (keychain) + config (sync.json).
+    KeyringStore.set(&token)?;
+    write_app_config(&app, &SyncConfig { enabled: true, url: Some(url), bootstrapped: true })?;
+
+    Ok(outcome)
+}
+
+/// Disable sync: stop syncing, delete the token. The replica file is retained and
+/// opened locally on next launch, so the latest data is kept.
+#[tauri::command]
+pub async fn clear_sync_config(app: AppHandle) -> Result<(), String> {
+    KeyringStore.delete()?;
+    let mut cfg = read_app_config(&app);
+    cfg.enabled = false;
+    write_app_config(&app, &cfg)?;
+    Ok(())
+}
+
+/// Restart the app to apply a sync mode change. Diverges (never returns).
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
