@@ -19,7 +19,7 @@ pub fn run() {
 
             // Seed sync status from the DB mode and manage shared sync state.
             let initial = if app.state::<db::Db>().is_synced() {
-                sync::SyncStatus::synced_idle()
+                sync::SyncStatus::synced_just_now()
             } else {
                 sync::SyncStatus::local()
             };
@@ -87,7 +87,14 @@ pub fn run() {
         .run(|handle, event| {
             if let RunEvent::ExitRequested { .. } = event {
                 // Best-effort final push so another device sees this session's edits.
-                let _ = tauri::async_runtime::block_on(sync::do_sync(handle));
+                // Bounded so a slow/unreachable Turso can't block app quit.
+                let _ = tauri::async_runtime::block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        sync::do_sync(handle),
+                    )
+                    .await
+                });
             }
         });
 }

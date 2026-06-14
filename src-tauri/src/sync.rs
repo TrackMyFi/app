@@ -177,8 +177,8 @@ impl SyncStatus {
     pub fn local() -> Self {
         Self { mode: "local".into(), status: "idle".into(), last_synced_at: None, last_error: None }
     }
-    pub fn synced_idle() -> Self {
-        Self { mode: "synced".into(), status: "idle".into(), last_synced_at: None, last_error: None }
+    pub fn synced_just_now() -> Self {
+        Self { mode: "synced".into(), status: "idle".into(), last_synced_at: Some(now_ms()), last_error: None }
     }
 }
 
@@ -328,14 +328,14 @@ pub async fn save_sync_config(app: AppHandle, url: String, token: String) -> Res
 /// opened locally on next launch, so the latest data is kept.
 #[tauri::command]
 pub async fn clear_sync_config(app: AppHandle) -> Result<(), String> {
-    KeyringStore.delete()?;
     let mut cfg = read_app_config(&app);
     cfg.enabled = false;
     write_app_config(&app, &cfg)?;
+    KeyringStore.delete()?;
     Ok(())
 }
 
-/// Restart the app to apply a sync mode change. Diverges (never returns).
+/// Request an app restart to apply a sync mode change.
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     app.restart();
