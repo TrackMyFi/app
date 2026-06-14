@@ -25,6 +25,25 @@ pub fn write_config(path: &Path, cfg: &SyncConfig) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
+use tauri::{AppHandle, Manager};
+
+pub fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("sync.json"))
+}
+
+pub fn read_app_config(app: &AppHandle) -> SyncConfig {
+    match config_path(app) {
+        Ok(p) => read_config(&p),
+        Err(_) => SyncConfig::default(),
+    }
+}
+
+pub fn write_app_config(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String> {
+    let p = config_path(app)?;
+    write_config(&p, cfg)
+}
+
 const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app";
 const KEYCHAIN_USER: &str = "turso-sync-token";
 
