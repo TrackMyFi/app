@@ -1,6 +1,14 @@
 <script setup lang="ts">
-import { reactive, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
+import { confirm } from '@tauri-apps/plugin-dialog'
 import { useFireProfileStore } from '../stores/fireProfile'
+import { useSyncStore } from '../stores/sync'
+import {
+  saveSyncConfig,
+  clearSyncConfig,
+  syncNow,
+  restartApp,
+} from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
 
 interface FireProfileForm {
@@ -47,6 +55,72 @@ async function onSubmit() {
   }
   await store.save(profile)
 }
+
+const syncStore = useSyncStore()
+const syncUrl = ref('')
+const syncToken = ref('')
+const syncBusy = ref(false)
+const syncMessage = ref('')
+
+const isSynced = computed(() => syncStore.status?.mode === 'synced')
+const lastSynced = computed(() => {
+  const ms = syncStore.status?.lastSyncedAt
+  return ms ? new Date(ms).toLocaleString() : 'never'
+})
+
+async function enableSync() {
+  if (!syncUrl.value || !syncToken.value) {
+    syncMessage.value = 'Enter both the database URL and the auth token.'
+    return
+  }
+  syncBusy.value = true
+  syncMessage.value = ''
+  try {
+    const outcome = await saveSyncConfig(syncUrl.value.trim(), syncToken.value.trim())
+    syncToken.value = ''
+    const restart = await confirm(`${outcome}\n\nRestart now to start syncing?`, {
+      title: 'Sync enabled',
+      kind: 'info',
+    })
+    if (restart) await restartApp()
+  } catch (e) {
+    syncMessage.value = String(e)
+  } finally {
+    syncBusy.value = false
+  }
+}
+
+async function disableSync() {
+  const ok = await confirm(
+    'Stop syncing on this device? Your data stays on this machine; the cloud copy is left untouched.',
+    { title: 'Disable sync', kind: 'warning' },
+  )
+  if (!ok) return
+  syncBusy.value = true
+  try {
+    await clearSyncConfig()
+    const restart = await confirm('Sync disabled. Restart now to apply?', {
+      title: 'Disable sync',
+      kind: 'info',
+    })
+    if (restart) await restartApp()
+  } catch (e) {
+    syncMessage.value = String(e)
+  } finally {
+    syncBusy.value = false
+  }
+}
+
+async function runSyncNow() {
+  syncBusy.value = true
+  try {
+    await syncNow()
+  } catch (e) {
+    syncMessage.value = String(e)
+  } finally {
+    syncBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -89,5 +163,77 @@ async function onSubmit() {
       </UFormField>
       <UButton type="submit">Save</UButton>
     </UForm>
+
+    <hr class="my-8 border-default" />
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-bold">Cloud Sync (Turso)</h2>
+      <p class="text-sm text-muted">
+        Optional. Keeps an encrypted-at-rest backup in your own free Turso database and
+        reconciles your data across machines. The app works fully offline without this.
+      </p>
+
+      <div class="text-sm">
+        Status:
+        <span class="font-medium">{{ isSynced ? 'Syncing' : 'Local only' }}</span>
+        <span v-if="isSynced"> · last synced {{ lastSynced }}</span>
+        <span v-if="syncStore.status?.status === 'syncing'"> · syncing…</span>
+        <span v-if="syncStore.status?.lastError" class="text-error">
+          · {{ syncStore.status.lastError }}
+        </span>
+      </div>
+
+      <template v-if="!isSynced">
+        <UFormField label="Database URL">
+          <UInput v-model="syncUrl" placeholder="libsql://your-db-name-you.turso.io" class="w-full" />
+        </UFormField>
+        <UFormField label="Auth token (treated like a password)">
+          <UInput v-model="syncToken" type="password" class="w-full" />
+        </UFormField>
+        <UButton :loading="syncBusy" @click="enableSync">Enable sync</UButton>
+      </template>
+
+      <template v-else>
+        <div class="flex gap-2">
+          <UButton :loading="syncBusy" @click="runSyncNow">Sync now</UButton>
+          <UButton color="error" variant="soft" :loading="syncBusy" @click="disableSync">
+            Disable sync
+          </UButton>
+        </div>
+      </template>
+
+      <p v-if="syncMessage" class="text-sm text-error">{{ syncMessage }}</p>
+
+      <UAccordion
+        :items="[{ label: 'How to set this up', slot: 'help', icon: 'i-lucide-circle-help' }]"
+      >
+        <template #help>
+          <div class="text-sm space-y-4 p-2">
+            <div>
+              <h3 class="font-semibold mb-1">Option A — Turso website (no terminal)</h3>
+              <ol class="list-decimal ml-5 space-y-1">
+                <li>Go to <span class="font-mono">turso.tech</span> and create a free account.</li>
+                <li>Click <strong>Create Database</strong> and give it a name (e.g. <em>trackmyfi</em>).</li>
+                <li>Open the database, find <strong>Database URL</strong>, and copy it (starts with <span class="font-mono">libsql://</span>).</li>
+                <li>Create a database token (look for <strong>Tokens</strong> / <strong>Create Token</strong>) and copy it.</li>
+                <li>Paste both above and click <strong>Enable sync</strong>.</li>
+              </ol>
+            </div>
+            <div>
+              <h3 class="font-semibold mb-1">Option B — Turso CLI (technical)</h3>
+              <pre class="bg-elevated rounded p-2 overflow-x-auto"><code>turso auth signup
+turso db create trackmyfi
+turso db show trackmyfi --url        # the Database URL
+turso db tokens create trackmyfi     # the auth token</code></pre>
+              <p class="mt-1">Paste the URL and token above and click <strong>Enable sync</strong>.</p>
+            </div>
+            <p class="text-muted">
+              It's free-tier. The URL isn't secret, but the token is — treat it like a password.
+              You own this cloud database.
+            </p>
+          </div>
+        </template>
+      </UAccordion>
+    </section>
   </div>
 </template>
