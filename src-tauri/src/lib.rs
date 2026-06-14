@@ -4,7 +4,7 @@ pub mod migrations;
 pub mod models;
 pub mod sync;
 
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +16,30 @@ pub fn run() {
             let db = tauri::async_runtime::block_on(db::init(&handle))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
             app.manage(db);
+
+            // Seed sync status from the DB mode and manage shared sync state.
+            let initial = if app.state::<db::Db>().is_synced() {
+                sync::SyncStatus::synced_idle()
+            } else {
+                sync::SyncStatus::local()
+            };
+            app.manage(sync::SyncShared {
+                status: std::sync::Mutex::new(initial),
+                lock: tokio::sync::Mutex::new(()),
+            });
+
+            // Background backstop sync (only meaningful in synced mode; do_sync no-ops otherwise).
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(sync::SYNC_INTERVAL_SECS));
+                tick.tick().await; // consume the immediate first tick
+                loop {
+                    tick.tick().await;
+                    let _ = sync::do_sync(&handle).await;
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -52,7 +76,18 @@ pub fn run() {
             commands::budget::get_budget_month_target_cmd,
             commands::budget::set_budget_month_target_cmd,
             commands::budget::get_budget_paycheck_summary_cmd,
+            sync::get_sync_status,
+            sync::sync_now,
+            sync::save_sync_config,
+            sync::clear_sync_config,
+            sync::restart_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|handle, event| {
+            if let RunEvent::ExitRequested { .. } = event {
+                // Best-effort final push so another device sees this session's edits.
+                let _ = tauri::async_runtime::block_on(sync::do_sync(handle));
+            }
+        });
 }
