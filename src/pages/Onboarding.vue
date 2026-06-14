@@ -6,6 +6,8 @@ import { useSyncStore } from '../stores/sync'
 import { markOnboardingComplete, upsertFireProfile } from '../lib/api/fireProfile'
 import { saveSyncConfig } from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
+import CurrencyInput from '../components/CurrencyInput.vue'
+import PercentInput from '../components/PercentInput.vue'
 
 const router = useRouter()
 const fireProfileStore = useFireProfileStore()
@@ -71,12 +73,12 @@ async function finish() {
     const profile: FireProfile = {
       currentAge: form.currentAge,
       targetRetirementAge: form.targetRetirementAge,
-      annualExpensesTarget: form.annualExpensesTarget,
+      annualExpensesTarget: form.annualExpensesTarget ?? 0,
       leanFireAnnualExpenses: form.leanFireAnnualExpenses,
       fatFireAnnualExpenses: form.fatFireAnnualExpenses,
-      annualIncome: form.annualIncome,
-      expectedReturnRate: form.expectedReturnRate,
-      inflationRate: form.inflationRate,
+      annualIncome: form.annualIncome ?? 0,
+      expectedReturnRate: form.expectedReturnRate ?? 0,
+      inflationRate: form.inflationRate ?? 0,
       hsaCoverage: form.hsaCoverage,
       onboardingCompleted: false,
     }
@@ -138,7 +140,7 @@ async function finish() {
           <p class="text-muted mt-1">How much do you spend per year in retirement?</p>
         </div>
         <UFormField label="Annual living expenses target">
-          <UInput v-model.number="form.annualExpensesTarget" type="number" class="w-full" />
+          <CurrencyInput v-model="form.annualExpensesTarget" class="w-full" />
         </UFormField>
         <div class="border border-default rounded-lg p-4 space-y-4">
           <div class="flex items-center gap-2">
@@ -147,10 +149,10 @@ async function finish() {
           </div>
           <p class="text-xs text-muted">Define a minimum (lean) and comfortable (fat) spending target for more nuanced projections. You can set these anytime in Settings.</p>
           <UFormField label="Lean FIRE annual expenses">
-            <UInput v-model.number="form.leanFireAnnualExpenses" type="number" class="w-full" placeholder="e.g. 30000" />
+            <CurrencyInput v-model="form.leanFireAnnualExpenses" class="w-full" />
           </UFormField>
           <UFormField label="Fat FIRE annual expenses">
-            <UInput v-model.number="form.fatFireAnnualExpenses" type="number" class="w-full" placeholder="e.g. 80000" />
+            <CurrencyInput v-model="form.fatFireAnnualExpenses" class="w-full" />
           </UFormField>
         </div>
       </div>
@@ -162,13 +164,13 @@ async function finish() {
           <p class="text-muted mt-1">These numbers power your FIRE projections.</p>
         </div>
         <UFormField label="Annual income">
-          <UInput v-model.number="form.annualIncome" type="number" class="w-full" />
+          <CurrencyInput v-model="form.annualIncome" class="w-full" />
         </UFormField>
-        <UFormField label="Expected annual return rate" hint="The average yearly return on your investments. A common estimate is 7% (0.07) for a diversified portfolio.">
-          <UInput v-model.number="form.expectedReturnRate" type="number" step="0.01" class="w-full" placeholder="0.07" />
+        <UFormField label="Expected annual return rate" hint="The average yearly return on your investments. A common estimate is 7% for a diversified portfolio.">
+          <PercentInput v-model="form.expectedReturnRate" class="w-full" />
         </UFormField>
-        <UFormField label="Expected inflation rate" hint="How much purchasing power erodes each year. 3% (0.03) is a common estimate.">
-          <UInput v-model.number="form.inflationRate" type="number" step="0.01" class="w-full" placeholder="0.03" />
+        <UFormField label="Expected inflation rate" hint="How much purchasing power erodes each year. 3% is a common estimate.">
+          <PercentInput v-model="form.inflationRate" class="w-full" />
         </UFormField>
       </div>
 
