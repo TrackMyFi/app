@@ -4,6 +4,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 import { useAccountsStore } from '../stores/accounts'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import DateInput from './DateInput.vue'
+import CurrencyInput from './CurrencyInput.vue'
 
 const props = defineProps<{ balance: AccountBalance }>()
 const emit = defineEmits<{ (e: 'view-transaction', id: number): void }>()
@@ -27,7 +28,7 @@ function cancelEdit() {
 async function save() {
   await store.updateBalanceSnapshot({
     id: props.balance.id,
-    balance: draftBalance.value,
+    balance: draftBalance.value ?? 0,
     recordedAt: draftDate.value,
   })
   isEditing.value = false
@@ -52,12 +53,7 @@ const formatted = (n: number) =>
         <DateInput v-model="draftDate" />
       </td>
       <td class="py-1 text-right">
-        <UInput
-          v-model.number="draftBalance"
-          type="number"
-          step="0.01"
-          class="w-32"
-        />
+        <CurrencyInput v-model="draftBalance" class="w-32" />
       </td>
       <td class="py-1 text-right">
         <div class="flex justify-end gap-1">

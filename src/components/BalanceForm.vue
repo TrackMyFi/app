@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
 import DateInput from './DateInput.vue'
+import CurrencyInput from './CurrencyInput.vue'
 
 const props = defineProps<{ accountId: number }>()
 
@@ -14,7 +15,7 @@ const recordedAt = ref<string>(DateTime.now().toISODate()!)
 async function onSubmit() {
   await store.addBalanceSnapshot({
     accountId: props.accountId,
-    balance: balance.value,
+    balance: balance.value ?? 0,
     recordedAt: recordedAt.value,
   })
   balance.value = 0
@@ -24,8 +25,8 @@ async function onSubmit() {
 
 <template>
   <UForm :state="{ balance, recordedAt }" @submit="onSubmit" class="flex items-end gap-2">
-    <UFormField label="Balance ($)">
-      <UInput v-model.number="balance" type="number" step="0.01" placeholder="0.00" class="w-36" />
+    <UFormField label="Balance">
+      <CurrencyInput v-model="balance" class="w-36" />
     </UFormField>
     <UFormField label="Date">
       <DateInput v-model="recordedAt" />
