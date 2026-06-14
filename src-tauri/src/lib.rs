@@ -2,6 +2,7 @@ pub mod commands;
 pub mod db;
 pub mod migrations;
 pub mod models;
+pub mod sync;
 
 use tauri::Manager;
 
