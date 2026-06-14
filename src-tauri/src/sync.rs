@@ -135,29 +135,21 @@ async fn copy_table(src: &Connection, dst: &Connection, table: &str) -> Result<u
     Ok(count)
 }
 
-/// Copy every app data table from `src` into `dst`. Assumes both have identical schema.
+/// Copy every app data table from `src` into `dst`. Assumes both have identical
+/// schema (both run the same migrations).
+///
+/// Writes are auto-committed, with NO explicit `BEGIN`/`COMMIT` and no
+/// `conn.transaction()`. This is deliberate: `dst` is a direct remote Turso
+/// connection, where `transaction()` is unimplemented (panics) and a client
+/// transaction's writes are unreliable. FK enforcement is off by default on a
+/// libSQL/Turso connection, so per-table clear+insert order is safe. Atomicity
+/// on failure is provided one level up — a failed bootstrap discards the whole
+/// replica file and the caller treats the cloud DB as disposable on retry.
 pub async fn copy_all_data(src: &Connection, dst: &Connection) -> Result<usize, String> {
-    // FK enforcement is off by default in libSQL; be explicit so child-before-parent
-    // insert order can never fail the copy. Must run BEFORE BEGIN — this PRAGMA is a
-    // no-op inside a transaction.
-    dst.execute("PRAGMA foreign_keys=OFF", ())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Wrap the whole copy in one transaction so a mid-copy failure rolls back
-    // rather than leaving the destination half-populated.
-    dst.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
     let mut total = 0usize;
     for table in list_data_tables(src).await? {
-        match copy_table(src, dst, &table).await {
-            Ok(n) => total += n,
-            Err(e) => {
-                let _ = dst.execute("ROLLBACK", ()).await;
-                return Err(e);
-            }
-        }
+        total += copy_table(src, dst, &table).await?;
     }
-    dst.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
     Ok(total)
 }
 
@@ -271,47 +263,52 @@ fn remove_replica_files(dir: &Path) {
     }
 }
 
-/// Validate credentials (initial sync), then either seed an empty cloud from the
-/// local DB or adopt a populated cloud. Returns the user-facing outcome string.
-/// Any error here leaves the replica file for the caller to clean up.
-async fn run_bootstrap(db: &libsql::Database, local_path: &Path) -> Result<String, String> {
-    // Initial sync doubles as credential validation (bad URL/token fails here).
-    db.sync()
+/// Seed the cloud database over a DIRECT remote connection (not the embedded
+/// replica). Returns the user-facing outcome string.
+///
+/// Why direct: writing the local data into an embedded replica and relying on
+/// `sync()` to push it does NOT work on Turso's sync protocol — the copied
+/// writes are silently dropped (libSQL's own sync code warns about exactly this
+/// during bootstrap). Direct Hrana writes are reliable and enforce constraints.
+async fn seed_cloud(url: &str, token: &str, local_path: &Path) -> Result<String, String> {
+    let remote = libsql::Builder::new_remote(url.to_string(), token.to_string())
+        .build()
+        .await
+        .map_err(|e| format!("Could not connect to Turso: {e}"))?;
+    let rconn = remote.connect().map_err(|e| e.to_string())?;
+
+    // The first query authenticates and validates the URL/token.
+    let cloud_tables = list_data_tables(&rconn)
         .await
         .map_err(|e| format!("Could not connect to Turso (check the URL and token): {e}"))?;
 
-    let conn = db.connect().map_err(|e| e.to_string())?;
-    let cloud_tables = list_data_tables(&conn).await?;
-
-    if cloud_tables.is_empty() {
-        // Empty cloud: create schema locally (this seeds default rows such as
-        // fire_profile id=1), then copy existing local data up. copy_all_data
-        // clears each destination table first so seeded rows don't collide.
-        crate::migrations::run(&conn).await?;
-        if local_path.exists() {
-            let old = libsql::Builder::new_local(local_path.to_path_buf())
-                .build()
-                .await
-                .map_err(|e| e.to_string())?;
-            let old_conn = old.connect().map_err(|e| e.to_string())?;
-            let copied = copy_all_data(&old_conn, &conn).await?;
-            db.sync().await.map_err(|e| e.to_string())?; // push everything up
-            Ok(format!("Sync enabled. Uploaded your existing data ({copied} records) to Turso."))
-        } else {
-            db.sync().await.map_err(|e| e.to_string())?;
-            Ok("Sync enabled. Started a fresh cloud database.".to_string())
-        }
-    } else {
+    if !cloud_tables.is_empty() {
         // Populated cloud (another device seeded it). Adopt it; do not merge.
-        Ok("Sync enabled. This device now mirrors your existing cloud data. \
-            Your previous local data on this device was kept as a backup but not merged."
-            .to_string())
+        return Ok("Sync enabled. This device now mirrors your existing cloud data. \
+                   Your previous local data on this device was kept as a backup but not merged."
+            .to_string());
+    }
+
+    // Empty cloud: create schema + default seeds directly on the cloud, then copy
+    // the local data up. copy_all_data clears each table first so the seeded
+    // fire_profile (id=1) is replaced rather than colliding.
+    crate::migrations::run(&rconn).await?;
+    if local_path.exists() {
+        let old = libsql::Builder::new_local(local_path.to_path_buf())
+            .build()
+            .await
+            .map_err(|e| e.to_string())?;
+        let old_conn = old.connect().map_err(|e| e.to_string())?;
+        let copied = copy_all_data(&old_conn, &rconn).await?;
+        Ok(format!("Sync enabled. Uploaded your existing data ({copied} records) to Turso."))
+    } else {
+        Ok("Sync enabled. Started a fresh cloud database.".to_string())
     }
 }
 
-/// Enable sync: validate creds, bootstrap (seed empty cloud from local OR adopt
-/// populated cloud), back up the old local file, persist config + token.
-/// Returns a human-readable outcome string for the UI.
+/// Enable sync: seed the cloud directly, build the local embedded replica from
+/// it, back up the old local file, then persist config + token. Returns a
+/// human-readable outcome string for the UI.
 #[tauri::command]
 pub async fn save_sync_config(app: AppHandle, url: String, token: String) -> Result<String, String> {
     let dir = data_dir(&app)?;
@@ -323,33 +320,28 @@ pub async fn save_sync_config(app: AppHandle, url: String, token: String) -> Res
         return Err("Sync is already set up on this device. Disable it first to reconfigure.".into());
     }
 
-    // Build replica (this creates the replica file on disk). From here on ANY
-    // failure must remove the partial replica, otherwise a retry is blocked by
-    // the guard above and a restart would open a half-bootstrapped replica
-    // instead of the real local DB.
+    // Phase 1: seed the cloud over a direct connection (validates creds too).
+    let outcome = seed_cloud(&url, &token, &local_path).await?;
+
+    // Phase 2: build the embedded replica and pull the now-populated cloud into
+    // it. Any failure here removes the partial replica so a retry starts clean
+    // and a restart won't open a half-built replica instead of the real local DB.
     let db = libsql::Builder::new_remote_replica(replica_path.clone(), url.clone(), token.clone())
         .build()
         .await
         .map_err(|e| format!("Could not connect to Turso: {e}"))?;
-
-    let outcome = match run_bootstrap(&db, &local_path).await {
-        Ok(o) => o,
-        Err(e) => {
-            drop(db);
-            remove_replica_files(&dir);
-            return Err(e);
-        }
-    };
-
+    if let Err(e) = db.sync().await {
+        drop(db);
+        remove_replica_files(&dir);
+        return Err(format!("Sync setup failed while pulling cloud data: {e}"));
+    }
     // Release the replica handle before the app re-opens it on restart.
     drop(db);
 
-    // Back up the old local file (never auto-deleted).
+    // Phase 3: back up the old local file (never auto-deleted) + persist config.
     if local_path.exists() {
         let _ = std::fs::rename(&local_path, dir.join(BACKUP_DB));
     }
-
-    // Persist token (keychain) + config (sync.json).
     KeyringStore.set(&token)?;
     write_app_config(&app, &SyncConfig { enabled: true, url: Some(url), bootstrapped: true })?;
 
