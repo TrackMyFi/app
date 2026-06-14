@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { useSyncStore } from './stores/sync'
+
+const syncStore = useSyncStore()
+onMounted(() => {
+  syncStore.init()
+})
+
 const links = [
   { label: 'Dashboard', to: '/', icon: 'i-lucide-layout-dashboard' },
   { label: 'Accounts', to: '/accounts', icon: 'i-lucide-wallet' },
