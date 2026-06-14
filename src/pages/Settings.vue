@@ -114,6 +114,7 @@ async function disableSync() {
 async function runSyncNow() {
   syncBusy.value = true
   try {
+    syncMessage.value = ''
     await syncNow()
   } catch (e) {
     syncMessage.value = String(e)
@@ -169,8 +170,11 @@ async function runSyncNow() {
     <section class="space-y-3">
       <h2 class="text-xl font-bold">Cloud Sync (Turso)</h2>
       <p class="text-sm text-muted">
-        Optional. Keeps an encrypted-at-rest backup in your own free Turso database and
-        reconciles your data across machines. The app works fully offline without this.
+        Optional. Keeps a synced cloud backup in your own free Turso database and
+        reconciles your data across machines. Data is sent over an encrypted connection,
+        the auth token is stored in your OS keychain, and your local database file is
+        protected by your operating system's full-disk encryption. The app works fully
+        offline without this.
       </p>
 
       <div class="text-sm">
@@ -202,7 +206,7 @@ async function runSyncNow() {
         </div>
       </template>
 
-      <p v-if="syncMessage" class="text-sm text-error">{{ syncMessage }}</p>
+      <p v-if="syncMessage" class="text-sm text-error" aria-live="polite">{{ syncMessage }}</p>
 
       <UAccordion
         :items="[{ label: 'How to set this up', slot: 'help', icon: 'i-lucide-circle-help' }]"
