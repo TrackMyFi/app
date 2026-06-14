@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex as StdMutex;
+use tokio::sync::Mutex as AsyncMutex;
+use ts_rs::TS;
 
 /// Device-local sync configuration. Stored as `sync.json` in the app config dir,
 /// deliberately OUTSIDE the libSQL database (which is the thing being synced).
@@ -25,7 +28,7 @@ pub fn write_config(path: &Path, cfg: &SyncConfig) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -150,6 +153,99 @@ pub async fn copy_all_data(src: &Connection, dst: &Connection) -> Result<usize, 
     }
     dst.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
     Ok(total)
+}
+
+/// Background sync interval. Lifecycle (startup pull + close push) does the real
+/// work; this is a backstop for long-open sessions. One-line tunable.
+pub const SYNC_INTERVAL_SECS: u64 = 900; // 15 minutes
+
+#[derive(Serialize, Clone, Debug, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct SyncStatus {
+    /// "local" | "synced"
+    pub mode: String,
+    /// "idle" | "syncing" | "error"
+    pub status: String,
+    /// epoch milliseconds of last successful sync, or null
+    #[ts(type = "number | null")]
+    pub last_synced_at: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+impl SyncStatus {
+    pub fn local() -> Self {
+        Self { mode: "local".into(), status: "idle".into(), last_synced_at: None, last_error: None }
+    }
+    pub fn synced_idle() -> Self {
+        Self { mode: "synced".into(), status: "idle".into(), last_synced_at: None, last_error: None }
+    }
+}
+
+/// Managed state: current status snapshot + a lock serializing concurrent syncs.
+pub struct SyncShared {
+    pub status: StdMutex<SyncStatus>,
+    pub lock: AsyncMutex<()>,
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn snapshot(app: &AppHandle) -> SyncStatus {
+    app.state::<SyncShared>().status.lock().unwrap().clone()
+}
+
+fn emit_status(app: &AppHandle) {
+    let _ = app.emit("sync-status", snapshot(app));
+}
+
+/// The single funnel all sync triggers call. No-op (returns Ok) when not in synced mode.
+pub async fn do_sync(app: &AppHandle) -> Result<(), String> {
+    let db = app.state::<crate::db::Db>();
+    if !db.is_synced() {
+        return Ok(());
+    }
+    let shared = app.state::<SyncShared>();
+    let _guard = shared.lock.lock().await; // serialize timer vs. manual click
+    {
+        let mut s = shared.status.lock().unwrap();
+        s.status = "syncing".into();
+    }
+    emit_status(app);
+
+    let result = db.db.sync().await;
+
+    {
+        let mut s = shared.status.lock().unwrap();
+        match &result {
+            Ok(_) => {
+                s.status = "idle".into();
+                s.last_synced_at = Some(now_ms());
+                s.last_error = None;
+            }
+            Err(e) => {
+                s.status = "error".into();
+                s.last_error = Some(e.to_string());
+            }
+        }
+    }
+    emit_status(app);
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_sync_status(app: AppHandle) -> Result<SyncStatus, String> {
+    Ok(snapshot(&app))
+}
+
+#[tauri::command]
+pub async fn sync_now(app: AppHandle) -> Result<(), String> {
+    do_sync(&app).await
 }
 
 #[cfg(test)]
