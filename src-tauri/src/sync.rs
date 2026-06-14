@@ -51,9 +51,9 @@ pub fn write_app_config(app: &AppHandle, cfg: &SyncConfig) -> Result<(), String>
 /// dev session can never read or overwrite the real app's sync token — mirroring
 /// the data-dir isolation in `crate::db::resolve_app_dir`.
 #[cfg(debug_assertions)]
-const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app.dev";
+const KEYCHAIN_SERVICE: &str = "com.trackmyfi.desktop.dev";
 #[cfg(not(debug_assertions))]
-const KEYCHAIN_SERVICE: &str = "com.trackmyfi.app";
+const KEYCHAIN_SERVICE: &str = "com.trackmyfi.desktop";
 const KEYCHAIN_USER: &str = "turso-sync-token";
 
 /// Abstraction over secret storage so tests never touch the real OS keychain.

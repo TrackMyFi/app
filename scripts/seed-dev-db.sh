@@ -18,7 +18,7 @@
 # Usage: npm run seed:dev
 set -euo pipefail
 
-APP_DIR="$HOME/Library/Application Support/com.trackmyfi.app"
+APP_DIR="$HOME/Library/Application Support/com.trackmyfi.desktop"
 DEV_DIR="$APP_DIR/dev"
 
 # Prefer prod's synced replica; fall back to its local-only db if never synced.
