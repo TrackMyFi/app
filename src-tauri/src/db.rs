@@ -52,7 +52,13 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let cfg = crate::sync::read_app_config(app);
-    let token = crate::sync::KeyringStore.get().unwrap_or(None);
+    let token = match crate::sync::KeyringStore.get() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("warning: could not read sync token from keychain: {e}");
+            None
+        }
+    };
     let has_creds = cfg.url.is_some() && token.is_some();
     let replica_path = dir.join(REPLICA_DB);
     let replica_exists = replica_path.exists();
@@ -68,7 +74,7 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
                 .await
                 .map_err(|e| e.to_string())?;
             // Pull on startup so this device sees other devices' edits.
-            let _ = db.sync().await.map_err(|e| e.to_string())?;
+            db.sync().await.map_err(|e| e.to_string())?;
             (db, DbMode::Synced)
         }
         DbSource::LocalReplicaFile => {

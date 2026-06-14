@@ -98,6 +98,9 @@ pub async fn list_data_tables(conn: &Connection) -> Result<Vec<String>, String> 
     Ok(out)
 }
 
+// Relies on `SELECT *` column order matching the destination's positional
+// `INSERT ... VALUES`; this holds only because src and dst share an identical
+// schema (both run the same migrations).
 async fn copy_table(src: &Connection, dst: &Connection, table: &str) -> Result<usize, String> {
     let mut rows = src
         .query(&format!("SELECT * FROM \"{table}\""), ())
@@ -126,12 +129,26 @@ async fn copy_table(src: &Connection, dst: &Connection, table: &str) -> Result<u
 /// Copy every app data table from `src` into `dst`. Assumes both have identical schema.
 pub async fn copy_all_data(src: &Connection, dst: &Connection) -> Result<usize, String> {
     // FK enforcement is off by default in libSQL; be explicit so child-before-parent
-    // insert order can never fail the copy.
-    let _ = dst.execute("PRAGMA foreign_keys=OFF", ()).await;
+    // insert order can never fail the copy. Must run BEFORE BEGIN — this PRAGMA is a
+    // no-op inside a transaction.
+    dst.execute("PRAGMA foreign_keys=OFF", ())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Wrap the whole copy in one transaction so a mid-copy failure rolls back
+    // rather than leaving the destination half-populated.
+    dst.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
     let mut total = 0usize;
     for table in list_data_tables(src).await? {
-        total += copy_table(src, dst, &table).await?;
+        match copy_table(src, dst, &table).await {
+            Ok(n) => total += n,
+            Err(e) => {
+                let _ = dst.execute("ROLLBACK", ()).await;
+                return Err(e);
+            }
+        }
     }
+    dst.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
     Ok(total)
 }
 
