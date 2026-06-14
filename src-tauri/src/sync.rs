@@ -78,6 +78,63 @@ impl TokenStore for KeyringStore {
     }
 }
 
+use libsql::Connection;
+
+/// App data tables to copy during bootstrap — everything except sqlite internals
+/// and the migration bookkeeping table (the replica runs migrations itself).
+pub async fn list_data_tables(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT name FROM sqlite_master WHERE type='table' \
+             AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations' ORDER BY name",
+            (),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(r.get::<String>(0).map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+async fn copy_table(src: &Connection, dst: &Connection, table: &str) -> Result<usize, String> {
+    let mut rows = src
+        .query(&format!("SELECT * FROM \"{table}\""), ())
+        .await
+        .map_err(|e| e.to_string())?;
+    let ncols = rows.column_count();
+    let placeholders = std::iter::repeat("?")
+        .take(ncols as usize)
+        .collect::<Vec<_>>()
+        .join(",");
+    let insert = format!("INSERT INTO \"{table}\" VALUES ({placeholders})");
+    let mut count = 0usize;
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        let mut vals: Vec<libsql::Value> = Vec::with_capacity(ncols as usize);
+        for i in 0..ncols {
+            vals.push(row.get_value(i).map_err(|e| e.to_string())?);
+        }
+        dst.execute(&insert, libsql::params_from_iter(vals))
+            .await
+            .map_err(|e| e.to_string())?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Copy every app data table from `src` into `dst`. Assumes both have identical schema.
+pub async fn copy_all_data(src: &Connection, dst: &Connection) -> Result<usize, String> {
+    // FK enforcement is off by default in libSQL; be explicit so child-before-parent
+    // insert order can never fail the copy.
+    let _ = dst.execute("PRAGMA foreign_keys=OFF", ()).await;
+    let mut total = 0usize;
+    for table in list_data_tables(src).await? {
+        total += copy_table(src, dst, &table).await?;
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +157,45 @@ mod tests {
         write_config(&p, &cfg).unwrap();
         assert_eq!(read_config(&p), cfg);
         let _ = std::fs::remove_file(&p);
+    }
+
+    use libsql::Builder;
+
+    async fn open_local(name: &str) -> libsql::Database {
+        let p = std::env::temp_dir().join(format!("trackmyfi_copytest_{name}.db"));
+        let _ = std::fs::remove_file(&p);
+        Builder::new_local(p).build().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn copies_rows_between_dbs() {
+        let src_db = open_local("src").await;
+        let dst_db = open_local("dst").await;
+        let src = src_db.connect().unwrap();
+        let dst = dst_db.connect().unwrap();
+
+        for c in [&src, &dst] {
+            c.execute("CREATE TABLE account (id INTEGER PRIMARY KEY, name TEXT)", ())
+                .await
+                .unwrap();
+            c.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT)", ())
+                .await
+                .unwrap();
+        }
+        src.execute("INSERT INTO account VALUES (1, 'Checking')", ()).await.unwrap();
+        src.execute("INSERT INTO account VALUES (2, 'Brokerage')", ()).await.unwrap();
+        // schema_migrations must NOT be copied (excluded from data tables).
+        src.execute("INSERT INTO schema_migrations VALUES (1, 'init')", ()).await.unwrap();
+
+        let copied = copy_all_data(&src, &dst).await.unwrap();
+        assert_eq!(copied, 2);
+
+        let mut rows = dst.query("SELECT count(*) FROM account", ()).await.unwrap();
+        let n: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(n, 2);
+
+        let mut mig = dst.query("SELECT count(*) FROM schema_migrations", ()).await.unwrap();
+        let m: i64 = mig.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(m, 0, "schema_migrations must not be copied");
     }
 }
