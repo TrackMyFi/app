@@ -7,6 +7,7 @@ import { contributionItems } from '../lib/paychecks/index'
 import { INVESTMENT_TYPES } from '../lib/accountTypes'
 import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
+import CurrencyInput from './CurrencyInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 
 const PAY_PERIODS = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'irregular'] as const
@@ -189,13 +190,13 @@ async function save() {
         payDate: form.payDate,
         employer: form.employer,
         payPeriod: form.payPeriod,
-        grossAmount: form.grossAmount,
-        netAmount: form.netAmount,
-        federalTax: form.federalTax,
-        stateTax: form.stateTax,
-        localTax: form.localTax,
-        socialSecurityTax: form.socialSecurityTax,
-        medicareTax: form.medicareTax,
+        grossAmount: form.grossAmount ?? 0,
+        netAmount: form.netAmount ?? 0,
+        federalTax: form.federalTax ?? 0,
+        stateTax: form.stateTax ?? 0,
+        localTax: form.localTax ?? 0,
+        socialSecurityTax: form.socialSecurityTax ?? 0,
+        medicareTax: form.medicareTax ?? 0,
         deductions: form.deductions,
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
@@ -206,13 +207,13 @@ async function save() {
         payDate: form.payDate,
         employer: form.employer,
         payPeriod: form.payPeriod,
-        grossAmount: form.grossAmount,
-        netAmount: form.netAmount,
-        federalTax: form.federalTax,
-        stateTax: form.stateTax,
-        localTax: form.localTax,
-        socialSecurityTax: form.socialSecurityTax,
-        medicareTax: form.medicareTax,
+        grossAmount: form.grossAmount ?? 0,
+        netAmount: form.netAmount ?? 0,
+        federalTax: form.federalTax ?? 0,
+        stateTax: form.stateTax ?? 0,
+        localTax: form.localTax ?? 0,
+        socialSecurityTax: form.socialSecurityTax ?? 0,
+        medicareTax: form.medicareTax ?? 0,
         deductions: form.deductions,
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
@@ -268,11 +269,11 @@ async function save() {
           <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amounts</p>
           <div>
             <p class="text-xs text-muted mb-1">Gross</p>
-            <UInput v-model.number="form.grossAmount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+            <CurrencyInput v-model="form.grossAmount" class="w-full" />
           </div>
           <div>
             <p class="text-xs text-muted mb-1">Net (take-home)</p>
-            <UInput v-model.number="form.netAmount" type="number" step="0.01" placeholder="0.00" class="w-full" />
+            <CurrencyInput v-model="form.netAmount" class="w-full" />
           </div>
         </div>
 
@@ -282,25 +283,25 @@ async function save() {
           <div class="grid grid-cols-3 gap-3">
             <div>
               <p class="text-xs text-muted mb-1">Federal</p>
-              <UInput v-model.number="form.federalTax" type="number" step="0.01" placeholder="0.00" />
+              <CurrencyInput v-model="form.federalTax" />
             </div>
             <div>
               <p class="text-xs text-muted mb-1">State</p>
-              <UInput v-model.number="form.stateTax" type="number" step="0.01" placeholder="0.00" />
+              <CurrencyInput v-model="form.stateTax" />
             </div>
             <div>
               <p class="text-xs text-muted mb-1">Local</p>
-              <UInput v-model.number="form.localTax" type="number" step="0.01" placeholder="0.00" />
+              <CurrencyInput v-model="form.localTax" />
             </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
               <p class="text-xs text-muted mb-1">Social Security</p>
-              <UInput v-model.number="form.socialSecurityTax" type="number" step="0.01" placeholder="0.00" class="w-full" />
+              <CurrencyInput v-model="form.socialSecurityTax" class="w-full" />
             </div>
             <div>
               <p class="text-xs text-muted mb-1">Medicare</p>
-              <UInput v-model.number="form.medicareTax" type="number" step="0.01" placeholder="0.00" class="w-full" />
+              <CurrencyInput v-model="form.medicareTax" class="w-full" />
             </div>
           </div>
         </div>
@@ -316,7 +317,7 @@ async function save() {
           <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
             <div class="flex gap-2 items-center">
               <ComboboxInput v-model="ded.label" :items="knownDeductionLabels" placeholder="Label" class="flex-1 min-w-0" />
-              <UInput v-model.number="ded.amount" type="number" step="0.01" placeholder="0.00" class="w-24" />
+              <CurrencyInput v-model="ded.amount" class="w-24" />
               <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeDeduction(i)" />
             </div>
             <div class="flex gap-2 items-center">
@@ -348,7 +349,7 @@ async function save() {
           </div>
           <div v-for="(em, i) in form.employerMatch" :key="i" class="grid grid-cols-[1fr_auto_1fr_auto] gap-2 items-center">
             <UInput v-model="em.label" placeholder="Label" />
-            <UInput v-model.number="em.amount" type="number" step="0.01" placeholder="0.00" class="w-28" />
+            <CurrencyInput v-model="em.amount" class="w-28" />
             <USelect v-model="em.accountId" :items="investmentAccountItems" placeholder="Account" />
             <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeMatch(i)" />
           </div>
