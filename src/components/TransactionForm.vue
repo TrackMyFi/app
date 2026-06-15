@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
-import { TRANSACTION_TYPES, CATEGORIES } from '../lib/transactions/constants'
+import { transactionTypeItems, categoryItems } from '../lib/transactions/constants'
 import { balancePreview } from '../lib/transactions/balancePreview'
 import { isInvestment } from '../lib/accountTypes'
 import DateInput from './DateInput.vue'
@@ -126,10 +126,10 @@ async function save() {
 <template>
   <form class="space-y-4" @submit.prevent="save">
     <UFormField label="Type">
-      <USelect v-model="form.type" :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))" class="w-full" />
+      <USelect v-model="form.type" :items="transactionTypeItems" class="w-full" />
     </UFormField>
     <div class="grid grid-cols-2 gap-3">
-      <UFormField :label="isTransfer ? 'From account' : 'Account'">
+      <UFormField :label="isTransfer ? 'From account' : 'Account'" :class="{ 'col-span-full': !isTransfer }">
         <USelect v-model="form.accountId" :items="accountItems" placeholder="Select account" class="w-full" />
       </UFormField>
       <UFormField v-if="isTransfer" label="To account">
@@ -146,7 +146,7 @@ async function save() {
       <UInput v-model="form.description" placeholder="Optional" class="w-full" />
     </UFormField>
     <UFormField v-if="!isTransfer" label="Category">
-      <USelect v-model="form.category" :items="CATEGORIES.map((c) => ({ label: c, value: c }))" class="w-full" />
+      <USelect v-model="form.category" :items="categoryItems" class="w-full" />
     </UFormField>
     <UCheckbox v-if="!isTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
 

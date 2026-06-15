@@ -2,7 +2,7 @@
 import { reactive, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
-import { ACCOUNT_TYPES, defaultIncludeInFire, type AccountType } from '../lib/accountTypes'
+import { accountTypeItems, defaultIncludeInFire, type AccountType } from '../lib/accountTypes'
 import type { Account } from '../lib/types/Account'
 import DateInput from './DateInput.vue'
 
@@ -32,7 +32,6 @@ if (!isEdit) {
   )
 }
 
-const accountTypeItems = ACCOUNT_TYPES.map((t) => ({ label: t, value: t }))
 
 async function onSubmit() {
   const payload = {

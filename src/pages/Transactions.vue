@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
-import { TRANSACTION_TYPES, CATEGORIES } from '../lib/transactions/constants'
+import { transactionTypeItems, categoryItems, labelForTransactionType, labelForCategory } from '../lib/transactions/constants'
 import TransactionForm from '../components/TransactionForm.vue'
 import ImportWizard from '../components/ImportWizard.vue'
 import type { Transaction } from '../lib/types/Transaction'
@@ -76,13 +76,13 @@ onMounted(async () => {
       />
       <USelect
         v-model="type"
-        :items="TRANSACTION_TYPES.map((t) => ({ label: t, value: t }))"
+        :items="transactionTypeItems"
         placeholder="All types"
         class="w-36"
       />
       <USelect
         v-model="category"
-        :items="CATEGORIES.map((c) => ({ label: c, value: c }))"
+        :items="categoryItems"
         placeholder="All categories"
         class="w-40"
       />
@@ -117,8 +117,8 @@ onMounted(async () => {
             {{ accountName(t.accountId) }}
             <span v-if="t.type === 'transfer'"> → {{ accountName(t.transferAccountId) }}</span>
           </td>
-          <td>{{ t.type }}</td>
-          <td>{{ t.category }}</td>
+          <td>{{ labelForTransactionType(t.type) }}</td>
+          <td>{{ labelForCategory(t.category) }}</td>
           <td class="text-right tabular-nums">{{ money(t.amount) }}</td>
           <td class="text-right">
             <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(t)" />

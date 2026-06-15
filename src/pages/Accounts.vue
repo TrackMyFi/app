@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAccountsStore } from '../stores/accounts'
+import { labelForAccountType } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
 import BalanceForm from '../components/BalanceForm.vue'
 import BalanceRow from '../components/BalanceRow.vue'
@@ -124,7 +125,7 @@ async function remove(account: Account) {
           <div class="flex items-center justify-between">
             <div>
               <span class="font-semibold text-base">{{ account.name }}</span>
-              <span class="ml-2 text-sm text-gray-500">{{ account.type }}</span>
+              <span class="ml-2 text-sm text-gray-500">{{ labelForAccountType(account.type) }}</span>
               <span v-if="account.institution" class="ml-2 text-sm text-gray-400">· {{ account.institution }}</span>
             </div>
             <div class="flex items-center gap-4">
@@ -193,7 +194,7 @@ async function remove(account: Account) {
           <div class="flex items-center justify-between">
             <div>
               <span class="font-medium">{{ account.name }}</span>
-              <span class="ml-2 text-sm text-gray-500">{{ account.type }}</span>
+              <span class="ml-2 text-sm text-gray-500">{{ labelForAccountType(account.type) }}</span>
               <span v-if="account.institution" class="ml-2 text-sm text-gray-400">· {{ account.institution }}</span>
               <span class="ml-2 text-sm text-gray-400">· {{ latestBalance(account.id) }}</span>
             </div>

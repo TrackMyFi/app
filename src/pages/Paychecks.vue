@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePaychecksStore } from '../stores/paychecks'
+import { labelForPayPeriod } from '../lib/paychecks/constants'
 import { useAccountsStore } from '../stores/accounts'
 import { paycheckTotals } from '../lib/paychecks/index'
 import PaycheckForm from '../components/PaycheckForm.vue'
@@ -101,7 +102,7 @@ onMounted(async () => {
         <tr v-for="p in store.paychecks" :key="p.id" class="border-b border-default/50">
           <td class="py-2">{{ p.payDate }}</td>
           <td>{{ p.employer }}</td>
-          <td class="capitalize">{{ p.payPeriod }}</td>
+          <td>{{ labelForPayPeriod(p.payPeriod) }}</td>
           <td class="text-right tabular-nums">{{ money(p.grossAmount) }}</td>
           <td class="text-right tabular-nums">{{ money(p.netAmount) }}</td>
           <td class="text-right tabular-nums">{{ money(p.federalTax) }}</td>

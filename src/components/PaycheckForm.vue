@@ -4,14 +4,13 @@ import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { contributionItems } from '../lib/paychecks/index'
-import { INVESTMENT_TYPES } from '../lib/accountTypes'
+import { INVESTMENT_TYPES, investmentTypeItems } from '../lib/accountTypes'
+import { payPeriodItems } from '../lib/paychecks/constants'
 import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
 import CurrencyInput from './CurrencyInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 
-const PAY_PERIODS = ['weekly', 'biweekly', 'semimonthly', 'monthly', 'irregular'] as const
-const CONTRIBUTION_ACCOUNT_TYPES = [...INVESTMENT_TYPES].map((t) => ({ label: t, value: t }))
 
 const props = defineProps<{ editing: Paycheck | null; copyFrom: Paycheck | null }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -244,7 +243,7 @@ async function save() {
               <p class="text-xs text-muted mb-1">Pay period</p>
               <USelect
                 v-model="form.payPeriod"
-                :items="PAY_PERIODS.map((p) => ({ label: p, value: p }))"
+                :items="payPeriodItems"
                 class="w-full"
               />
             </div>
@@ -323,7 +322,7 @@ async function save() {
             <div class="flex gap-2 items-center">
               <USelect
                 v-model="ded.contributionAccountType"
-                :items="CONTRIBUTION_ACCOUNT_TYPES"
+                :items="investmentTypeItems"
                 placeholder="Contribution type"
                 class="flex-1"
                 @update:model-value="onContributionTypeChange(ded)"
