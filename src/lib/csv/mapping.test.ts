@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMapping, detectDuplicates, parseAmount, type MappingConfig } from './mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from './mapping'
 
 const config: MappingConfig = {
   dateColumn: 'Posting Date',
@@ -127,5 +127,61 @@ describe('applyMapping split mode', () => {
     const r = [{ Date: '03/01/2026', Credit: '42.50', Debit: '42.50', Description: 'Tie' }]
     // credit wins (>=), non-liability → credit = income
     expect(applyMapping(r, splitConfig, false)[0]).toMatchObject({ amount: 42.5, type: 'income' })
+  })
+})
+
+describe('autoDetectMapping', () => {
+  it('detects Date/Credit/Debit headers as split mode', () => {
+    const result = autoDetectMapping(
+      ['Date', 'Description', 'Credit', 'Debit'],
+      [{ Date: '03/01/2026', Description: 'Coffee', Credit: '0', Debit: '42.50' }],
+    )
+    expect(result.dateColumn).toBe('Date')
+    expect(result.descriptionColumn).toBe('Description')
+    expect(result.amountMode).toBe('split')
+    expect(result.creditColumn).toBe('Credit')
+    expect(result.debitColumn).toBe('Debit')
+  })
+
+  it('detects single Amount column when no credit/debit present', () => {
+    const result = autoDetectMapping(
+      ['Posting Date', 'Memo', 'Amount'],
+      [{ 'Posting Date': '03/01/2026', Memo: 'Coffee', Amount: '-42.50' }],
+    )
+    expect(result.dateColumn).toBe('Posting Date')
+    expect(result.descriptionColumn).toBe('Memo')
+    expect(result.amountMode).toBe('single')
+    expect(result.amountColumn).toBe('Amount')
+  })
+
+  it('auto-detects MM/dd/yyyy date format', () => {
+    const result = autoDetectMapping(
+      ['Date', 'Amount'],
+      [{ Date: '03/15/2026', Amount: '-42.50' }],
+    )
+    expect(result.dateFormat).toBe('MM/dd/yyyy')
+  })
+
+  it('auto-detects yyyy-MM-dd date format', () => {
+    const result = autoDetectMapping(
+      ['Date', 'Amount'],
+      [{ Date: '2026-03-15', Amount: '-42.50' }],
+    )
+    expect(result.dateFormat).toBe('yyyy-MM-dd')
+  })
+
+  it('returns empty object when no headers match', () => {
+    const result = autoDetectMapping(['Foo', 'Bar', 'Baz'], [])
+    expect(result).toEqual({})
+  })
+
+  it('matching is case-insensitive', () => {
+    const result = autoDetectMapping(
+      ['TRANSACTION DATE', 'DESCRIPTION', 'AMOUNT'],
+      [{ 'TRANSACTION DATE': '03/01/2026', DESCRIPTION: 'Coffee', AMOUNT: '-42.50' }],
+    )
+    expect(result.dateColumn).toBe('TRANSACTION DATE')
+    expect(result.descriptionColumn).toBe('DESCRIPTION')
+    expect(result.amountColumn).toBe('AMOUNT')
   })
 })

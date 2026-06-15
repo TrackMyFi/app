@@ -31,6 +31,48 @@ export interface ExistingRef {
   description: string
 }
 
+export function autoDetectMapping(
+  headers: string[],
+  rows: Record<string, string>[],
+): Partial<MappingConfig> {
+  const find = (aliases: string[]): string =>
+    headers.find((h) => {
+      const normalized = h.toLowerCase().trim()
+      return aliases.some((a) => normalized.includes(a))
+    }) ?? ''
+
+  const dateCol = find(['date'])
+  const descCol = find(['description', 'memo', 'details', 'narrative', 'payee', 'merchant'])
+  const amountCol = find(['amount', 'amt'])
+  const creditCol = find(['credit', 'deposit'])
+  const debitCol = find(['debit', 'withdrawal', 'charge'])
+
+  const result: Partial<MappingConfig> = {}
+  if (dateCol) result.dateColumn = dateCol
+  if (descCol) result.descriptionColumn = descCol
+
+  if (creditCol && debitCol) {
+    result.amountMode = 'split'
+    result.creditColumn = creditCol
+    result.debitColumn = debitCol
+  } else if (amountCol) {
+    result.amountMode = 'single'
+    result.amountColumn = amountCol
+  }
+
+  if (dateCol) {
+    const sample = rows.find((r) => (r[dateCol] ?? '').trim())
+    if (sample) {
+      const raw = sample[dateCol].trim()
+      const formats = ['MM/dd/yyyy', 'yyyy-MM-dd', 'M/d/yyyy', 'dd/MM/yyyy']
+      const detected = formats.find((f) => DateTime.fromFormat(raw, f).isValid)
+      if (detected) result.dateFormat = detected
+    }
+  }
+
+  return result
+}
+
 export function parseAmount(raw: string): number {
   const s = (raw ?? '').trim()
   // Some bank exports encode negatives as (42.50) rather than -42.50
