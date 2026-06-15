@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
 import { bulkCreateTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
+import * as categoryRulesApi from '../lib/api/categoryRules'
 import { useAccountsStore } from '../stores/accounts'
 import { useTransactionsStore } from '../stores/transactions'
 import { isLiability } from '../lib/accountTypes'
+import { categoryItems } from '../lib/transactions/constants'
 import type { ImportMapping } from '../lib/types/ImportMapping'
+import type { CategoryRule } from '../lib/types/CategoryRule'
 
 const emit = defineEmits<{ done: [] }>()
 const accountsStore = useAccountsStore()
@@ -19,6 +22,7 @@ const accountId = ref<number | undefined>(undefined)
 const headers = ref<string[]>([])
 const rawRows = ref<Record<string, string>[]>([])
 const savedMappings = ref<ImportMapping[]>([])
+const categoryRules = ref<CategoryRule[]>([])
 const newMappingName = ref('')
 
 const config = ref<MappingConfig>({
@@ -43,7 +47,9 @@ const isLiabilityAccount = computed(() => {
 })
 
 const parsed = computed(() =>
-  step.value === 3 ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value) : [],
+  step.value === 3
+    ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value, categoryRules.value)
+    : [],
 )
 const dupes = computed(() =>
   accountId.value == null
@@ -97,6 +103,7 @@ const include = ref<boolean[]>([])
 onMounted(async () => {
   await accountsStore.load()
   savedMappings.value = await mappingApi.listImportMappings()
+  categoryRules.value = await categoryRulesApi.listCategoryRules()
 })
 
 async function onFile(event: Event) {
@@ -106,6 +113,8 @@ async function onFile(event: Event) {
   const result = parseCsv(text)
   headers.value = result.headers
   rawRows.value = result.rows
+  const detected = autoDetectMapping(result.headers, result.rows)
+  config.value = { ...config.value, ...detected }
   step.value = 2
 }
 
@@ -275,6 +284,15 @@ async function confirmImport() {
         <div>
           <p class="text-xs text-muted mb-1">Date format</p>
           <UInput v-model="config.dateFormat" placeholder="MM/dd/yyyy" class="w-full" />
+        </div>
+      </div>
+
+      <!-- CATEGORY DEFAULTS -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Category Defaults</p>
+        <div>
+          <p class="text-xs text-muted mb-1">Default category for unmatched rows</p>
+          <USelect v-model="config.defaultCategory" :items="categoryItems" class="w-full" />
         </div>
       </div>
 
