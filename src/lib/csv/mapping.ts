@@ -129,13 +129,35 @@ export function applyMapping(
   isLiabilityAccount = false,
   rules: CategoryRuleInput[] = [],
 ): ParsedTransaction[] {
+  const transferRules = config.transferRules ?? []
+
   return rows.map((row) => {
     const date = isoDate(row[config.dateColumn] ?? '', config.dateFormat)
     const description = row[config.descriptionColumn] ?? ''
-
     const descLower = description.toLowerCase()
-    const matchedRule = rules.find((r) => descLower.includes(r.keyword.toLowerCase()))
-    const category = matchedRule ? matchedRule.category : config.defaultCategory
+
+    const matchedCategoryRule = rules.find((r) => descLower.includes(r.keyword.toLowerCase()))
+    const category = matchedCategoryRule ? matchedCategoryRule.category : config.defaultCategory
+
+    const matchedTransferRule = transferRules.find((r) => descLower.includes(r.keyword.toLowerCase()))
+
+    if (matchedTransferRule) {
+      let amount: number
+      if (config.amountMode === 'split') {
+        const { amount: a } = resolveSplit(row, config, isLiabilityAccount)
+        amount = a
+      } else {
+        amount = Math.abs(parseAmount(row[config.amountColumn] ?? '0'))
+      }
+      return {
+        date,
+        amount,
+        description,
+        type: 'transfer' as const,
+        category: 'uncategorized',
+        transferAccountId: matchedTransferRule.transferAccountId,
+      }
+    }
 
     if (config.amountMode === 'split') {
       const { amount, type } = resolveSplit(row, config, isLiabilityAccount)
