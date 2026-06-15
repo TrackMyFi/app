@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig, type TransferRuleInput } from '../lib/csv/mapping'
 import { bulkCreateTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
@@ -36,6 +36,7 @@ const config = ref<MappingConfig>({
   debitColumn: '',
   invertSplit: false,
   defaultCategory: 'uncategorized',
+  transferRules: [],
 })
 
 const headerItems = computed(() => headers.value.map((h) => ({ label: h, value: h })))
@@ -103,6 +104,8 @@ const rowCategories = ref<string[]>([])
 const manuallyOverridden = ref<boolean[]>([])
 const newRuleKeyword = ref('')
 const newRuleCategory = ref('discretionary')
+const newTransferKeyword = ref('')
+const newTransferAccountId = ref<number | undefined>(undefined)
 
 onMounted(async () => {
   await accountsStore.load()
@@ -153,6 +156,20 @@ async function saveQuickRule() {
   categoryRules.value = await categoryRulesApi.listCategoryRules()
   newRuleKeyword.value = ''
   newRuleCategory.value = 'discretionary'
+}
+
+function addTransferRule() {
+  if (!newTransferKeyword.value.trim() || newTransferAccountId.value == null) return
+  config.value.transferRules.push({
+    keyword: newTransferKeyword.value.trim().toLowerCase(),
+    transferAccountId: newTransferAccountId.value,
+  })
+  newTransferKeyword.value = ''
+  newTransferAccountId.value = undefined
+}
+
+function removeTransferRule(index: number) {
+  config.value.transferRules.splice(index, 1)
 }
 
 async function saveMapping() {
@@ -318,6 +335,51 @@ async function confirmImport() {
         <div>
           <p class="text-xs text-muted mb-1">Default category for unmatched rows</p>
           <USelect v-model="config.defaultCategory" :items="categoryItems" class="w-full" />
+        </div>
+      </div>
+
+      <!-- TRANSFER RULES -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Transfer Rules</p>
+        <p class="text-xs text-muted">Mark rows matching a keyword as a transfer to an account.</p>
+
+        <div v-if="config.transferRules.length" class="space-y-1">
+          <div
+            v-for="(rule, i) in config.transferRules"
+            :key="i"
+            class="flex items-center gap-2 text-sm"
+          >
+            <span class="flex-1 truncate">{{ rule.keyword }}</span>
+            <span class="text-muted">→</span>
+            <span class="flex-1 truncate">
+              {{ accountsStore.accounts.find((a) => a.id === rule.transferAccountId)?.name ?? 'Unknown account' }}
+            </span>
+            <UButton size="xs" variant="ghost" color="red" @click="removeTransferRule(i)">Remove</UButton>
+          </div>
+        </div>
+
+        <div class="flex gap-2 items-center">
+          <UInput
+            v-model="newTransferKeyword"
+            placeholder="keyword (e.g. payment thank you)"
+            size="xs"
+            class="flex-1"
+          />
+          <USelect
+            v-model="newTransferAccountId"
+            :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
+            placeholder="Transfer to account"
+            size="xs"
+            class="w-44"
+          />
+          <UButton
+            size="xs"
+            variant="soft"
+            :disabled="!newTransferKeyword.trim() || newTransferAccountId == null"
+            @click="addTransferRule"
+          >
+            Add rule
+          </UButton>
         </div>
       </div>
 
