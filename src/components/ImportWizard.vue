@@ -172,25 +172,126 @@ async function confirmImport() {
     </div>
 
     <!-- Step 2: map columns -->
-    <div v-else-if="step === 2" class="space-y-3">
-      <USelect v-model="config.dateColumn" :items="headerItems" placeholder="Date column" />
-      <USelect v-model="config.amountColumn" :items="headerItems" placeholder="Amount column" />
-      <USelect v-model="config.descriptionColumn" :items="headerItems" placeholder="Description column" />
-      <UInput v-model="config.dateFormat" placeholder="Date format (e.g. MM/dd/yyyy)" />
-      <USelect
-        v-model="config.amountSign"
-        :items="[
-          { label: 'Negative amounts are expenses', value: 'negative-is-expense' },
-          { label: 'Positive amounts are expenses', value: 'positive-is-expense' },
-        ]"
-      />
-      <div class="flex gap-2 items-center">
-        <UInput v-model="newMappingName" placeholder="Save this mapping as…" class="w-52" />
-        <UButton size="sm" variant="soft" :disabled="!newMappingName" @click="saveMapping">Save mapping</UButton>
+    <div v-else-if="step === 2" class="space-y-5">
+
+      <!-- COLUMN MAPPING -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Column Mapping</p>
+        <div>
+          <p class="text-xs text-muted mb-1">Date column</p>
+          <USelect v-model="config.dateColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+        </div>
+        <div>
+          <p class="text-xs text-muted mb-1">Description column</p>
+          <USelect v-model="config.descriptionColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+        </div>
       </div>
-      <div class="flex justify-end">
-        <UButton :disabled="!config.dateColumn || !config.amountColumn" @click="goToPreview">Preview</UButton>
+
+      <!-- AMOUNT -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amount</p>
+
+        <div class="flex gap-1 p-1 rounded-lg bg-muted">
+          <UButton
+            type="button"
+            :variant="config.amountMode === 'single' ? 'solid' : 'ghost'"
+            size="sm"
+            class="flex-1"
+            @click="config.amountMode = 'single'"
+          >Single column</UButton>
+          <UButton
+            type="button"
+            :variant="config.amountMode === 'split' ? 'solid' : 'ghost'"
+            size="sm"
+            class="flex-1"
+            @click="config.amountMode = 'split'"
+          >Credit + Debit columns</UButton>
+        </div>
+
+        <template v-if="config.amountMode === 'single'">
+          <div>
+            <p class="text-xs text-muted mb-1">Amount column</p>
+            <USelect v-model="config.amountColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+          </div>
+          <div>
+            <p class="text-xs text-muted mb-1">Amount sign</p>
+            <USelect
+              v-model="config.amountSign"
+              :items="[
+                { label: 'Negative amounts are expenses', value: 'negative-is-expense' },
+                { label: 'Positive amounts are expenses', value: 'positive-is-expense' },
+              ]"
+              class="w-full"
+            />
+          </div>
+        </template>
+
+        <template v-else>
+          <div>
+            <p class="text-xs text-muted mb-1">Credit column</p>
+            <USelect v-model="config.creditColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+          </div>
+          <div>
+            <p class="text-xs text-muted mb-1">Debit column</p>
+            <USelect v-model="config.debitColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+          </div>
+          <USwitch v-model="config.invertSplit" label="Invert credit/debit direction" />
+        </template>
+
+        <!-- Live example card -->
+        <div class="rounded-lg border border-default p-3 text-sm space-y-1.5">
+          <p class="text-xs text-muted">Example from your CSV</p>
+          <template v-if="exampleEntry">
+            <div class="flex items-center gap-2">
+              <span
+                class="text-xs font-medium px-2 py-0.5 rounded-full"
+                :class="exampleEntry.parsed.type === 'income'
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
+              >{{ exampleEntry.parsed.type }}</span>
+              <span class="tabular-nums font-medium">{{ money(exampleEntry.parsed.amount) }}</span>
+            </div>
+            <p class="text-xs text-muted">
+              {{ exampleEntry.parsed.date }} · {{ exampleEntry.parsed.description || '—' }}
+              <template v-if="config.amountMode === 'split'">
+                · Credit: {{ exampleEntry.raw[config.creditColumn] || '—' }}
+                / Debit: {{ exampleEntry.raw[config.debitColumn] || '—' }}
+              </template>
+              <template v-else>
+                · Raw: {{ exampleEntry.raw[config.amountColumn] || '—' }}
+              </template>
+            </p>
+          </template>
+          <p v-else class="text-xs text-muted">Select columns to see an example.</p>
+        </div>
       </div>
+
+      <!-- FORMAT -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Format</p>
+        <div>
+          <p class="text-xs text-muted mb-1">Date format</p>
+          <UInput v-model="config.dateFormat" placeholder="MM/dd/yyyy" class="w-full" />
+        </div>
+      </div>
+
+      <!-- SAVE MAPPING -->
+      <div class="space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Save Mapping</p>
+        <div v-if="savedMappings.length" class="flex flex-wrap gap-1">
+          <UButton v-for="m in savedMappings" :key="m.id" size="xs" variant="soft"
+            @click="applySavedMapping(m)">{{ m.name }}</UButton>
+        </div>
+        <div class="flex gap-2 items-center">
+          <UInput v-model="newMappingName" placeholder="Save this mapping as…" class="flex-1" />
+          <UButton size="sm" variant="soft" :disabled="!newMappingName" @click="saveMapping">Save mapping</UButton>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <UButton :disabled="!canPreview" @click="goToPreview">Preview</UButton>
+      </div>
+
     </div>
 
     <!-- Step 3: preview + dedup -->
