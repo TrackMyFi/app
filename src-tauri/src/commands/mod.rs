@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod budget;
+pub mod category_rules;
 pub mod contributions;
 pub mod data_management;
 pub mod fire_profile;
