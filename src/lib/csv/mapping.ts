@@ -31,6 +31,11 @@ export interface ExistingRef {
   description: string
 }
 
+export interface CategoryRuleInput {
+  keyword: string
+  category: string
+}
+
 export function autoDetectMapping(
   headers: string[],
   rows: Record<string, string>[],
@@ -115,14 +120,19 @@ export function applyMapping(
   rows: Record<string, string>[],
   config: MappingConfig,
   isLiabilityAccount = false,
+  rules: CategoryRuleInput[] = [],
 ): ParsedTransaction[] {
   return rows.map((row) => {
     const date = isoDate(row[config.dateColumn] ?? '', config.dateFormat)
     const description = row[config.descriptionColumn] ?? ''
 
+    const descLower = description.toLowerCase()
+    const matchedRule = rules.find((r) => descLower.includes(r.keyword.toLowerCase()))
+    const category = matchedRule ? matchedRule.category : config.defaultCategory
+
     if (config.amountMode === 'split') {
       const { amount, type } = resolveSplit(row, config, isLiabilityAccount)
-      return { date, amount, description, type, category: config.defaultCategory }
+      return { date, amount, description, type, category }
     }
 
     const signed = parseAmount(row[config.amountColumn] ?? '0')
@@ -132,7 +142,7 @@ export function applyMapping(
       amount: Math.abs(signed),
       description,
       type: isExpense ? 'expense' : 'income',
-      category: config.defaultCategory,
+      category,
     }
   })
 }

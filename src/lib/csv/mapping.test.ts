@@ -130,6 +130,59 @@ describe('applyMapping split mode', () => {
   })
 })
 
+describe('applyMapping with category rules', () => {
+  it('applies a matching rule to override the default category', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Netflix monthly' }],
+      config,
+      false,
+      [{ keyword: 'netflix', category: 'fixed' }],
+    )
+    expect(result[0].category).toBe('fixed')
+  })
+
+  it('uses defaultCategory when no rule matches', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
+      { ...config, defaultCategory: 'discretionary' },
+      false,
+      [{ keyword: 'netflix', category: 'fixed' }],
+    )
+    expect(result[0].category).toBe('discretionary')
+  })
+
+  it('rule matching is case-insensitive', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'NETFLIX' }],
+      config,
+      false,
+      [{ keyword: 'netflix', category: 'fixed' }],
+    )
+    expect(result[0].category).toBe('fixed')
+  })
+
+  it('first matching rule wins', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Netflix and Amazon' }],
+      config,
+      false,
+      [
+        { keyword: 'netflix', category: 'fixed' },
+        { keyword: 'amazon', category: 'discretionary' },
+      ],
+    )
+    expect(result[0].category).toBe('fixed')
+  })
+
+  it('omitting rules falls back to defaultCategory (backwards compatible)', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
+      { ...config, defaultCategory: 'savings' },
+    )
+    expect(result[0].category).toBe('savings')
+  })
+})
+
 describe('autoDetectMapping', () => {
   it('detects Date/Credit/Debit headers as split mode', () => {
     const result = autoDetectMapping(
