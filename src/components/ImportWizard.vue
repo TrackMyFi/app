@@ -2,11 +2,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, detectDuplicates, type MappingConfig } from '../lib/csv/mapping'
+import { applyMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
 import { bulkCreateTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import { useAccountsStore } from '../stores/accounts'
 import { useTransactionsStore } from '../stores/transactions'
+import { isLiability } from '../lib/accountTypes'
 import type { ImportMapping } from '../lib/types/ImportMapping'
 
 const emit = defineEmits<{ done: [] }>()
@@ -22,17 +23,27 @@ const newMappingName = ref('')
 
 const config = ref<MappingConfig>({
   dateColumn: '',
-  amountColumn: '',
   descriptionColumn: '',
   dateFormat: 'MM/dd/yyyy',
+  amountMode: 'single',
+  amountColumn: '',
   amountSign: 'negative-is-expense',
+  creditColumn: '',
+  debitColumn: '',
+  invertSplit: false,
   defaultCategory: 'uncategorized',
 })
 
 const headerItems = computed(() => headers.value.map((h) => ({ label: h, value: h })))
 
+const isLiabilityAccount = computed(() => {
+  if (accountId.value == null) return false
+  const account = accountsStore.accounts.find((a) => a.id === accountId.value)
+  return account ? isLiability(account.type) : false
+})
+
 const parsed = computed(() =>
-  step.value === 3 ? applyMapping(rawRows.value, config.value) : [],
+  step.value === 3 ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value) : [],
 )
 const dupes = computed(() =>
   accountId.value == null
@@ -45,6 +56,42 @@ const dupes = computed(() =>
         accountId.value,
       ),
 )
+
+const canPreview = computed(() => {
+  if (!config.value.dateColumn) return false
+  if (config.value.amountMode === 'single') return !!config.value.amountColumn
+  return !!config.value.creditColumn && !!config.value.debitColumn
+})
+
+const exampleEntry = computed(() => {
+  if (rawRows.value.length === 0) return null
+  const cfg = config.value
+  const isLiab = isLiabilityAccount.value
+
+  let row: Record<string, string> | undefined
+  if (cfg.amountMode === 'single') {
+    if (!cfg.amountColumn) return null
+    row = rawRows.value.find((r) => parseAmount(r[cfg.amountColumn]) !== 0)
+  } else {
+    if (!cfg.creditColumn && !cfg.debitColumn) return null
+    row = rawRows.value.find((r) => {
+      const c = cfg.creditColumn ? parseAmount(r[cfg.creditColumn]) : 0
+      const d = cfg.debitColumn ? parseAmount(r[cfg.debitColumn]) : 0
+      return c !== 0 || d !== 0
+    })
+  }
+
+  if (!row) return null
+  return {
+    raw: row,
+    parsed: applyMapping([row], cfg, isLiab)[0],
+  }
+})
+
+function money(n: number): string {
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+
 const include = ref<boolean[]>([])
 
 onMounted(async () => {
