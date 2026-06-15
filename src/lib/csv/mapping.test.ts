@@ -243,16 +243,7 @@ describe('autoDetectMapping', () => {
 
 describe('applyMapping with transfer rules', () => {
   const transferConfig: MappingConfig = {
-    dateColumn: 'Posting Date',
-    descriptionColumn: 'Description',
-    dateFormat: 'MM/dd/yyyy',
-    amountMode: 'single',
-    amountColumn: 'Amount',
-    amountSign: 'negative-is-expense',
-    creditColumn: '',
-    debitColumn: '',
-    invertSplit: false,
-    defaultCategory: 'uncategorized',
+    ...config,
     transferRules: [{ keyword: 'payment thank you', transferAccountId: 42 }],
   }
 
