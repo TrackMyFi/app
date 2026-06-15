@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMapping, detectDuplicates, type MappingConfig } from './mapping'
+import { applyMapping, detectDuplicates, parseAmount, type MappingConfig } from './mapping'
 
 const config: MappingConfig = {
   dateColumn: 'Posting Date',
@@ -18,6 +18,26 @@ const rows = [
   { 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' },
   { 'Posting Date': '03/02/2026', Amount: '1500.00', Description: 'Paycheck' },
 ]
+
+describe('parseAmount', () => {
+  it('handles standard negative amounts', () => {
+    expect(parseAmount('-42.50')).toBe(-42.5)
+  })
+
+  it('handles parentheses-notation negatives from bank exports', () => {
+    expect(parseAmount('(42.50)')).toBe(-42.5)
+    expect(parseAmount('($42.50)')).toBe(-42.5)
+  })
+
+  it('strips currency symbols and commas', () => {
+    expect(parseAmount('$1,234.56')).toBe(1234.56)
+  })
+
+  it('returns 0 for non-numeric values like N/A', () => {
+    expect(parseAmount('N/A')).toBe(0)
+    expect(parseAmount('')).toBe(0)
+  })
+})
 
 describe('applyMapping', () => {
   it('maps rows to parsed transactions with inferred type and ISO date', () => {

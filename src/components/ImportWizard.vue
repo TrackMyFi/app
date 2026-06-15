@@ -110,6 +110,9 @@ async function onFile(event: Event) {
 }
 
 function applySavedMapping(m: ImportMapping) {
+  // Spread config.value first so any fields missing from older saved mappings
+  // (e.g. amountMode, creditColumn added in later versions) fall back to the
+  // current defaults rather than being dropped entirely.
   config.value = { ...config.value, ...JSON.parse(m.config) }
 }
 
@@ -182,7 +185,7 @@ async function confirmImport() {
           <USelect v-model="config.dateColumn" :items="headerItems" placeholder="Select column" class="w-full" />
         </div>
         <div>
-          <p class="text-xs text-muted mb-1">Description column</p>
+          <p class="text-xs text-muted mb-1">Description column (optional)</p>
           <USelect v-model="config.descriptionColumn" :items="headerItems" placeholder="Select column" class="w-full" />
         </div>
       </div>

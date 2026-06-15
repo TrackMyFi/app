@@ -32,8 +32,11 @@ export interface ExistingRef {
 }
 
 export function parseAmount(raw: string): number {
-  const n = Number((raw ?? '').replace(/[$,\s]/g, ''))
-  return isNaN(n) ? 0 : n
+  const s = (raw ?? '').trim()
+  // Some bank exports encode negatives as (42.50) rather than -42.50
+  const neg = s.startsWith('(') && s.endsWith(')')
+  const n = Number((neg ? s.slice(1, -1) : s).replace(/[$,\s]/g, ''))
+  return isNaN(n) ? 0 : neg ? -n : n
 }
 
 function isoDate(raw: string, format: string): string {
