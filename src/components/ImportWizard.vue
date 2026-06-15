@@ -73,7 +73,7 @@ const exampleEntry = computed(() => {
     if (!cfg.amountColumn) return null
     row = rawRows.value.find((r) => parseAmount(r[cfg.amountColumn]) !== 0)
   } else {
-    if (!cfg.creditColumn && !cfg.debitColumn) return null
+    if (!cfg.creditColumn || !cfg.debitColumn) return null
     row = rawRows.value.find((r) => {
       const c = cfg.creditColumn ? parseAmount(r[cfg.creditColumn]) : 0
       const d = cfg.debitColumn ? parseAmount(r[cfg.debitColumn]) : 0
