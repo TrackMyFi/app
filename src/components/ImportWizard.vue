@@ -195,12 +195,12 @@ async function confirmImport() {
     .filter(({ i }) => include.value[i])
     .map(({ p, i }) => ({
       accountId: accountId.value!,
-      transferAccountId: null,
+      transferAccountId: p.transferAccountId ?? null,
       amount: p.amount,
       description: p.description,
       date: p.date,
       type: p.type,
-      category: rowCategories.value[i] ?? p.category,
+      category: p.type === 'transfer' ? 'uncategorized' : (rowCategories.value[i] ?? p.category),
       isContribution: false,
       importSource: 'csv',
       updateBalance: false,
@@ -429,15 +429,22 @@ async function confirmImport() {
             <td><UCheckbox v-model="include[i]" /></td>
             <td>{{ p.date }}</td>
             <td>{{ p.description }} <span v-if="dupes[i]" class="text-xs text-amber-600">(dup)</span></td>
-            <td>{{ p.type }}</td>
+            <td>
+              <template v-if="p.type === 'transfer'">
+                transfer → {{ accountName(p.transferAccountId!) }}
+              </template>
+              <template v-else>{{ p.type }}</template>
+            </td>
             <td>
               <USelect
+                v-if="p.type !== 'transfer'"
                 v-model="rowCategories[i]"
                 :items="categoryItems"
                 size="xs"
                 class="w-36"
                 @update:model-value="manuallyOverridden[i] = true"
               />
+              <span v-else class="text-xs text-muted">—</span>
             </td>
             <td class="text-right tabular-nums">{{ p.amount }}</td>
           </tr>
