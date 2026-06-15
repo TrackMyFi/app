@@ -32,7 +32,8 @@ export interface ExistingRef {
 }
 
 export function parseAmount(raw: string): number {
-  return Number((raw ?? '').replace(/[$,\s]/g, ''))
+  const n = Number((raw ?? '').replace(/[$,\s]/g, ''))
+  return isNaN(n) ? 0 : n
 }
 
 function isoDate(raw: string, format: string): string {

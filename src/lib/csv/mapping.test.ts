@@ -97,7 +97,15 @@ describe('applyMapping split mode', () => {
   })
 
   it('falls back to amount 0 type expense when both columns are zero or blank', () => {
-    const r = [{ Date: '03/01/2026', Credit: '0', Debit: '0', Description: 'Zero' }]
-    expect(applyMapping(r, splitConfig, false)[0]).toMatchObject({ amount: 0, type: 'expense' })
+    const zeroRow = [{ Date: '03/01/2026', Credit: '0', Debit: '0', Description: 'Zero' }]
+    const blankRow = [{ Date: '03/01/2026', Credit: '', Debit: '', Description: 'Blank' }]
+    expect(applyMapping(zeroRow, splitConfig, false)[0]).toMatchObject({ amount: 0, type: 'expense' })
+    expect(applyMapping(blankRow, splitConfig, false)[0]).toMatchObject({ amount: 0, type: 'expense' })
+  })
+
+  it('credit wins when credit and debit amounts are equal', () => {
+    const r = [{ Date: '03/01/2026', Credit: '42.50', Debit: '42.50', Description: 'Tie' }]
+    // credit wins (>=), non-liability → credit = income
+    expect(applyMapping(r, splitConfig, false)[0]).toMatchObject({ amount: 42.5, type: 'income' })
   })
 })
