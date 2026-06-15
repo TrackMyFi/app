@@ -5,7 +5,7 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
 pub struct FireProfile {
-    pub current_age: i32,
+    pub date_of_birth: Option<String>,
     pub target_retirement_age: i32,
     pub annual_expenses_target: f64,
     pub lean_fire_annual_expenses: Option<f64>,
@@ -80,6 +80,16 @@ pub struct ImportMapping {
     pub id: i32,
     pub name: String,
     pub config: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct CategoryRule {
+    pub id: i32,
+    pub keyword: String,
+    pub category: String,
     pub created_at: String,
 }
 
