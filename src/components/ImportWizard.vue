@@ -99,6 +99,10 @@ function money(n: number): string {
 }
 
 const include = ref<boolean[]>([])
+const rowCategories = ref<string[]>([])
+const manuallyOverridden = ref<boolean[]>([])
+const newRuleKeyword = ref('')
+const newRuleCategory = ref('discretionary')
 
 onMounted(async () => {
   await accountsStore.load()
@@ -126,9 +130,29 @@ function applySavedMapping(m: ImportMapping) {
 }
 
 function goToPreview() {
-  // default-uncheck duplicates
   step.value = 3
   include.value = parsed.value.map((_, i) => !dupes.value[i])
+  rowCategories.value = parsed.value.map((p) => p.category)
+  manuallyOverridden.value = parsed.value.map(() => false)
+}
+
+watch(parsed, (newParsed) => {
+  if (step.value !== 3) return
+  rowCategories.value = newParsed.map((p, i) =>
+    manuallyOverridden.value[i] ? rowCategories.value[i] : p.category,
+  )
+})
+
+async function saveQuickRule() {
+  if (!newRuleKeyword.value.trim()) return
+  await categoryRulesApi.createCategoryRule(
+    newRuleKeyword.value.trim().toLowerCase(),
+    newRuleCategory.value,
+    DateTime.now().toISO()!,
+  )
+  categoryRules.value = await categoryRulesApi.listCategoryRules()
+  newRuleKeyword.value = ''
+  newRuleCategory.value = 'discretionary'
 }
 
 async function saveMapping() {
@@ -146,15 +170,16 @@ async function confirmImport() {
   if (accountId.value == null) return
   const now = DateTime.now().toISO()!
   const toInsert = parsed.value
-    .filter((_, i) => include.value[i])
-    .map((p) => ({
+    .map((p, i) => ({ p, i }))
+    .filter(({ i }) => include.value[i])
+    .map(({ p, i }) => ({
       accountId: accountId.value!,
       transferAccountId: null,
       amount: p.amount,
       description: p.description,
       date: p.date,
       type: p.type,
-      category: p.category,
+      category: rowCategories.value[i] ?? p.category,
       isContribution: false,
       importSource: 'csv',
       updateBalance: false,
@@ -323,7 +348,14 @@ async function confirmImport() {
       </p>
       <table class="w-full text-sm">
         <thead class="text-left text-muted border-b border-default">
-          <tr><th></th><th>Date</th><th>Description</th><th>Type</th><th class="text-right">Amount</th></tr>
+          <tr>
+            <th></th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Type</th>
+            <th>Category</th>
+            <th class="text-right">Amount</th>
+          </tr>
         </thead>
         <tbody>
           <tr v-for="(p, i) in parsed" :key="i" class="border-b border-default/50"
@@ -332,10 +364,33 @@ async function confirmImport() {
             <td>{{ p.date }}</td>
             <td>{{ p.description }} <span v-if="dupes[i]" class="text-xs text-amber-600">(dup)</span></td>
             <td>{{ p.type }}</td>
+            <td>
+              <USelect
+                v-model="rowCategories[i]"
+                :items="categoryItems"
+                size="xs"
+                class="w-36"
+                @update:model-value="manuallyOverridden[i] = true"
+              />
+            </td>
             <td class="text-right tabular-nums">{{ p.amount }}</td>
           </tr>
         </tbody>
       </table>
+      <div class="flex gap-2 items-center pt-1 border-t border-default">
+        <p class="text-xs text-muted shrink-0">Add rule:</p>
+        <UInput
+          v-model="newRuleKeyword"
+          placeholder="keyword"
+          size="xs"
+          class="flex-1"
+          @keydown.enter="saveQuickRule"
+        />
+        <USelect v-model="newRuleCategory" :items="categoryItems" size="xs" class="w-36" />
+        <UButton size="xs" variant="soft" :disabled="!newRuleKeyword.trim()" @click="saveQuickRule">
+          Save rule
+        </UButton>
+      </div>
       <div class="flex justify-end">
         <UButton :disabled="!include.some(Boolean)" @click="confirmImport">Import selected</UButton>
       </div>
