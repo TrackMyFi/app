@@ -240,3 +240,88 @@ describe('autoDetectMapping', () => {
     expect(result.amountColumn).toBe('AMOUNT')
   })
 })
+
+describe('applyMapping with transfer rules', () => {
+  const transferConfig: MappingConfig = {
+    dateColumn: 'Posting Date',
+    descriptionColumn: 'Description',
+    dateFormat: 'MM/dd/yyyy',
+    amountMode: 'single',
+    amountColumn: 'Amount',
+    amountSign: 'negative-is-expense',
+    creditColumn: '',
+    debitColumn: '',
+    invertSplit: false,
+    defaultCategory: 'uncategorized',
+    transferRules: [{ keyword: 'payment thank you', transferAccountId: 42 }],
+  }
+
+  it('marks a matching row as transfer and sets transferAccountId', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU' }],
+      transferConfig,
+    )
+    expect(result[0].type).toBe('transfer')
+    expect(result[0].transferAccountId).toBe(42)
+  })
+
+  it('forces category to uncategorized for transfer rows', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU' }],
+      { ...transferConfig, defaultCategory: 'discretionary' },
+    )
+    expect(result[0].category).toBe('uncategorized')
+  })
+
+  it('transfer rule matching is case-insensitive', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'payment thank you' }],
+      transferConfig,
+    )
+    expect(result[0].type).toBe('transfer')
+    expect(result[0].transferAccountId).toBe(42)
+  })
+
+  it('transfer rule takes priority over category rule', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU' }],
+      transferConfig,
+      false,
+      [{ keyword: 'payment', category: 'fixed' }],
+    )
+    expect(result[0].type).toBe('transfer')
+    expect(result[0].category).toBe('uncategorized')
+  })
+
+  it('non-matching rows have transferAccountId null', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
+      transferConfig,
+    )
+    expect(result[0].type).toBe('expense')
+    expect(result[0].transferAccountId).toBeNull()
+  })
+
+  it('first matching transfer rule wins', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU ACH' }],
+      {
+        ...transferConfig,
+        transferRules: [
+          { keyword: 'payment thank you', transferAccountId: 42 },
+          { keyword: 'ach', transferAccountId: 99 },
+        ],
+      },
+    )
+    expect(result[0].transferAccountId).toBe(42)
+  })
+
+  it('empty transferRules leaves type and transferAccountId unchanged', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
+      { ...transferConfig, transferRules: [] },
+    )
+    expect(result[0].type).toBe('expense')
+    expect(result[0].transferAccountId).toBeNull()
+  })
+})
