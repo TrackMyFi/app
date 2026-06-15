@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useSyncStore } from '../stores/sync'
 import {
@@ -9,13 +11,17 @@ import {
   syncNow,
   restartApp,
 } from '../lib/api/sync'
+import * as categoryRulesApi from '../lib/api/categoryRules'
 import type { FireProfile } from '../lib/types/FireProfile'
+import type { CategoryRule } from '../lib/types/CategoryRule'
 import DeleteDataModal from '../components/DeleteDataModal.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import PercentInput from '../components/PercentInput.vue'
+import DateInput from '../components/DateInput.vue'
+import { categoryItems } from '../lib/transactions/constants'
 
 interface FireProfileForm {
-  currentAge: number
+  dateOfBirth: string | null
   targetRetirementAge: number
   annualExpensesTarget: number
   leanFireAnnualExpenses: number | null
@@ -27,8 +33,9 @@ interface FireProfileForm {
 }
 
 const store = useFireProfileStore()
+const toast = useToast()
 const form = reactive<FireProfileForm>({
-  currentAge: 0,
+  dateOfBirth: null,
   targetRetirementAge: 0,
   annualExpensesTarget: 0,
   leanFireAnnualExpenses: null,
@@ -42,11 +49,12 @@ const form = reactive<FireProfileForm>({
 onMounted(async () => {
   await store.load()
   if (store.profile) Object.assign(form, store.profile)
+  categoryRules.value = await categoryRulesApi.listCategoryRules()
 })
 
 async function onSubmit() {
   const profile: FireProfile = {
-    currentAge: form.currentAge,
+    dateOfBirth: form.dateOfBirth || null,
     targetRetirementAge: form.targetRetirementAge,
     annualExpensesTarget: form.annualExpensesTarget ?? 0,
     leanFireAnnualExpenses: form.leanFireAnnualExpenses,
@@ -55,8 +63,10 @@ async function onSubmit() {
     expectedReturnRate: form.expectedReturnRate ?? 0,
     inflationRate: form.inflationRate ?? 0,
     hsaCoverage: form.hsaCoverage,
+    onboardingCompleted: store.profile?.onboardingCompleted ?? false,
   }
   await store.save(profile)
+  toast.add({ title: 'Profile updated', color: 'success' })
 }
 
 const syncStore = useSyncStore()
@@ -66,6 +76,10 @@ const syncBusy = ref(false)
 const syncMessage = ref('')
 
 const showDeleteModal = ref(false)
+
+const categoryRules = ref<CategoryRule[]>([])
+const newRuleKeyword = ref('')
+const newRuleCategory = ref('discretionary')
 
 const isSynced = computed(() => syncStore.status?.mode === 'synced')
 const lastSynced = computed(() => {
@@ -127,16 +141,37 @@ async function runSyncNow() {
     syncBusy.value = false
   }
 }
+
+async function addCategoryRule() {
+  if (!newRuleKeyword.value.trim()) return
+  await categoryRulesApi.createCategoryRule(
+    newRuleKeyword.value.trim().toLowerCase(),
+    newRuleCategory.value,
+    DateTime.now().toISO()!,
+  )
+  categoryRules.value = await categoryRulesApi.listCategoryRules()
+  newRuleKeyword.value = ''
+  newRuleCategory.value = 'discretionary'
+}
+
+async function removeCategoryRule(id: number) {
+  await categoryRulesApi.deleteCategoryRule(id)
+  categoryRules.value = await categoryRulesApi.listCategoryRules()
+}
 </script>
 
 <template>
-  <div class="p-6 max-w-2xl space-y-8">
+  <div class="p-6 max-w-3xl space-y-8">
     <section class="space-y-4">
       <h1 class="text-2xl font-bold">FIRE Profile</h1>
       <UForm :state="form" @submit="onSubmit" class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
-          <UFormField label="Current age">
-            <UInput v-model.number="form.currentAge" type="number" class="w-full" />
+          <UFormField label="Date of birth" hint="Used to calculate your current age">
+            <DateInput
+              :model-value="form.dateOfBirth ?? ''"
+              @update:model-value="form.dateOfBirth = $event || null"
+              class="w-full"
+            />
           </UFormField>
           <UFormField label="Target retirement age">
             <UInput v-model.number="form.targetRetirementAge" type="number" class="w-full" />
@@ -253,6 +288,51 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
           </div>
         </template>
       </UAccordion>
+    </section>
+
+    <hr class="border-default" />
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-bold">Category Rules</h2>
+      <p class="text-sm text-muted">
+        Keywords matched against transaction descriptions during CSV import.
+        First matching rule wins; unmatched rows use the mapping's default category.
+      </p>
+
+      <table v-if="categoryRules.length" class="w-full text-sm">
+        <thead class="text-left text-muted border-b border-default">
+          <tr>
+            <th class="pb-1">Keyword</th>
+            <th class="pb-1">Category</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="rule in categoryRules" :key="rule.id" class="border-b border-default/50">
+            <td class="py-1.5 font-mono text-xs">{{ rule.keyword }}</td>
+            <td class="py-1.5">{{ rule.category }}</td>
+            <td class="py-1.5 text-right">
+              <UButton size="xs" color="error" variant="ghost" @click="removeCategoryRule(rule.id)">
+                Remove
+              </UButton>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="text-sm text-muted">No rules yet.</p>
+
+      <div class="flex gap-2 items-center pt-1">
+        <UInput
+          v-model="newRuleKeyword"
+          placeholder="keyword (e.g. netflix)"
+          class="flex-1"
+          @keydown.enter="addCategoryRule"
+        />
+        <USelect v-model="newRuleCategory" :items="categoryItems" class="w-44" />
+        <UButton size="sm" variant="soft" :disabled="!newRuleKeyword.trim()" @click="addCategoryRule">
+          Add rule
+        </UButton>
+      </div>
     </section>
 
     <hr class="border-default" />
