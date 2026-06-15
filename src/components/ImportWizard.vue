@@ -172,6 +172,10 @@ function removeTransferRule(index: number) {
   config.value.transferRules.splice(index, 1)
 }
 
+function accountName(id: number): string {
+  return accountsStore.accounts.find((a) => a.id === id)?.name ?? 'Unknown account'
+}
+
 async function saveMapping() {
   if (!newMappingName.value) return
   await mappingApi.createImportMapping({
@@ -352,7 +356,7 @@ async function confirmImport() {
             <span class="flex-1 truncate">{{ rule.keyword }}</span>
             <span class="text-muted">→</span>
             <span class="flex-1 truncate">
-              {{ accountsStore.accounts.find((a) => a.id === rule.transferAccountId)?.name ?? 'Unknown account' }}
+              {{ accountName(rule.transferAccountId) }}
             </span>
             <UButton size="xs" variant="ghost" color="red" @click="removeTransferRule(i)">Remove</UButton>
           </div>
