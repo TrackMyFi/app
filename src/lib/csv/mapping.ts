@@ -3,6 +3,11 @@ import { DateTime } from 'luxon'
 export type AmountSign = 'negative-is-expense' | 'positive-is-expense'
 export type AmountMode = 'single' | 'split'
 
+export interface TransferRuleInput {
+  keyword: string
+  transferAccountId: number
+}
+
 export interface MappingConfig {
   dateColumn: string
   descriptionColumn: string
@@ -14,14 +19,16 @@ export interface MappingConfig {
   debitColumn: string
   invertSplit: boolean
   defaultCategory: string
+  transferRules: TransferRuleInput[]
 }
 
 export interface ParsedTransaction {
   date: string
   amount: number
   description: string
-  type: 'income' | 'expense'
+  type: 'income' | 'expense' | 'transfer'
   category: string
+  transferAccountId: number | null
 }
 
 export interface ExistingRef {
@@ -132,7 +139,7 @@ export function applyMapping(
 
     if (config.amountMode === 'split') {
       const { amount, type } = resolveSplit(row, config, isLiabilityAccount)
-      return { date, amount, description, type, category }
+      return { date, amount, description, type, category, transferAccountId: null }
     }
 
     const signed = parseAmount(row[config.amountColumn] ?? '0')
@@ -143,6 +150,7 @@ export function applyMapping(
       description,
       type: isExpense ? 'expense' : 'income',
       category,
+      transferAccountId: null,
     }
   })
 }

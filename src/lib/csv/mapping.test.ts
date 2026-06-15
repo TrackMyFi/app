@@ -12,6 +12,7 @@ const config: MappingConfig = {
   debitColumn: '',
   invertSplit: false,
   defaultCategory: 'uncategorized',
+  transferRules: [],
 }
 
 const rows = [
@@ -42,8 +43,8 @@ describe('parseAmount', () => {
 describe('applyMapping', () => {
   it('maps rows to parsed transactions with inferred type and ISO date', () => {
     expect(applyMapping(rows, config)).toEqual([
-      { date: '2026-03-01', amount: 40, description: 'Coffee', type: 'expense', category: 'uncategorized' },
-      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized' },
+      { date: '2026-03-01', amount: 40, description: 'Coffee', type: 'expense', category: 'uncategorized', transferAccountId: null },
+      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
@@ -83,6 +84,7 @@ describe('applyMapping split mode', () => {
     debitColumn: 'Debit',
     invertSplit: false,
     defaultCategory: 'uncategorized',
+    transferRules: [],
   }
 
   const rows = [
@@ -92,22 +94,22 @@ describe('applyMapping split mode', () => {
 
   it('maps debit to expense and credit to income for a non-liability account', () => {
     expect(applyMapping(rows, splitConfig, false)).toEqual([
-      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'expense', category: 'uncategorized' },
-      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized' },
+      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'expense', category: 'uncategorized', transferAccountId: null },
+      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
   it('flips direction for a liability account (credit = expense, debit = income)', () => {
     expect(applyMapping(rows, splitConfig, true)).toEqual([
-      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized' },
-      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized' },
+      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized', transferAccountId: null },
+      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
   it('inverts direction when invertSplit is true (non-liability: credit becomes expense)', () => {
     expect(applyMapping(rows, { ...splitConfig, invertSplit: true }, false)).toEqual([
-      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized' },
-      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized' },
+      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized', transferAccountId: null },
+      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
