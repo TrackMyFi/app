@@ -3,10 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
 import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
-import { bulkCreateTransactions } from '../lib/api/transactions'
+import { bulkCreateTransactions, createTransaction } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
 import { useToast } from '@nuxt/ui/composables'
+import { addBalance } from '../lib/api/accounts'
 import { useAccountsStore } from '../stores/accounts'
 import { useTransactionsStore } from '../stores/transactions'
 import { isLiability, isInvestment } from '../lib/accountTypes'
@@ -87,8 +88,6 @@ const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value 
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
-// @ts-expect-error TS6133
-// used in template (Tasks 3 & 4)
 const runningBalances = computed(() =>
   generateSnapshots.value
     ? projectRunningBalances(allParsedRows.value, include.value, baseBalance.value)
@@ -156,14 +155,17 @@ const newTransferAccountId = ref<number | undefined>(undefined)
 const generateSnapshots = ref(false)
 const seedBalance = ref(0)
 
-const previewColumns = [
+const previewColumns = computed(() => [
   { id: 'include', header: '' },
   { accessorKey: 'date', header: 'Date' },
   { accessorKey: 'description', header: 'Description' },
   { id: 'type', header: 'Type' },
   { id: 'category', header: 'Category' },
   { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-]
+  ...(generateSnapshots.value
+    ? [{ id: 'balance', header: 'Balance', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } }]
+    : []),
+])
 
 onMounted(async () => {
   await accountsStore.load()
@@ -259,7 +261,8 @@ async function saveMapping() {
 async function confirmImport() {
   if (accountId.value == null) return
   const now = DateTime.now().toISO()!
-  const toInsert = parsed.value
+
+  const selectedRows = parsed.value
     .map((p, i) => ({ p, i }))
     .filter(({ i }) => include.value[i])
     .map(({ p, i }) => ({
@@ -272,10 +275,26 @@ async function confirmImport() {
       category: p.type === 'transfer' ? 'uncategorized' : (rowCategories.value[i] ?? p.category),
       isContribution: false,
       importSource: 'csv',
-      updateBalance: false,
       createdAt: now,
     }))
-  await bulkCreateTransactions(toInsert)
+
+  if (!generateSnapshots.value) {
+    await bulkCreateTransactions(selectedRows.map((r) => ({ ...r, updateBalance: false })))
+  } else {
+    if (needsSeed.value) {
+      await addBalance({
+        accountId: accountId.value!,
+        balance: seedBalance.value,
+        recordedAt: earliestDate.value,
+      })
+    }
+    const sorted = [...selectedRows].sort((a, b) => a.date.localeCompare(b.date))
+    for (const row of sorted) {
+      await createTransaction({ ...row, updateBalance: true })
+    }
+    await accountsStore.load()
+  }
+
   await txnStore.load()
   emit('done')
 }
@@ -553,6 +572,12 @@ async function confirmImport() {
           <span v-else class="text-xs text-muted">—</span>
         </template>
         <template #amount-cell="{ row }">{{ row.original.amount }}</template>
+        <template #balance-cell="{ row }">
+          <span v-if="runningBalances[row.index] != null">
+            {{ money(runningBalances[row.index]!) }}
+          </span>
+          <span v-else class="text-muted">—</span>
+        </template>
       </UTable>
       <div class="flex gap-2 items-center pt-1 border-t border-default">
         <p class="text-xs text-muted shrink-0">Add rule:</p>
