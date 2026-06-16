@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
@@ -14,6 +15,7 @@ const emit = defineEmits<{ saved: [] }>()
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
+const toast = useToast()
 
 const today = DateTime.now().toISODate()!
 
@@ -104,6 +106,7 @@ async function save() {
       updateBalance: updateBalance.value,
       updatedAt: now,
     })
+    toast.add({ title: 'Transaction updated', color: 'success' })
   } else {
     await store.create({
       accountId: form.accountId,
@@ -118,6 +121,7 @@ async function save() {
       updateBalance: updateBalance.value,
       createdAt: now,
     })
+    toast.add({ title: 'Transaction added', color: 'success' })
   }
   emit('saved')
 }

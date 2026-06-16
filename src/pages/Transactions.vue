@@ -49,11 +49,33 @@ async function applyFilters() {
   })
 }
 
+async function clearFilters() {
+  accountId.value = undefined
+  type.value = undefined
+  category.value = undefined
+  search.value = ''
+  await store.setFilter({ accountId: null, type: null, category: null, search: null })
+}
+
 const rows = computed(() => store.page.rows)
+
+const columns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description', meta: { class: { td: 'max-w-[300px] truncate' } } },
+  { id: 'account', header: 'Account' },
+  { id: 'type', header: 'Type' },
+  { id: 'category', header: 'Category' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
+]
 
 onMounted(async () => {
   await accountsStore.load()
   await store.load()
+  accountId.value = store.filter.accountId ?? undefined
+  type.value = store.filter.type ?? undefined
+  category.value = store.filter.category ?? undefined
+  search.value = store.filter.search ?? ''
 })
 </script>
 
@@ -88,6 +110,7 @@ onMounted(async () => {
       />
       <UInput v-model="search" placeholder="Search description" class="w-52" />
       <UButton @click="applyFilters">Apply</UButton>
+      <UButton variant="ghost" @click="clearFilters">Clear</UButton>
     </div>
 
     <div class="flex gap-6 text-sm">
@@ -97,39 +120,21 @@ onMounted(async () => {
       <span class="text-muted">{{ store.page.totalCount }} rows</span>
     </div>
 
-    <table class="w-full text-sm">
-      <thead class="text-left text-muted border-b border-default">
-        <tr>
-          <th class="py-2">Date</th>
-          <th>Description</th>
-          <th>Account</th>
-          <th>Type</th>
-          <th>Category</th>
-          <th class="text-right">Amount</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="t in rows" :key="t.id" class="border-b border-default/50">
-          <td class="py-2">{{ t.date }}</td>
-          <td>{{ t.description }}</td>
-          <td>
-            {{ accountName(t.accountId) }}
-            <span v-if="t.type === 'transfer'"> → {{ accountName(t.transferAccountId) }}</span>
-          </td>
-          <td>{{ labelForTransactionType(t.type) }}</td>
-          <td>{{ labelForCategory(t.category) }}</td>
-          <td class="text-right tabular-nums">{{ money(t.amount) }}</td>
-          <td class="text-right">
-            <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(t)" />
-            <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(t)" />
-          </td>
-        </tr>
-        <tr v-if="!rows.length">
-          <td colspan="7" class="py-6 text-center text-muted">No transactions yet.</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="border border-default rounded-lg overflow-hidden">
+      <UTable :data="rows" :columns="columns" empty="No transactions yet.">
+        <template #account-cell="{ row }">
+          {{ accountName(row.original.accountId) }}
+          <span v-if="row.original.type === 'transfer'"> → {{ accountName(row.original.transferAccountId) }}</span>
+        </template>
+        <template #type-cell="{ row }">{{ labelForTransactionType(row.original.type) }}</template>
+        <template #category-cell="{ row }">{{ labelForCategory(row.original.category) }}</template>
+        <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
+        <template #actions-cell="{ row }">
+          <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
+          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(row.original)" />
+        </template>
+      </UTable>
+    </div>
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
       <template #body>
@@ -137,7 +142,7 @@ onMounted(async () => {
       </template>
     </UModal>
 
-    <UModal v-model:open="isImportOpen" title="Import transactions from CSV">
+    <UModal v-model:open="isImportOpen" title="Import transactions from CSV" class="max-w-full w-4/5 lg:w-[1000px]">
       <template #body>
         <ImportWizard @done="onImportDone" />
       </template>

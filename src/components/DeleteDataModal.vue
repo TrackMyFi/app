@@ -59,7 +59,6 @@ const deleting = ref(false)
 
 const selectedOption = computed(() => selectedId.value ? rangeMap[selectedId.value] : null)
 const selectedRange = computed(() => selectedOption.value?.range ?? null)
-const selectedLabel = computed(() => selectedOption.value?.label ?? '')
 const isPurgeAll = computed(() => selectedId.value === 'all')
 
 function reset() {

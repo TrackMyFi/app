@@ -6,7 +6,7 @@ use tauri::State;
 pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
     let mut rows = conn
         .query(
-            "SELECT current_age, target_retirement_age, annual_expenses_target, \
+            "SELECT date_of_birth, target_retirement_age, annual_expenses_target, \
              lean_fire_annual_expenses, fat_fire_annual_expenses, annual_income, \
              expected_return_rate, inflation_rate, hsa_coverage, onboarding_completed \
              FROM fire_profile WHERE id = 1",
@@ -20,7 +20,7 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "fire_profile row missing".to_string())?;
     Ok(FireProfile {
-        current_age: row.get(0).map_err(|e| e.to_string())?,
+        date_of_birth: row.get(0).map_err(|e| e.to_string())?,
         target_retirement_age: row.get(1).map_err(|e| e.to_string())?,
         annual_expenses_target: row.get(2).map_err(|e| e.to_string())?,
         lean_fire_annual_expenses: row.get(3).map_err(|e| e.to_string())?,
@@ -35,11 +35,11 @@ pub async fn get_profile(conn: &Connection) -> Result<FireProfile, String> {
 
 pub async fn upsert_profile(conn: &Connection, p: &FireProfile) -> Result<(), String> {
     conn.execute(
-        "UPDATE fire_profile SET current_age=?1, target_retirement_age=?2, \
+        "UPDATE fire_profile SET date_of_birth=?1, target_retirement_age=?2, \
          annual_expenses_target=?3, lean_fire_annual_expenses=?4, fat_fire_annual_expenses=?5, \
          annual_income=?6, expected_return_rate=?7, inflation_rate=?8, hsa_coverage=?9 WHERE id = 1",
         libsql::params![
-            p.current_age,
+            p.date_of_birth.clone(),
             p.target_retirement_age,
             p.annual_expenses_target,
             p.lean_fire_annual_expenses,

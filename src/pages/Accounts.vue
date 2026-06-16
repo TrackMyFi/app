@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
 import BalanceForm from '../components/BalanceForm.vue'
-import BalanceRow from '../components/BalanceRow.vue'
+import DateInput from '../components/DateInput.vue'
+import CurrencyInput from '../components/CurrencyInput.vue'
 import type { Account } from '../lib/types/Account'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import { latestSnapshot, byRecencyDesc } from '../lib/balances/recency'
@@ -14,6 +16,43 @@ import { getTransaction } from '../lib/api/transactions'
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 const store = useAccountsStore()
+const toast = useToast()
+
+const editingBalanceId = ref<number | null>(null)
+const draftBalance = ref<number>(0)
+const draftDate = ref<string>('')
+
+const balanceColumns = [
+  { accessorKey: 'recordedAt', header: 'Date' },
+  { id: 'balance', header: 'Balance', meta: { class: { th: 'text-right' } } },
+  { id: 'actions', header: '' },
+]
+
+const formatted = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+
+function startEditBalance(b: AccountBalance) {
+  draftBalance.value = b.balance
+  draftDate.value = b.recordedAt
+  editingBalanceId.value = b.id
+}
+
+function cancelEditBalance() {
+  editingBalanceId.value = null
+}
+
+async function saveBalance(b: AccountBalance) {
+  await store.updateBalanceSnapshot({ id: b.id, balance: draftBalance.value, recordedAt: draftDate.value })
+  toast.add({ title: 'Balance updated', color: 'success' })
+  editingBalanceId.value = null
+}
+
+async function removeBalance(b: AccountBalance) {
+  const ok = await confirm(
+    `Delete this balance snapshot from ${b.recordedAt}? This cannot be undone.`,
+    { title: 'Delete Snapshot?', kind: 'warning' },
+  )
+  if (ok) await store.removeBalanceSnapshot(b.id)
+}
 
 const isAccountModalOpen = ref(false)
 const editingAccount = ref<Account | null>(null)
@@ -159,25 +198,38 @@ async function remove(account: Account) {
 
           <div v-if="accountBalances(account.id).length > 0">
             <h3 class="text-sm font-medium text-gray-600 mb-2">Balance History</h3>
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-gray-500 border-b">
-                    <th class="pb-1 pr-6 font-medium">Date</th>
-                    <th class="pb-1 font-medium text-right">Balance</th>
-                    <th class="pb-1 font-medium text-right"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <BalanceRow
-                    v-for="b in accountBalances(account.id)"
-                    :key="b.id"
-                    :balance="b"
-                    @view-transaction="openTransaction"
-                  />
-                </tbody>
-              </table>
-            </div>
+            <UTable :data="accountBalances(account.id)" :columns="balanceColumns">
+              <template #recordedAt-cell="{ row }">
+                <DateInput v-if="editingBalanceId === row.original.id" v-model="draftDate" />
+                <span v-else class="text-gray-600">{{ row.original.recordedAt }}</span>
+              </template>
+              <template #balance-cell="{ row }">
+                <div class="flex justify-end">
+                  <CurrencyInput v-if="editingBalanceId === row.original.id" v-model="draftBalance" class="w-32" />
+                  <span v-else class="font-mono">{{ formatted(row.original.balance) }}</span>
+                </div>
+              </template>
+              <template #actions-cell="{ row }">
+                <div class="flex justify-end gap-1">
+                  <template v-if="editingBalanceId === row.original.id">
+                    <UButton size="xs" variant="ghost" @click="saveBalance(row.original)">Save</UButton>
+                    <UButton size="xs" variant="ghost" color="neutral" @click="cancelEditBalance">Cancel</UButton>
+                  </template>
+                  <template v-else>
+                    <UButton
+                      v-if="row.original.linkedTransactionId != null"
+                      size="xs"
+                      variant="ghost"
+                      icon="i-ph-receipt"
+                      title="View linked transaction"
+                      @click="openTransaction(row.original.linkedTransactionId)"
+                    />
+                    <UButton size="xs" variant="ghost" @click="startEditBalance(row.original)">Edit</UButton>
+                    <UButton size="xs" variant="ghost" color="error" @click="removeBalance(row.original)">Delete</UButton>
+                  </template>
+                </div>
+              </template>
+            </UTable>
           </div>
         </div>
       </UCard>

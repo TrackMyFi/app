@@ -11,6 +11,13 @@ export default defineConfig(async () => ({
     vue(), 
     ui({
       ui: {
+        table: {
+          slots: {
+            td: 'px-4 py-2 text-sm text-default whitespace-nowrap [&:has([role=checkbox])]:pe-0',
+            th: 'px-4 py-2 text-xs text-highlighted text-left rtl:text-right font-semibold border-b border-default [&:has([role=checkbox])]:pe-0',
+            separator: 'hidden',
+          },
+        },
         modal: {
           slots: {
             content: 'bg-default divide-none flex flex-col focus:outline-none',

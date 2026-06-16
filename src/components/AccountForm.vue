@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
 import { accountTypeItems, defaultIncludeInFire, type AccountType } from '../lib/accountTypes'
@@ -10,6 +11,7 @@ const props = defineProps<{ account?: Account }>()
 const emit = defineEmits<{ saved: [] }>()
 
 const store = useAccountsStore()
+const toast = useToast()
 const isEdit = !!props.account
 
 const form = reactive({
@@ -43,8 +45,10 @@ async function onSubmit() {
   }
   if (isEdit) {
     await store.update(props.account!.id, payload)
+    toast.add({ title: 'Account updated', color: 'success' })
   } else {
     await store.create(payload)
+    toast.add({ title: 'Account created', color: 'success' })
   }
   emit('saved')
 }

@@ -54,7 +54,7 @@ const effRetireAge = computed(() => ov.retireAge ?? fp.profile?.targetRetirement
 const forecastInputs = computed<ForecastInputs | null>(() => {
   if (!fp.profile) return null
   return {
-    currentAge: fp.profile.currentAge,
+    currentAge: fp.currentAge,
     targetRetirementAge: effRetireAge.value,
     annualExpensesTarget: fp.profile.annualExpensesTarget,
     leanFireAnnualExpenses: fp.profile.leanFireAnnualExpenses,
@@ -166,7 +166,7 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
             <div class="flex justify-between text-sm mb-1">
               <label>Retirement age</label><span>{{ sRetire }}</span>
             </div>
-            <USlider v-model="sRetire" :min="fp.profile?.currentAge ?? 18" :max="80" :step="1" />
+            <USlider v-model="sRetire" :min="fp.currentAge || 18" :max="80" :step="1" />
           </div>
           <div v-if="isScenario" class="pt-2 border-t border-default">
             <UButton block color="neutral" variant="soft" @click="reset">Reset to baseline</UButton>

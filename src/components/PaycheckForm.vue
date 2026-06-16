@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
@@ -17,6 +18,7 @@ const emit = defineEmits<{ saved: [] }>()
 
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
+const toast = useToast()
 const saveError = ref<string | null>(null)
 
 const knownEmployers = computed(() =>
@@ -201,6 +203,7 @@ async function save() {
         incomeAccountId: form.incomeAccountId,
         updatedAt: now,
       })
+      toast.add({ title: 'Paycheck updated', color: 'success' })
     } else {
       await store.create({
         payDate: form.payDate,
@@ -218,6 +221,7 @@ async function save() {
         incomeAccountId: form.incomeAccountId,
         createdAt: now,
       })
+      toast.add({ title: 'Paycheck added', color: 'success' })
     }
     emit('saved')
   } catch (err) {

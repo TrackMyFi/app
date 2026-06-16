@@ -21,7 +21,7 @@ const rows = computed<ContributionRow[]>(() => {
     store.txns,
     accountsStore.accounts,
     selectedYear.value,
-    fp.profile.currentAge,
+    fp.currentAge,
     (fp.profile.hsaCoverage as 'self' | 'family') ?? 'self',
     resolved.value.limits,
   )
@@ -77,6 +77,14 @@ function limitLabel(row: ContributionRow): string {
 function importLabel(source: string): string {
   return source === 'paycheck' ? 'via Paycheck' : 'Manual'
 }
+
+const contributionColumns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'account', header: 'Account' },
+  { id: 'source', header: 'Source' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
 
 async function onYearChange(year: unknown) {
   const y = Number(year)
@@ -167,30 +175,15 @@ onMounted(async () => {
           <span v-if="row.pctUsed !== undefined">{{ pct(row.pctUsed) }}</span>
         </div>
       </div>
-      <table class="w-full text-sm">
-        <thead class="text-left text-muted border-t border-default">
-          <tr>
-            <th class="px-4 py-2 font-normal w-28">Date</th>
-            <th class="py-2 font-normal">Description</th>
-            <th class="py-2 font-normal">Account</th>
-            <th class="py-2 font-normal">Source</th>
-            <th class="px-4 py-2 font-normal text-right">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="t in rowTxns(row)"
-            :key="t.id"
-            class="border-t border-default/50"
-          >
-            <td class="px-4 py-2 text-muted w-28">{{ t.date }}</td>
-            <td class="py-2">{{ t.description }}</td>
-            <td class="py-2 text-muted">{{ accountName(t.accountId) }}</td>
-            <td class="py-2 text-muted text-xs">{{ importLabel(t.importSource) }}</td>
-            <td class="px-4 py-2 text-right tabular-nums">{{ money(t.amount) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <UTable :data="rowTxns(row)" :columns="contributionColumns">
+        <template #account-cell="{ row: txnRow }">
+          <span class="text-muted">{{ accountName(txnRow.original.accountId) }}</span>
+        </template>
+        <template #source-cell="{ row: txnRow }">
+          <span class="text-muted text-xs">{{ importLabel(txnRow.original.importSource) }}</span>
+        </template>
+        <template #amount-cell="{ row: txnRow }">{{ money(txnRow.original.amount) }}</template>
+      </UTable>
     </div>
   </div>
 </template>

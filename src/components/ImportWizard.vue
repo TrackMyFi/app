@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig, type TransferRuleInput } from '../lib/csv/mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
 import { bulkCreateTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
+import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
 import { useTransactionsStore } from '../stores/transactions'
 import { isLiability } from '../lib/accountTypes'
@@ -16,6 +17,7 @@ import type { CategoryRule } from '../lib/types/CategoryRule'
 const emit = defineEmits<{ done: [] }>()
 const accountsStore = useAccountsStore()
 const txnStore = useTransactionsStore()
+const toast = useToast()
 
 const step = ref<1 | 2 | 3>(1)
 const accountId = ref<number | undefined>(undefined)
@@ -64,6 +66,10 @@ const dupes = computed(() =>
       ),
 )
 
+function dupeRowClass(row: { index: number }) {
+  return dupes.value[row.index] ? 'opacity-50' : ''
+}
+
 const canPreview = computed(() => {
   if (!config.value.dateColumn) return false
   if (config.value.amountMode === 'single') return !!config.value.amountColumn
@@ -107,6 +113,15 @@ const newRuleCategory = ref('discretionary')
 const newTransferKeyword = ref('')
 const newTransferAccountId = ref<number | undefined>(undefined)
 
+const previewColumns = [
+  { id: 'include', header: '' },
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'type', header: 'Type' },
+  { id: 'category', header: 'Category' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
+
 onMounted(async () => {
   await accountsStore.load()
   savedMappings.value = await mappingApi.listImportMappings()
@@ -130,6 +145,7 @@ function applySavedMapping(m: ImportMapping) {
   // (e.g. amountMode, creditColumn added in later versions) fall back to the
   // current defaults rather than being dropped entirely.
   config.value = { ...config.value, ...JSON.parse(m.config) }
+  toast.add({ title: `"${m.name}" mapping loaded`, color: 'success' })
 }
 
 function goToPreview() {
@@ -232,175 +248,193 @@ async function confirmImport() {
     <!-- Step 2: map columns -->
     <div v-else-if="step === 2" class="space-y-5">
 
-      <!-- COLUMN MAPPING -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Column Mapping</p>
-        <div>
-          <p class="text-xs text-muted mb-1">Date column</p>
-          <USelect v-model="config.dateColumn" :items="headerItems" placeholder="Select column" class="w-full" />
-        </div>
-        <div>
-          <p class="text-xs text-muted mb-1">Description column (optional)</p>
-          <USelect v-model="config.descriptionColumn" :items="headerItems" placeholder="Select column" class="w-full" />
-        </div>
+      <!-- LOAD SAVED MAPPING -->
+      <div v-if="savedMappings.length" class="flex items-center gap-2 flex-wrap">
+        <p class="text-xs text-muted shrink-0">Load saved mapping:</p>
+        <UButton
+          v-for="m in savedMappings"
+          :key="m.id"
+          size="xs"
+          variant="soft"
+          @click="applySavedMapping(m)"
+        >{{ m.name }}</UButton>
       </div>
 
-      <!-- AMOUNT -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amount</p>
+      <div class="flex gap-5">
+        <!-- LEFT: core config -->
+        <div class="flex-1 space-y-5">
 
-        <div class="flex gap-1 p-1 rounded-lg bg-muted">
-          <UButton
-            type="button"
-            :variant="config.amountMode === 'single' ? 'solid' : 'ghost'"
-            size="sm"
-            class="flex-1"
-            @click="config.amountMode = 'single'"
-          >Single column</UButton>
-          <UButton
-            type="button"
-            :variant="config.amountMode === 'split' ? 'solid' : 'ghost'"
-            size="sm"
-            class="flex-1"
-            @click="config.amountMode = 'split'"
-          >Credit + Debit columns</UButton>
-        </div>
-
-        <template v-if="config.amountMode === 'single'">
-          <div>
-            <p class="text-xs text-muted mb-1">Amount column</p>
-            <USelect v-model="config.amountColumn" :items="headerItems" placeholder="Select column" class="w-full" />
-          </div>
-          <div>
-            <p class="text-xs text-muted mb-1">Amount sign</p>
-            <USelect
-              v-model="config.amountSign"
-              :items="[
-                { label: 'Negative amounts are expenses', value: 'negative-is-expense' },
-                { label: 'Positive amounts are expenses', value: 'positive-is-expense' },
-              ]"
-              class="w-full"
-            />
-          </div>
-        </template>
-
-        <template v-else>
-          <div>
-            <p class="text-xs text-muted mb-1">Credit column</p>
-            <USelect v-model="config.creditColumn" :items="headerItems" placeholder="Select column" class="w-full" />
-          </div>
-          <div>
-            <p class="text-xs text-muted mb-1">Debit column</p>
-            <USelect v-model="config.debitColumn" :items="headerItems" placeholder="Select column" class="w-full" />
-          </div>
-          <USwitch v-model="config.invertSplit" label="Invert credit/debit direction" />
-        </template>
-
-        <!-- Live example card -->
-        <div class="rounded-lg border border-default p-3 text-sm space-y-1.5">
-          <p class="text-xs text-muted">Example from your CSV</p>
-          <template v-if="exampleEntry">
-            <div class="flex items-center gap-2">
-              <span
-                class="text-xs font-medium px-2 py-0.5 rounded-full"
-                :class="exampleEntry.parsed.type === 'income'
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
-              >{{ exampleEntry.parsed.type }}</span>
-              <span class="tabular-nums font-medium">{{ money(exampleEntry.parsed.amount) }}</span>
+          <!-- COLUMN MAPPING -->
+          <div class="space-y-3">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Column Mapping</p>
+            <div class="flex gap-3">
+              <div class="flex-1">
+                <p class="text-xs text-muted mb-1">Date column</p>
+                <USelect v-model="config.dateColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+              </div>
+              <div class="w-36">
+                <p class="text-xs text-muted mb-1">Date format</p>
+                <UInput v-model="config.dateFormat" placeholder="MM/dd/yyyy" class="w-full" />
+              </div>
             </div>
-            <p class="text-xs text-muted">
-              {{ exampleEntry.parsed.date }} · {{ exampleEntry.parsed.description || '—' }}
-              <template v-if="config.amountMode === 'split'">
-                · Credit: {{ exampleEntry.raw[config.creditColumn] || '—' }}
-                / Debit: {{ exampleEntry.raw[config.debitColumn] || '—' }}
-              </template>
-              <template v-else>
-                · Raw: {{ exampleEntry.raw[config.amountColumn] || '—' }}
-              </template>
-            </p>
-          </template>
-          <p v-else class="text-xs text-muted">Select columns to see an example.</p>
-        </div>
-      </div>
-
-      <!-- FORMAT -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Format</p>
-        <div>
-          <p class="text-xs text-muted mb-1">Date format</p>
-          <UInput v-model="config.dateFormat" placeholder="MM/dd/yyyy" class="w-full" />
-        </div>
-      </div>
-
-      <!-- CATEGORY DEFAULTS -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Category Defaults</p>
-        <div>
-          <p class="text-xs text-muted mb-1">Default category for unmatched rows</p>
-          <USelect v-model="config.defaultCategory" :items="categoryItems" class="w-full" />
-        </div>
-      </div>
-
-      <!-- TRANSFER RULES -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Transfer Rules</p>
-        <p class="text-xs text-muted">Mark rows matching a keyword as a transfer to an account.</p>
-
-        <div v-if="config.transferRules.length" class="space-y-1">
-          <div
-            v-for="(rule, i) in config.transferRules"
-            :key="i"
-            class="flex items-center gap-2 text-sm"
-          >
-            <span class="flex-1 truncate">{{ rule.keyword }}</span>
-            <span class="text-muted">→</span>
-            <span class="flex-1 truncate">
-              {{ accountName(rule.transferAccountId) }}
-            </span>
-            <UButton size="xs" variant="ghost" color="red" @click="removeTransferRule(i)">Remove</UButton>
+            <div>
+              <p class="text-xs text-muted mb-1">Description column (optional)</p>
+              <USelect v-model="config.descriptionColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+            </div>
           </div>
+
+          <!-- AMOUNT -->
+          <div class="space-y-3">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Amount</p>
+
+            <div class="flex gap-1 p-1 rounded-lg bg-muted">
+              <UButton
+                type="button"
+                :variant="config.amountMode === 'single' ? 'solid' : 'ghost'"
+                size="sm"
+                class="flex-1"
+                @click="config.amountMode = 'single'"
+              >Single column</UButton>
+              <UButton
+                type="button"
+                :variant="config.amountMode === 'split' ? 'solid' : 'ghost'"
+                size="sm"
+                class="flex-1"
+                @click="config.amountMode = 'split'"
+              >Credit + Debit columns</UButton>
+            </div>
+
+            <template v-if="config.amountMode === 'single'">
+              <div>
+                <p class="text-xs text-muted mb-1">Amount column</p>
+                <USelect v-model="config.amountColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+              </div>
+              <div>
+                <p class="text-xs text-muted mb-1">Amount sign</p>
+                <USelect
+                  v-model="config.amountSign"
+                  :items="[
+                    { label: 'Negative amounts are expenses', value: 'negative-is-expense' },
+                    { label: 'Positive amounts are expenses', value: 'positive-is-expense' },
+                  ]"
+                  class="w-full"
+                />
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="flex gap-3">
+                <div class="flex-1">
+                  <p class="text-xs text-muted mb-1">Credit column</p>
+                  <USelect v-model="config.creditColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+                </div>
+                <div class="flex-1">
+                  <p class="text-xs text-muted mb-1">Debit column</p>
+                  <USelect v-model="config.debitColumn" :items="headerItems" placeholder="Select column" class="w-full" />
+                </div>
+              </div>
+              <USwitch v-model="config.invertSplit" label="Invert credit/debit direction" />
+            </template>
+
+            <!-- Live example card -->
+            <div class="rounded-lg border border-default p-3 text-sm space-y-1.5">
+              <p class="text-xs text-muted">Example from your CSV</p>
+              <template v-if="exampleEntry">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="text-xs font-medium px-2 py-0.5 rounded-full"
+                    :class="exampleEntry.parsed.type === 'income'
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
+                  >{{ exampleEntry.parsed.type }}</span>
+                  <span class="tabular-nums font-medium">{{ money(exampleEntry.parsed.amount) }}</span>
+                </div>
+                <p class="text-xs text-muted">
+                  {{ exampleEntry.parsed.date }} · {{ exampleEntry.parsed.description || '—' }}
+                  <template v-if="config.amountMode === 'split'">
+                    · Credit: {{ exampleEntry.raw[config.creditColumn] || '—' }}
+                    / Debit: {{ exampleEntry.raw[config.debitColumn] || '—' }}
+                  </template>
+                  <template v-else>
+                    · Raw: {{ exampleEntry.raw[config.amountColumn] || '—' }}
+                  </template>
+                </p>
+              </template>
+              <p v-else class="text-xs text-muted">Select columns to see an example.</p>
+            </div>
+          </div>
+
+          <!-- CATEGORY DEFAULTS -->
+          <div class="space-y-3">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Category Defaults</p>
+            <div>
+              <p class="text-xs text-muted mb-1">Default category for unmatched rows</p>
+              <USelect v-model="config.defaultCategory" :items="categoryItems" class="w-full" />
+            </div>
+          </div>
+
         </div>
 
-        <div class="flex gap-2 items-center">
-          <UInput
-            v-model="newTransferKeyword"
-            placeholder="keyword (e.g. payment thank you)"
-            size="xs"
-            class="flex-1"
-          />
-          <USelect
-            v-model="newTransferAccountId"
-            :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
-            placeholder="Transfer to account"
-            size="xs"
-            class="w-44"
-          />
-          <UButton
-            size="xs"
-            variant="soft"
-            :disabled="!newTransferKeyword.trim() || newTransferAccountId == null"
-            @click="addTransferRule"
-          >
-            Add rule
-          </UButton>
+        <!-- RIGHT: transfer rules + save mapping -->
+        <div class="w-72 bg-muted border border-default/50 rounded-xl space-y-5 -my-1 p-4">
+
+          <!-- TRANSFER RULES -->
+          <div class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Transfer Rules</p>
+            <p class="text-xs text-muted">Mark rows matching a keyword as a transfer between this account and another.</p>
+
+            <div v-if="config.transferRules.length" class="space-y-1">
+              <div
+                v-for="(rule, i) in config.transferRules"
+                :key="i"
+                class="flex items-center gap-2 text-sm"
+              >
+                <span class="flex-1 truncate">{{ rule.keyword }}</span>
+                <span class="text-muted">↔</span>
+                <span class="flex-1 truncate">{{ accountName(rule.transferAccountId) }}</span>
+                <UButton size="xs" variant="ghost" color="red" @click="removeTransferRule(i)">Remove</UButton>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <UInput
+                v-model="newTransferKeyword"
+                placeholder="keyword (e.g. payment thank you)"
+                size="xs"
+                class="w-full"
+              />
+              <div class="flex gap-2 items-center">
+                <USelect
+                  v-model="newTransferAccountId"
+                  :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
+                  placeholder="Other account"
+                  size="xs"
+                  class="flex-1 min-w-0"
+                />
+                <UButton
+                  size="xs"
+                  variant="soft"
+                  :disabled="!newTransferKeyword.trim() || newTransferAccountId == null"
+                  @click="addTransferRule"
+                >Add rule</UButton>
+              </div>
+            </div>
+          </div>
+
+          <!-- SAVE MAPPING -->
+          <div class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Save Mapping</p>
+            <div class="flex gap-2 items-center">
+              <UInput v-model="newMappingName" placeholder="Save this mapping as…" size="xs" class="flex-1 min-w-0" />
+              <UButton size="xs" variant="soft" :disabled="!newMappingName" @click="saveMapping">Save</UButton>
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <!-- SAVE MAPPING -->
-      <div class="space-y-3">
-        <p class="text-xs font-semibold uppercase tracking-wide text-muted">Save Mapping</p>
-        <div v-if="savedMappings.length" class="flex flex-wrap gap-1">
-          <UButton v-for="m in savedMappings" :key="m.id" size="xs" variant="soft"
-            @click="applySavedMapping(m)">{{ m.name }}</UButton>
-        </div>
-        <div class="flex gap-2 items-center">
-          <UInput v-model="newMappingName" placeholder="Save this mapping as…" class="flex-1" />
-          <UButton size="sm" variant="soft" :disabled="!newMappingName" @click="saveMapping">Save mapping</UButton>
-        </div>
-      </div>
-
-      <div class="flex justify-end pt-2">
+      <div class="flex justify-between pt-2">
+        <UButton variant="ghost" @click="step = 1">← Back</UButton>
         <UButton :disabled="!canPreview" @click="goToPreview">Preview</UButton>
       </div>
 
@@ -412,44 +446,37 @@ async function confirmImport() {
         {{ include.filter(Boolean).length }} of {{ parsed.length }} rows selected
         ({{ dupes.filter(Boolean).length }} possible duplicates unchecked).
       </p>
-      <table class="w-full text-sm">
-        <thead class="text-left text-muted border-b border-default">
-          <tr>
-            <th></th>
-            <th>Date</th>
-            <th>Description</th>
-            <th>Type</th>
-            <th>Category</th>
-            <th class="text-right">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(p, i) in parsed" :key="i" class="border-b border-default/50"
-            :class="{ 'opacity-50': dupes[i] }">
-            <td><UCheckbox v-model="include[i]" /></td>
-            <td>{{ p.date }}</td>
-            <td>{{ p.description }} <span v-if="dupes[i]" class="text-xs text-amber-600">(dup)</span></td>
-            <td>
-              <template v-if="p.type === 'transfer'">
-                transfer → {{ accountName(p.transferAccountId!) }}
-              </template>
-              <template v-else>{{ p.type }}</template>
-            </td>
-            <td>
-              <USelect
-                v-if="p.type !== 'transfer'"
-                v-model="rowCategories[i]"
-                :items="categoryItems"
-                size="xs"
-                class="w-36"
-                @update:model-value="manuallyOverridden[i] = true"
-              />
-              <span v-else class="text-xs text-muted">—</span>
-            </td>
-            <td class="text-right tabular-nums">{{ p.amount }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <UTable
+        :data="parsed"
+        :columns="previewColumns"
+        :meta="{ class: { tr: dupeRowClass } }"
+      >
+        <template #include-cell="{ row }">
+          <UCheckbox v-model="include[row.index]" />
+        </template>
+        <template #description-cell="{ row }">
+          {{ row.original.description }}
+          <span v-if="dupes[row.index]" class="text-xs text-amber-600">(dup)</span>
+        </template>
+        <template #type-cell="{ row }">
+          <template v-if="row.original.type === 'transfer'">
+            transfer → {{ accountName(row.original.transferAccountId!) }}
+          </template>
+          <template v-else>{{ row.original.type }}</template>
+        </template>
+        <template #category-cell="{ row }">
+          <USelect
+            v-if="row.original.type !== 'transfer'"
+            v-model="rowCategories[row.index]"
+            :items="categoryItems"
+            size="xs"
+            class="w-36"
+            @update:model-value="manuallyOverridden[row.index] = true"
+          />
+          <span v-else class="text-xs text-muted">—</span>
+        </template>
+        <template #amount-cell="{ row }">{{ row.original.amount }}</template>
+      </UTable>
       <div class="flex gap-2 items-center pt-1 border-t border-default">
         <p class="text-xs text-muted shrink-0">Add rule:</p>
         <UInput
@@ -464,7 +491,8 @@ async function confirmImport() {
           Save rule
         </UButton>
       </div>
-      <div class="flex justify-end">
+      <div class="flex justify-between">
+        <UButton variant="ghost" @click="step = 2">← Back to settings</UButton>
         <UButton :disabled="!include.some(Boolean)" @click="confirmImport">Import selected</UButton>
       </div>
     </div>

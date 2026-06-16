@@ -2,22 +2,21 @@
 import { reactive, ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFireProfileStore } from '../stores/fireProfile'
-import { useSyncStore } from '../stores/sync'
 import { markOnboardingComplete, upsertFireProfile } from '../lib/api/fireProfile'
-import { saveSyncConfig } from '../lib/api/sync'
+import { saveSyncConfig, restartApp } from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import PercentInput from '../components/PercentInput.vue'
+import DateInput from '../components/DateInput.vue'
 
 const router = useRouter()
 const fireProfileStore = useFireProfileStore()
-const syncStore = useSyncStore()
 
 const step = ref<1 | 2 | 3 | 4 | 5>(1)
 const TOTAL_STEPS = 5
 
 const form = reactive({
-  currentAge: 30,
+  dateOfBirth: null as string | null,
   targetRetirementAge: 50,
   annualExpensesTarget: 40000,
   leanFireAnnualExpenses: null as number | null,
@@ -38,7 +37,7 @@ const showSyncHelp = ref(false)
 onMounted(async () => {
   if (fireProfileStore.profile) {
     const p = fireProfileStore.profile
-    form.currentAge = p.currentAge
+    form.dateOfBirth = p.dateOfBirth
     form.targetRetirementAge = p.targetRetirementAge
     form.annualExpensesTarget = p.annualExpensesTarget
     form.leanFireAnnualExpenses = p.leanFireAnnualExpenses
@@ -71,7 +70,7 @@ async function finish() {
   syncError.value = ''
   try {
     const profile: FireProfile = {
-      currentAge: form.currentAge,
+      dateOfBirth: form.dateOfBirth || null,
       targetRetirementAge: form.targetRetirementAge,
       annualExpensesTarget: form.annualExpensesTarget ?? 0,
       leanFireAnnualExpenses: form.leanFireAnnualExpenses,
@@ -89,7 +88,13 @@ async function finish() {
         syncError.value = 'Enter both the database URL and the auth token to enable sync.'
         return
       }
+      // Mark complete before saveSyncConfig so it's copied to Turso during seeding.
+      // saveSyncConfig renames the local DB file, making the app's Db state stale —
+      // restart instead of trying to use it afterward.
+      await markOnboardingComplete()
       await saveSyncConfig(syncUrl.value.trim(), syncToken.value.trim())
+      await restartApp()
+      return
     }
 
     await markOnboardingComplete()
@@ -125,8 +130,12 @@ async function finish() {
           <h1 class="text-2xl font-bold">Welcome to TrackMyFI</h1>
           <p class="text-muted mt-1">Let's set up your FIRE profile. You can change any of this later in Settings.</p>
         </div>
-        <UFormField label="How old are you?">
-          <UInput v-model.number="form.currentAge" type="number" class="w-full" />
+        <UFormField label="Date of birth" hint="Used to calculate and auto-update your current age">
+          <DateInput
+            :model-value="form.dateOfBirth ?? ''"
+            @update:model-value="form.dateOfBirth = $event || null"
+            class="w-full"
+          />
         </UFormField>
         <UFormField label="When would you like to retire? (age)">
           <UInput v-model.number="form.targetRetirementAge" type="number" class="w-full" />

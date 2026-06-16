@@ -47,7 +47,25 @@ async function applyFilters() {
   })
 }
 
+async function clearFilters() {
+  startDate.value = ''
+  endDate.value = ''
+  employerSearch.value = ''
+  await store.setFilter({ startDate: null, endDate: null, employer: null })
+}
+
 const totals = computed(() => paycheckTotals(store.paychecks))
+
+const columns = [
+  { accessorKey: 'payDate', header: 'Date' },
+  { accessorKey: 'employer', header: 'Employer' },
+  { id: 'period', header: 'Period' },
+  { id: 'gross', header: 'Gross', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'net', header: 'Net', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'federal', header: 'Federal', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'ssMedicare', header: 'SS + Medicare', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
+]
 
 function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -56,6 +74,9 @@ function money(n: number): string {
 onMounted(async () => {
   await accountsStore.load() // pre-populates store for PaycheckForm account dropdowns
   await store.load()
+  startDate.value = store.filter.startDate ?? ''
+  endDate.value = store.filter.endDate ?? ''
+  employerSearch.value = store.filter.employer ?? ''
 })
 </script>
 
@@ -77,6 +98,7 @@ onMounted(async () => {
       </div>
       <UInput v-model="employerSearch" placeholder="Search employer" class="w-44" />
       <UButton @click="applyFilters">Apply</UButton>
+      <UButton variant="ghost" @click="clearFilters">Clear</UButton>
     </div>
 
     <div class="flex gap-6 text-sm">
@@ -85,39 +107,20 @@ onMounted(async () => {
       <span class="text-muted">{{ totals.count }} paychecks</span>
     </div>
 
-    <table class="w-full text-sm">
-      <thead class="text-left text-muted border-b border-default">
-        <tr>
-          <th class="py-2">Date</th>
-          <th>Employer</th>
-          <th>Period</th>
-          <th class="text-right">Gross</th>
-          <th class="text-right">Net</th>
-          <th class="text-right">Federal</th>
-          <th class="text-right">SS + Medicare</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="p in store.paychecks" :key="p.id" class="border-b border-default/50">
-          <td class="py-2">{{ p.payDate }}</td>
-          <td>{{ p.employer }}</td>
-          <td>{{ labelForPayPeriod(p.payPeriod) }}</td>
-          <td class="text-right tabular-nums">{{ money(p.grossAmount) }}</td>
-          <td class="text-right tabular-nums">{{ money(p.netAmount) }}</td>
-          <td class="text-right tabular-nums">{{ money(p.federalTax) }}</td>
-          <td class="text-right tabular-nums">{{ money(p.socialSecurityTax + p.medicareTax) }}</td>
-          <td class="text-right">
-            <UButton size="xs" variant="ghost" icon="i-ph-copy" @click="openCopy(p)" />
-            <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(p)" />
-            <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(p)" />
-          </td>
-        </tr>
-        <tr v-if="!store.paychecks.length">
-          <td colspan="8" class="py-6 text-center text-muted">No paychecks yet.</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="border border-default rounded-lg overflow-hidden">
+      <UTable :data="store.paychecks" :columns="columns" empty="No paychecks yet.">
+        <template #period-cell="{ row }">{{ labelForPayPeriod(row.original.payPeriod) }}</template>
+        <template #gross-cell="{ row }">{{ money(row.original.grossAmount) }}</template>
+        <template #net-cell="{ row }">{{ money(row.original.netAmount) }}</template>
+        <template #federal-cell="{ row }">{{ money(row.original.federalTax) }}</template>
+        <template #ssMedicare-cell="{ row }">{{ money(row.original.socialSecurityTax + row.original.medicareTax) }}</template>
+        <template #actions-cell="{ row }">
+          <UButton size="xs" variant="ghost" icon="i-ph-copy" @click="openCopy(row.original)" />
+          <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
+          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(row.original)" />
+        </template>
+      </UTable>
+    </div>
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit paycheck' : copySource ? 'Copy paycheck' : 'Add paycheck'" class="lg:w-[900px] max-w-full">
       <template #body>

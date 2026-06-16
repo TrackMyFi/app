@@ -13,7 +13,6 @@ declare module 'vue' {
   export interface GlobalComponents {
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
     BalanceForm: typeof import('./src/components/BalanceForm.vue')['default']
-    BalanceRow: typeof import('./src/components/BalanceRow.vue')['default']
     ComboboxInput: typeof import('./src/components/ComboboxInput.vue')['default']
     CurrencyInput: typeof import('./src/components/CurrencyInput.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']
@@ -47,5 +46,6 @@ declare module 'vue' {
     USlideover: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Slideover.vue')['default']
     USlider: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Slider.vue')['default']
     USwitch: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Switch.vue')['default']
+    UTable: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Table.vue')['default']
   }
 }
