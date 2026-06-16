@@ -18,7 +18,7 @@ import DeleteDataModal from '../components/DeleteDataModal.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import PercentInput from '../components/PercentInput.vue'
 import DateInput from '../components/DateInput.vue'
-import { categoryItems } from '../lib/transactions/constants'
+import { categoryItems, labelForCategory } from '../lib/transactions/constants'
 
 interface FireProfileForm {
   dateOfBirth: string | null
@@ -158,6 +158,12 @@ async function removeCategoryRule(id: number) {
   await categoryRulesApi.deleteCategoryRule(id)
   categoryRules.value = await categoryRulesApi.listCategoryRules()
 }
+
+const ruleColumns = [
+  { accessorKey: 'keyword', header: 'Keyword' },
+  { accessorKey: 'category', header: 'Category', cell: ({ row }: { row: { original: { category: string } } }) => labelForCategory(row.original.category) },
+  { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
+]
 </script>
 
 <template>
@@ -299,27 +305,16 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
         First matching rule wins; unmatched rows use the mapping's default category.
       </p>
 
-      <table v-if="categoryRules.length" class="w-full text-sm">
-        <thead class="text-left text-muted border-b border-default">
-          <tr>
-            <th class="pb-1">Keyword</th>
-            <th class="pb-1">Category</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="rule in categoryRules" :key="rule.id" class="border-b border-default/50">
-            <td class="py-1.5 font-mono text-xs">{{ rule.keyword }}</td>
-            <td class="py-1.5">{{ rule.category }}</td>
-            <td class="py-1.5 text-right">
-              <UButton size="xs" color="error" variant="ghost" @click="removeCategoryRule(rule.id)">
-                Remove
-              </UButton>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="text-sm text-muted">No rules yet.</p>
+      <UTable :data="categoryRules" :columns="ruleColumns" empty="No rules yet.">
+        <template #keyword-cell="{ row }">
+          <span class="font-mono text-xs">{{ row.original.keyword }}</span>
+        </template>
+        <template #actions-cell="{ row }">
+          <UButton size="xs" color="error" variant="ghost" @click="removeCategoryRule(row.original.id)">
+            Remove
+          </UButton>
+        </template>
+      </UTable>
 
       <div class="flex gap-2 items-center pt-1">
         <UInput
