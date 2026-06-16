@@ -490,11 +490,11 @@ async function confirmImport() {
             <template v-if="generateSnapshots">
               <div v-if="priorSnapshot" class="text-xs text-muted">
                 Will cascade from your
-                {{ priorSnapshot.recordedAt }} snapshot of {{ money(priorSnapshot.balance) }}.
+                {{ DateTime.fromISO(priorSnapshot.recordedAt).toLocaleString(DateTime.DATE_MED) }} snapshot of {{ money(priorSnapshot.balance) }}.
               </div>
               <div v-else-if="needsSeed" class="space-y-1">
                 <p class="text-xs text-muted">
-                  No balance found before {{ earliestDate }}. Enter a starting balance:
+                  No balance found before {{ DateTime.fromISO(earliestDate).toLocaleString(DateTime.DATE_MED) }}. Enter a starting balance:
                 </p>
                 <UInput
                   v-model.number="seedBalance"
