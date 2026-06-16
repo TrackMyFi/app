@@ -87,6 +87,7 @@ const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value 
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
+// @ts-expect-error TS6133
 // used in template (Tasks 3 & 4)
 const runningBalances = computed(() =>
   generateSnapshots.value
@@ -503,9 +504,6 @@ async function confirmImport() {
                   placeholder="0.00"
                 />
               </div>
-              <p v-if="runningBalances.length" class="text-xs text-muted">
-                Will generate {{ runningBalances.length }} snapshot(s).
-              </p>
             </template>
           </div>
 
