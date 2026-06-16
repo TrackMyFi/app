@@ -50,6 +50,12 @@ const isLiabilityAccount = computed(() => {
   return account ? isLiability(account.type) : false
 })
 
+const isInvestmentAccount = computed(() => {
+  if (accountId.value == null) return false
+  const acct = accountsStore.accounts.find((a) => a.id === accountId.value)
+  return acct ? isInvestment(acct.type) : false
+})
+
 const allParsedRows = computed(() =>
   rawRows.value.length > 0 && config.value.dateColumn
     ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value, categoryRules.value)
@@ -77,13 +83,11 @@ const priorSnapshot = computed(() => {
 })
 
 // used in template (Task 3)
-// @ts-expect-error TS6133 — referenced in template in Task 3
 const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value === null && earliestDate.value !== '')
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
 // used in template (Tasks 3 & 4)
-// @ts-expect-error TS6133 — referenced in template in Task 3
 const runningBalances = computed(() =>
   generateSnapshots.value
     ? projectRunningBalances(allParsedRows.value, include.value, baseBalance.value)
@@ -476,6 +480,33 @@ async function confirmImport() {
               <UInput v-model="newMappingName" placeholder="Save this mapping as…" size="xs" class="flex-1 min-w-0" />
               <UButton size="xs" variant="soft" :disabled="!newMappingName" @click="saveMapping">Save</UButton>
             </div>
+          </div>
+
+          <!-- GENERATE BALANCE SNAPSHOTS -->
+          <div v-if="!isInvestmentAccount && rawRows.length > 0" class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Balance Snapshots</p>
+            <USwitch v-model="generateSnapshots" label="Generate balance snapshots" />
+            <template v-if="generateSnapshots">
+              <div v-if="priorSnapshot" class="text-xs text-muted">
+                Will cascade from your
+                {{ priorSnapshot.recordedAt }} snapshot of {{ money(priorSnapshot.balance) }}.
+              </div>
+              <div v-else-if="needsSeed" class="space-y-1">
+                <p class="text-xs text-muted">
+                  No balance found before {{ earliestDate }}. Enter a starting balance:
+                </p>
+                <UInput
+                  v-model.number="seedBalance"
+                  type="number"
+                  size="xs"
+                  class="w-full"
+                  placeholder="0.00"
+                />
+              </div>
+              <p v-if="runningBalances.length" class="text-xs text-muted">
+                Will generate {{ runningBalances.length }} snapshot(s).
+              </p>
+            </template>
           </div>
 
         </div>
