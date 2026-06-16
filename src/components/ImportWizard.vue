@@ -284,7 +284,17 @@ async function confirmImport() {
     }))
 
   if (!generateSnapshots.value) {
-    await bulkCreateTransactions(selectedRows.map((r) => ({ ...r, updateBalance: false })))
+    await bulkCreateTransactions(
+      selectedRows.map((r) => {
+        const isLiabTransfer = isLiabilityAccount.value && r.type === 'transfer' && r.transferAccountId != null
+        return {
+          ...r,
+          accountId: isLiabTransfer ? r.transferAccountId! : r.accountId,
+          transferAccountId: isLiabTransfer ? r.accountId : r.transferAccountId,
+          updateBalance: false,
+        }
+      }),
+    )
   } else {
     if (needsSeed.value) {
       await addBalance({
