@@ -10,6 +10,7 @@ export interface ProjectionRow {
  * Returns a running balance for each row after cascading through included rows
  * in date order. Excluded rows return null and do not affect the running total.
  * Rows are keyed by their original array index so the result maps 1:1 to input order.
+ * Caller must ensure `included.length === rows.length`.
  */
 export function projectRunningBalances(
   rows: ProjectionRow[],
