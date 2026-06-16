@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useBudgetStore } from '../stores/budget'
 import { useAccountsStore } from '../stores/accounts'
@@ -7,6 +8,7 @@ import CurrencyInput from '../components/CurrencyInput.vue'
 
 const store = useBudgetStore()
 const accountsStore = useAccountsStore()
+const toast = useToast()
 
 const editingTarget = ref(false)
 const targetInput = ref<number | null>(null)
@@ -57,6 +59,7 @@ function cancelTargetEdit() {
 async function saveTarget() {
   if (targetInput.value !== null && targetInput.value >= 0) {
     await store.setTarget(targetInput.value)
+    toast.add({ title: 'Budget target saved', color: 'success' })
   }
   editingTarget.value = false
   targetInput.value = null
@@ -71,8 +74,8 @@ const emptyMessage = computed(() => {
   switch (store.activeSection) {
     case 'income': return 'No income transactions this month.'
     case 'savings': return 'No contributions this month.'
-    case 'fixed': return 'No fixed expenses this month.'
-    case 'discretionary': return 'No discretionary transactions this month.'
+    case 'fixed': return 'No bills this month.'
+    case 'discretionary': return 'No spending this month.'
     default: return 'No transactions this month.'
   }
 })
@@ -92,6 +95,21 @@ const discretionaryRemaining = computed(() => {
   if (!store.summary) return 0
   return store.summary.freeMoneyRemaining
 })
+
+const incomeColumns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'account', header: 'Account' },
+  { id: 'gross', header: 'Gross', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+  { id: 'net', header: 'Net', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
+
+const sectionColumns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'account', header: 'Account' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
 
 onMounted(async () => {
   await Promise.all([accountsStore.load(), store.loadMonths()])
@@ -229,60 +247,23 @@ onMounted(async () => {
           <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
         </div>
         <!-- Income table: Gross + Net columns -->
-        <table v-if="store.activeSection === 'income'" class="w-full text-sm">
-          <thead class="text-left text-muted border-b border-default">
-            <tr>
-              <th class="px-4 py-2 font-normal w-28">Date</th>
-              <th class="py-2 font-normal">Description</th>
-              <th class="py-2 font-normal">Account</th>
-              <th class="px-4 py-2 font-normal text-right">Gross</th>
-              <th class="px-4 py-2 font-normal text-right">Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="t in detailTransactions"
-              :key="t.id"
-              class="border-t border-default/50"
-            >
-              <td class="px-4 py-2 text-muted w-28">{{ t.date }}</td>
-              <td class="py-2">{{ t.description }}</td>
-              <td class="py-2 text-muted">{{ accountName(t.accountId) }}</td>
-              <td class="px-4 py-2 text-right tabular-nums">{{ money(t.paycheckId != null ? (store.paycheckGrossMap[t.paycheckId] ?? t.amount) : t.amount) }}</td>
-              <td class="px-4 py-2 text-right tabular-nums">{{ money(t.amount) }}</td>
-            </tr>
-            <tr v-if="!detailTransactions.length">
-              <td colspan="5" class="px-4 py-6 text-center text-muted">{{ emptyMessage }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <UTable v-if="store.activeSection === 'income'" :data="detailTransactions" :columns="incomeColumns" :empty="emptyMessage">
+          <template #account-cell="{ row }">
+            <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
+          </template>
+          <template #gross-cell="{ row }">
+            {{ money(row.original.paycheckId != null ? (store.paycheckGrossMap[row.original.paycheckId] ?? row.original.amount) : row.original.amount) }}
+          </template>
+          <template #net-cell="{ row }">{{ money(row.original.amount) }}</template>
+        </UTable>
 
         <!-- All other sections: single Amount column -->
-        <table v-else class="w-full text-sm">
-          <thead class="text-left text-muted border-b border-default">
-            <tr>
-              <th class="px-4 py-2 font-normal w-28">Date</th>
-              <th class="py-2 font-normal">Description</th>
-              <th class="py-2 font-normal">Account</th>
-              <th class="px-4 py-2 font-normal text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="t in detailTransactions"
-              :key="t.id"
-              class="border-t border-default/50"
-            >
-              <td class="px-4 py-2 text-muted w-28">{{ t.date }}</td>
-              <td class="py-2">{{ t.description }}</td>
-              <td class="py-2 text-muted">{{ accountName(t.accountId) }}</td>
-              <td class="px-4 py-2 text-right tabular-nums">{{ money(t.amount) }}</td>
-            </tr>
-            <tr v-if="!detailTransactions.length">
-              <td colspan="4" class="px-4 py-6 text-center text-muted">{{ emptyMessage }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <UTable v-else :data="detailTransactions" :columns="sectionColumns" :empty="emptyMessage">
+          <template #account-cell="{ row }">
+            <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
+          </template>
+          <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
+        </UTable>
       </div>
     </template>
   </div>

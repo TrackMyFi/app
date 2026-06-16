@@ -20,8 +20,8 @@ export type Category = typeof CATEGORIES[number]
 
 export const CATEGORY_LABELS: Record<Category, string> = {
   savings: 'Savings',
-  fixed: 'Fixed',
-  discretionary: 'Discretionary',
+  fixed: 'Bills',
+  discretionary: 'Spending',
   uncategorized: 'Uncategorized',
 }
 
