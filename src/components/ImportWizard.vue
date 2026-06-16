@@ -88,11 +88,16 @@ const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value 
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
-const runningBalances = computed(() =>
-  generateSnapshots.value
-    ? projectRunningBalances(allParsedRows.value, include.value, baseBalance.value)
-    : [],
-)
+const runningBalances = computed(() => {
+  if (!generateSnapshots.value) return []
+  // For liability accounts (credit cards), incoming transfer payments make the card
+  // the destination — balance increases. Flip transfer rows to income so the preview
+  // reflects the correct direction.
+  const rows = isLiabilityAccount.value
+    ? allParsedRows.value.map((r) => (r.type === 'transfer' ? { ...r, type: 'income' as const } : r))
+    : allParsedRows.value
+  return projectRunningBalances(rows, include.value, baseBalance.value)
+})
 
 const dupes = computed(() =>
   accountId.value == null
@@ -290,7 +295,15 @@ async function confirmImport() {
     }
     const sorted = [...selectedRows].sort((a, b) => a.date.localeCompare(b.date))
     for (const row of sorted) {
-      await createTransaction({ ...row, updateBalance: true })
+      // For liability accounts (credit cards), swap source/destination so the card
+      // is the destination of incoming payments (balance increases, PNC decreases).
+      const isLiabTransfer = isLiabilityAccount.value && row.type === 'transfer' && row.transferAccountId != null
+      await createTransaction({
+        ...row,
+        accountId: isLiabTransfer ? row.transferAccountId! : row.accountId,
+        transferAccountId: isLiabTransfer ? row.accountId : row.transferAccountId,
+        updateBalance: true,
+      })
     }
     await accountsStore.load()
   }
