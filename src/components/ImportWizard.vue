@@ -9,7 +9,8 @@ import * as categoryRulesApi from '../lib/api/categoryRules'
 import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
 import { useTransactionsStore } from '../stores/transactions'
-import { isLiability } from '../lib/accountTypes'
+import { isLiability, isInvestment } from '../lib/accountTypes'
+import { projectRunningBalances } from '../lib/csv/balanceProjection'
 import { categoryItems } from '../lib/transactions/constants'
 import type { ImportMapping } from '../lib/types/ImportMapping'
 import type { CategoryRule } from '../lib/types/CategoryRule'
@@ -49,11 +50,46 @@ const isLiabilityAccount = computed(() => {
   return account ? isLiability(account.type) : false
 })
 
-const parsed = computed(() =>
-  step.value === 3
+const allParsedRows = computed(() =>
+  rawRows.value.length > 0 && config.value.dateColumn
     ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value, categoryRules.value)
     : [],
 )
+
+const parsed = computed(() => (step.value === 3 ? allParsedRows.value : []))
+
+const earliestDate = computed(() => {
+  const dates = allParsedRows.value.map((r) => r.date).filter(Boolean)
+  return dates.length ? dates.reduce((min, d) => (d < min ? d : min)) : ''
+})
+
+const priorSnapshot = computed(() => {
+  if (!accountId.value || !earliestDate.value || !generateSnapshots.value) return null
+  const candidates = accountsStore.allBalances.filter(
+    (b) => b.accountId === accountId.value && b.recordedAt <= earliestDate.value,
+  )
+  if (!candidates.length) return null
+  return candidates.reduce((latest, b) =>
+    b.recordedAt > latest.recordedAt || (b.recordedAt === latest.recordedAt && b.id > latest.id)
+      ? b
+      : latest,
+  )
+})
+
+// used in template (Task 3)
+// @ts-expect-error TS6133 — referenced in template in Task 3
+const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value === null && earliestDate.value !== '')
+
+const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
+
+// used in template (Tasks 3 & 4)
+// @ts-expect-error TS6133 — referenced in template in Task 3
+const runningBalances = computed(() =>
+  generateSnapshots.value
+    ? projectRunningBalances(allParsedRows.value, include.value, baseBalance.value)
+    : [],
+)
+
 const dupes = computed(() =>
   accountId.value == null
     ? []
@@ -112,6 +148,8 @@ const newRuleKeyword = ref('')
 const newRuleCategory = ref('discretionary')
 const newTransferKeyword = ref('')
 const newTransferAccountId = ref<number | undefined>(undefined)
+const generateSnapshots = ref(false)
+const seedBalance = ref(0)
 
 const previewColumns = [
   { id: 'include', header: '' },
@@ -160,6 +198,16 @@ watch(parsed, (newParsed) => {
   rowCategories.value = newParsed.map((p, i) =>
     manuallyOverridden.value[i] ? rowCategories.value[i] : p.category,
   )
+})
+
+watch(accountId, (newId) => {
+  if (newId == null) return
+  const acct = accountsStore.accounts.find((a) => a.id === newId)
+  if (acct && isInvestment(acct.type)) generateSnapshots.value = false
+})
+
+watch(priorSnapshot, (snap) => {
+  if (snap !== null) seedBalance.value = 0
 })
 
 async function saveQuickRule() {
