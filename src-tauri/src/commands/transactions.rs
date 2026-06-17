@@ -190,6 +190,20 @@ pub async fn get_transaction(conn: &Connection, id: i32) -> Result<Transaction, 
     }
 }
 
+async fn is_liability(conn: &Connection, account_id: i32) -> Result<bool, String> {
+    let mut rows = conn
+        .query(
+            "SELECT type FROM account WHERE id = ?1",
+            params![account_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(r) => Ok(r.get::<String>(0).map_err(|e| e.to_string())? == "liability"),
+        None => Ok(false),
+    }
+}
+
 async fn base_balance(conn: &Connection, account_id: i32, date: &str) -> Result<f64, String> {
     let mut rows = conn
         .query(
@@ -240,11 +254,33 @@ async fn materialize_snapshots(
         let to = transfer_account_id.ok_or("transfer requires transferAccountId")?;
         let src_base = base_balance(conn, account_id, date).await?;
         let dst_base = base_balance(conn, to, date).await?;
-        let gen = insert_snapshot(conn, account_id, src_base - amount, date).await?;
-        let gen_to = insert_snapshot(conn, to, dst_base + amount, date).await?;
+        // A liability stores debt owed, so its balance moves opposite to an asset
+        // for the same money flow: the source sending money out raises an asset's
+        // balance loss but raises a liability's debt; the destination receiving
+        // money raises an asset but pays down (lowers) a liability's debt.
+        let src_new = if is_liability(conn, account_id).await? {
+            src_base + amount
+        } else {
+            src_base - amount
+        };
+        let dst_new = if is_liability(conn, to).await? {
+            dst_base - amount
+        } else {
+            dst_base + amount
+        };
+        let gen = insert_snapshot(conn, account_id, src_new, date).await?;
+        let gen_to = insert_snapshot(conn, to, dst_new, date).await?;
         Ok((Some(gen), Some(gen_to)))
     } else {
-        let delta = if ty == "income" { amount } else { -amount };
+        // Asset: income raises the balance, expense lowers it. A liability stores
+        // debt owed, so it inverts: a refund (income) pays down debt, a purchase
+        // (expense) adds to it.
+        let asset_delta = if ty == "income" { amount } else { -amount };
+        let delta = if is_liability(conn, account_id).await? {
+            -asset_delta
+        } else {
+            asset_delta
+        };
         let base = base_balance(conn, account_id, date).await?;
         let gen = insert_snapshot(conn, account_id, base + delta, date).await?;
         Ok((Some(gen), None))

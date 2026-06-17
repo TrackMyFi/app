@@ -33,9 +33,34 @@ export const categoryItems = CATEGORIES.map((c) => ({
   value: c,
 }))
 
-/** Signed effect of a transaction on its PRIMARY account's balance. */
-export function signedDelta(type: string, amount: number): number {
-  if (type === 'income') return amount
-  if (type === 'expense') return -amount
-  return -amount // transfer: primary (source) account decreases
+/**
+ * Signed effect of a transaction on its PRIMARY account's balance.
+ *
+ * Balances are stored as positive magnitudes; the account TYPE carries the sign.
+ * For a liability (debt owed), the effect of income/expense inverts: a purchase
+ * (expense) raises what you owe, a refund (income) lowers it.
+ *
+ * Transfers are treated from the primary account's source perspective and always
+ * decrease its running balance — which is also correct for an imported liability
+ * payment, where the card is the receiving side and its debt drops by `amount`.
+ */
+export function signedDelta(type: string, amount: number, isLiability = false): number {
+  if (type === 'transfer') return -amount
+  const sign = isLiability ? -1 : 1
+  return type === 'income' ? sign * amount : sign * -amount
+}
+
+/**
+ * Effect of one leg of a transfer on a positive-magnitude balance.
+ * Assets: the source falls and the destination rises. A liability stores debt,
+ * so the signs invert — sending money out of a card (source) raises its debt,
+ * paying a card (destination) lowers it.
+ */
+export function transferLegDelta(
+  leg: 'source' | 'destination',
+  amount: number,
+  isLiability = false,
+): number {
+  const assetDelta = leg === 'source' ? -amount : amount
+  return isLiability ? -assetDelta : assetDelta
 }

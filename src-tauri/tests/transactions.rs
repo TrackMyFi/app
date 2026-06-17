@@ -210,6 +210,84 @@ async fn transfer_switch_writes_two_snapshots() {
 }
 
 #[tokio::test]
+async fn transfer_into_liability_reduces_its_debt() {
+    // A credit-card payment: money flows from a checking account (source) into a
+    // liability card (destination). The liability balance stores debt owed, so
+    // receiving a payment must DECREASE it, while the asset source decreases too.
+    let conn = setup().await;
+    let pnc = accounts::create_account(&conn, &NewAccount {
+        name: "PNC".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    let card = accounts::create_account(&conn, &NewAccount {
+        name: "Citi".into(), r#type: "liability".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: pnc, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: card, balance: 500.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+
+    // source = PNC, destination = Citi card (after the import-layer swap)
+    let mut t = new_txn(pnc, 300.0, "transfer");
+    t.transfer_account_id = Some(card);
+    t.update_balance = true;
+    transactions::create_transaction(&conn, &t).await.unwrap();
+
+    assert_eq!(latest_balance(&conn, pnc).await, 700.0);  // asset source: 1000 - 300
+    assert_eq!(latest_balance(&conn, card).await, 200.0); // liability dest: 500 - 300 (less debt)
+}
+
+#[tokio::test]
+async fn income_and_expense_on_liability_move_debt_correctly() {
+    // On a credit card (liability, balance = debt owed), a purchase (expense) raises
+    // what you owe and a refund/redemption (income) lowers it — the opposite of an asset.
+    let conn = setup().await;
+    let card = accounts::create_account(&conn, &NewAccount {
+        name: "Citi".into(), r#type: "liability".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: card, balance: 500.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+
+    // expense (purchase) of 40 → debt rises to 540
+    let mut purchase = new_txn(card, 40.0, "expense");
+    purchase.date = "2026-02-02".into();
+    purchase.update_balance = true;
+    transactions::create_transaction(&conn, &purchase).await.unwrap();
+    assert_eq!(latest_balance(&conn, card).await, 540.0);
+
+    // income (refund) of 100 → debt falls to 440
+    let mut refund = new_txn(card, 100.0, "income");
+    refund.date = "2026-02-03".into();
+    refund.update_balance = true;
+    transactions::create_transaction(&conn, &refund).await.unwrap();
+    assert_eq!(latest_balance(&conn, card).await, 440.0);
+}
+
+#[tokio::test]
+async fn transfer_out_of_liability_increases_its_debt() {
+    // A cash advance: money flows out of the liability card (source) into checking.
+    // Drawing against the card increases debt owed; the asset destination rises.
+    let conn = setup().await;
+    let card = accounts::create_account(&conn, &NewAccount {
+        name: "Citi".into(), r#type: "liability".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    let pnc = accounts::create_account(&conn, &NewAccount {
+        name: "PNC".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: card, balance: 500.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: pnc, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
+
+    let mut t = new_txn(card, 300.0, "transfer");
+    t.transfer_account_id = Some(pnc);
+    t.update_balance = true;
+    transactions::create_transaction(&conn, &t).await.unwrap();
+
+    assert_eq!(latest_balance(&conn, card).await, 800.0); // liability source: 500 + 300 (more debt)
+    assert_eq!(latest_balance(&conn, pnc).await, 1300.0); // asset dest: 1000 + 300
+}
+
+#[tokio::test]
 async fn editing_amount_reapplies_linked_snapshot() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {

@@ -92,22 +92,24 @@ describe('applyMapping split mode', () => {
     { Date: '03/02/2026', Credit: '1500.00', Debit: '0', Description: 'Paycheck' },
   ]
 
-  it('maps debit to expense and credit to income for a non-liability account', () => {
-    expect(applyMapping(rows, splitConfig, false)).toEqual([
+  it('maps debit to expense and credit to income', () => {
+    expect(applyMapping(rows, splitConfig)).toEqual([
       { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'expense', category: 'uncategorized', transferAccountId: null },
       { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
-  it('flips direction for a liability account (credit = expense, debit = income)', () => {
-    expect(applyMapping(rows, splitConfig, true)).toEqual([
-      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized', transferAccountId: null },
-      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized', transferAccountId: null },
+  it('infers types independent of account type (purchase stays an expense)', () => {
+    // Account type never flips the inferred type — a card purchase is an expense.
+    // The liability sign is applied later when a balance delta is computed.
+    expect(applyMapping(rows, splitConfig)).toEqual([
+      { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'expense', category: 'uncategorized', transferAccountId: null },
+      { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'income', category: 'uncategorized', transferAccountId: null },
     ])
   })
 
-  it('inverts direction when invertSplit is true (non-liability: credit becomes expense)', () => {
-    expect(applyMapping(rows, { ...splitConfig, invertSplit: true }, false)).toEqual([
+  it('inverts direction when invertSplit is true (credit becomes expense)', () => {
+    expect(applyMapping(rows, { ...splitConfig, invertSplit: true })).toEqual([
       { date: '2026-03-01', amount: 42.5, description: 'Coffee', type: 'income', category: 'uncategorized', transferAccountId: null },
       { date: '2026-03-02', amount: 1500, description: 'Paycheck', type: 'expense', category: 'uncategorized', transferAccountId: null },
     ])
@@ -115,20 +117,20 @@ describe('applyMapping split mode', () => {
 
   it('uses the larger column when both credit and debit are non-zero', () => {
     const r = [{ Date: '03/01/2026', Credit: '5.00', Debit: '42.50', Description: 'Mixed' }]
-    expect(applyMapping(r, splitConfig, false)[0]).toMatchObject({ amount: 42.5, type: 'expense' })
+    expect(applyMapping(r, splitConfig)[0]).toMatchObject({ amount: 42.5, type: 'expense' })
   })
 
   it('falls back to amount 0 type expense when both columns are zero or blank', () => {
     const zeroRow = [{ Date: '03/01/2026', Credit: '0', Debit: '0', Description: 'Zero' }]
     const blankRow = [{ Date: '03/01/2026', Credit: '', Debit: '', Description: 'Blank' }]
-    expect(applyMapping(zeroRow, splitConfig, false)[0]).toMatchObject({ amount: 0, type: 'expense' })
-    expect(applyMapping(blankRow, splitConfig, false)[0]).toMatchObject({ amount: 0, type: 'expense' })
+    expect(applyMapping(zeroRow, splitConfig)[0]).toMatchObject({ amount: 0, type: 'expense' })
+    expect(applyMapping(blankRow, splitConfig)[0]).toMatchObject({ amount: 0, type: 'expense' })
   })
 
   it('credit wins when credit and debit amounts are equal', () => {
     const r = [{ Date: '03/01/2026', Credit: '42.50', Debit: '42.50', Description: 'Tie' }]
-    // credit wins (>=), non-liability → credit = income
-    expect(applyMapping(r, splitConfig, false)[0]).toMatchObject({ amount: 42.5, type: 'income' })
+    // credit wins (>=) → credit = income
+    expect(applyMapping(r, splitConfig)[0]).toMatchObject({ amount: 42.5, type: 'income' })
   })
 })
 
@@ -137,7 +139,6 @@ describe('applyMapping with category rules', () => {
     const result = applyMapping(
       [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Netflix monthly' }],
       config,
-      false,
       [{ keyword: 'netflix', category: 'fixed' }],
     )
     expect(result[0].category).toBe('fixed')
@@ -147,7 +148,6 @@ describe('applyMapping with category rules', () => {
     const result = applyMapping(
       [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
       { ...config, defaultCategory: 'discretionary' },
-      false,
       [{ keyword: 'netflix', category: 'fixed' }],
     )
     expect(result[0].category).toBe('discretionary')
@@ -157,7 +157,6 @@ describe('applyMapping with category rules', () => {
     const result = applyMapping(
       [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'NETFLIX' }],
       config,
-      false,
       [{ keyword: 'netflix', category: 'fixed' }],
     )
     expect(result[0].category).toBe('fixed')
@@ -167,7 +166,6 @@ describe('applyMapping with category rules', () => {
     const result = applyMapping(
       [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Netflix and Amazon' }],
       config,
-      false,
       [
         { keyword: 'netflix', category: 'fixed' },
         { keyword: 'amazon', category: 'discretionary' },
@@ -277,7 +275,6 @@ describe('applyMapping with transfer rules', () => {
     const result = applyMapping(
       [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU' }],
       transferConfig,
-      false,
       [{ keyword: 'payment', category: 'fixed' }],
     )
     expect(result[0].type).toBe('transfer')

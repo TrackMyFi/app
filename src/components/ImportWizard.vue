@@ -59,7 +59,7 @@ const isInvestmentAccount = computed(() => {
 
 const allParsedRows = computed(() =>
   rawRows.value.length > 0 && config.value.dateColumn
-    ? applyMapping(rawRows.value, config.value, isLiabilityAccount.value, categoryRules.value)
+    ? applyMapping(rawRows.value, config.value, categoryRules.value)
     : [],
 )
 
@@ -88,16 +88,20 @@ const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value 
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
-const runningBalances = computed(() => {
-  if (!generateSnapshots.value) return []
-  // For liability accounts (credit cards), incoming transfer payments make the card
-  // the destination — balance increases. Flip transfer rows to income so the preview
-  // reflects the correct direction.
-  const rows = isLiabilityAccount.value
-    ? allParsedRows.value.map((r) => (r.type === 'transfer' ? { ...r, type: 'income' as const } : r))
-    : allParsedRows.value
-  return projectRunningBalances(rows, include.value, baseBalance.value)
-})
+const runningBalances = computed(() =>
+  // Balances are positive magnitudes; for a liability the projection inverts the
+  // income/expense sign (a purchase raises debt, a refund lowers it) and a payment
+  // (transfer) lowers it. The backend applies the identical liability-aware sign on
+  // save, so the preview and the saved snapshots agree.
+  generateSnapshots.value
+    ? projectRunningBalances(
+        allParsedRows.value,
+        include.value,
+        baseBalance.value,
+        isLiabilityAccount.value,
+      )
+    : [],
+)
 
 const dupes = computed(() =>
   accountId.value == null
@@ -124,7 +128,6 @@ const canPreview = computed(() => {
 const exampleEntry = computed(() => {
   if (rawRows.value.length === 0) return null
   const cfg = config.value
-  const isLiab = isLiabilityAccount.value
 
   let row: Record<string, string> | undefined
   if (cfg.amountMode === 'single') {
@@ -142,7 +145,7 @@ const exampleEntry = computed(() => {
   if (!row) return null
   return {
     raw: row,
-    parsed: applyMapping([row], cfg, isLiab)[0],
+    parsed: applyMapping([row], cfg)[0],
   }
 })
 
@@ -579,7 +582,14 @@ async function confirmImport() {
         </template>
         <template #type-cell="{ row }">
           <template v-if="row.original.type === 'transfer'">
-            transfer → {{ accountName(row.original.transferAccountId!) }}
+            <!-- Liability transfers (e.g. card payments) flow INTO this account from
+                 the other side, so show the other account as the source. -->
+            <template v-if="isLiabilityAccount">
+              {{ accountName(row.original.transferAccountId!) }} → transfer
+            </template>
+            <template v-else>
+              transfer → {{ accountName(row.original.transferAccountId!) }}
+            </template>
           </template>
           <template v-else>{{ row.original.type }}</template>
         </template>

@@ -6,7 +6,7 @@ import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems } from '../lib/transactions/constants'
 import { balancePreview } from '../lib/transactions/balancePreview'
-import { isInvestment } from '../lib/accountTypes'
+import { isInvestment, isLiability } from '../lib/accountTypes'
 import DateInput from './DateInput.vue'
 import type { Transaction } from '../lib/types/Transaction'
 
@@ -70,16 +70,24 @@ function defaultUpdateBalance(accountId: number | undefined): boolean {
 const updateBalance = ref(false)
 watch(() => form.accountId, (id) => { updateBalance.value = defaultUpdateBalance(id) })
 
+const liabilityIds = computed(
+  () => new Set(accountsStore.accounts.filter((a) => isLiability(a.type)).map((a) => a.id)),
+)
+
 const preview = computed(() =>
   form.accountId == null
     ? []
-    : balancePreview(accountsStore.allBalances, {
-        type: form.type,
-        amount: form.amount || 0,
-        accountId: form.accountId,
-        transferAccountId: form.transferAccountId,
-        date: form.date,
-      }),
+    : balancePreview(
+        accountsStore.allBalances,
+        {
+          type: form.type,
+          amount: form.amount || 0,
+          accountId: form.accountId,
+          transferAccountId: form.transferAccountId,
+          date: form.date,
+        },
+        liabilityIds.value,
+      ),
 )
 
 function money(n: number): string {

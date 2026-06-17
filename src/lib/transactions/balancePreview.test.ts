@@ -36,4 +36,21 @@ describe('balancePreview', () => {
     const p = balancePreview([...balances, ...future], { type: 'expense', amount: 40, accountId: 10, transferAccountId: null, date: '2026-03-01' })
     expect(p).toEqual([{ accountId: 10, from: 1000, to: 960 }])
   })
+
+  it('inverts income/expense for a liability account (debt owed)', () => {
+    const liab = new Set([10])
+    const purchase = balancePreview(balances, { type: 'expense', amount: 40, accountId: 10, transferAccountId: null, date: '2026-03-01' }, liab)
+    expect(purchase).toEqual([{ accountId: 10, from: 1000, to: 1040 }]) // purchase raises debt
+    const refund = balancePreview(balances, { type: 'income', amount: 100, accountId: 10, transferAccountId: null, date: '2026-03-01' }, liab)
+    expect(refund).toEqual([{ accountId: 10, from: 1000, to: 900 }]) // refund lowers debt
+  })
+
+  it('a payment from an asset into a liability lowers both balances', () => {
+    // accountId 10 = checking (asset, source), accountId 20 = card (liability, destination)
+    const p = balancePreview(balances, { type: 'transfer', amount: 150, accountId: 10, transferAccountId: 20, date: '2026-03-01' }, new Set([20]))
+    expect(p).toEqual([
+      { accountId: 10, from: 1000, to: 850 }, // asset source falls
+      { accountId: 20, from: 200, to: 50 },   // liability destination: debt falls
+    ])
+  })
 })

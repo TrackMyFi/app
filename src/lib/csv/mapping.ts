@@ -100,14 +100,14 @@ function isoDate(raw: string, format: string): string {
 function resolveSplit(
   row: Record<string, string>,
   config: MappingConfig,
-  isLiabilityAccount: boolean,
 ): { amount: number; type: 'income' | 'expense' } {
   const credit = parseAmount(row[config.creditColumn])
   const debit = parseAmount(row[config.debitColumn])
-  // For a non-liability account: credit = income, debit = expense.
-  // For a liability account: credit = expense, debit = income.
-  // invertSplit flips the base rule.
-  const creditIsIncome = !isLiabilityAccount !== config.invertSplit
+  // credit = income, debit = expense; invertSplit flips the rule for banks that
+  // export the columns the other way round. Account type does NOT enter here —
+  // types stay intuitive (a card purchase is an expense). The liability sign is
+  // applied later, when a balance delta is computed from the type.
+  const creditIsIncome = !config.invertSplit
 
   if (credit === 0 && debit === 0) return { amount: 0, type: 'expense' }
 
@@ -126,7 +126,6 @@ function resolveSplit(
 export function applyMapping(
   rows: Record<string, string>[],
   config: MappingConfig,
-  isLiabilityAccount = false,
   rules: CategoryRuleInput[] = [],
 ): ParsedTransaction[] {
   const transferRules = config.transferRules ?? []
@@ -144,7 +143,7 @@ export function applyMapping(
     if (matchedTransferRule) {
       let amount: number
       if (config.amountMode === 'split') {
-        const { amount: a } = resolveSplit(row, config, isLiabilityAccount)
+        const { amount: a } = resolveSplit(row, config)
         amount = a
       } else {
         amount = Math.abs(parseAmount(row[config.amountColumn] ?? '0'))
@@ -160,7 +159,7 @@ export function applyMapping(
     }
 
     if (config.amountMode === 'split') {
-      const { amount, type } = resolveSplit(row, config, isLiabilityAccount)
+      const { amount, type } = resolveSplit(row, config)
       return { date, amount, description, type, category, transferAccountId: null }
     }
 
