@@ -66,6 +66,7 @@ pub fn run() {
             commands::transactions::bulk_create_transactions_cmd,
             commands::import_mappings::list_import_mappings_cmd,
             commands::import_mappings::create_import_mapping_cmd,
+            commands::import_mappings::update_import_mapping_cmd,
             commands::import_mappings::delete_import_mapping_cmd,
             commands::category_rules::list_category_rules_cmd,
             commands::category_rules::create_category_rule_cmd,

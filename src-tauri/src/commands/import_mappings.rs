@@ -76,3 +76,23 @@ pub async fn delete_import_mapping_cmd(db: State<'_, Db>, id: i32) -> Result<(),
     let conn = db.conn().await?;
     delete_import_mapping(&conn, id).await
 }
+
+pub async fn update_import_mapping(conn: &Connection, id: i32, name: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE import_mapping SET name = ?1 WHERE id = ?2",
+        params![name, id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_import_mapping_cmd(
+    db: State<'_, Db>,
+    id: i32,
+    name: String,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    update_import_mapping(&conn, id, &name).await
+}
