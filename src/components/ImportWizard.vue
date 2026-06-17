@@ -403,24 +403,24 @@ async function confirmImport() {
                 :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
                 @click="applySavedMapping(m)"
               >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
-              <UButton
-                size="xs"
-                variant="ghost"
-                color="neutral"
-                icon="i-heroicons-pencil"
-                class="opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Rename mapping"
-                @click="startRename(m)"
-              />
-              <UButton
-                size="xs"
-                variant="ghost"
-                color="error"
-                icon="i-heroicons-x-mark"
-                class="opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Delete mapping"
-                @click="deleteMapping(m)"
-              />
+              <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  icon="i-heroicons-pencil"
+                  aria-label="Rename mapping"
+                  @click="startRename(m)"
+                />
+                <UButton
+                  size="xs"
+                  variant="ghost"
+                  color="error"
+                  icon="i-heroicons-x-mark"
+                  aria-label="Delete mapping"
+                  @click="deleteMapping(m)"
+                />
+              </div>
             </template>
             <template v-else>
               <UInput
@@ -467,24 +467,24 @@ async function confirmImport() {
               :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
               @click="applySavedMapping(m)"
             >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              icon="i-heroicons-pencil"
-              class="opacity-0 group-hover:opacity-100 transition-opacity"
-              aria-label="Rename mapping"
-              @click="startRename(m)"
-            />
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="error"
-              icon="i-heroicons-x-mark"
-              class="opacity-0 group-hover:opacity-100 transition-opacity"
-              aria-label="Delete mapping"
-              @click="deleteMapping(m)"
-            />
+            <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="neutral"
+                icon="i-heroicons-pencil"
+                aria-label="Rename mapping"
+                @click="startRename(m)"
+              />
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="error"
+                icon="i-heroicons-x-mark"
+                aria-label="Delete mapping"
+                @click="deleteMapping(m)"
+              />
+            </div>
           </template>
           <template v-else>
             <UInput
