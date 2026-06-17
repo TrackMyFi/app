@@ -13,3 +13,5 @@ export const createImportMapping = (mapping: NewImportMapping) =>
   invoke<number>('create_import_mapping_cmd', { mapping })
 export const deleteImportMapping = (id: number) =>
   invoke<void>('delete_import_mapping_cmd', { id })
+export const updateImportMapping = (id: number, name: string) =>
+  invoke<void>('update_import_mapping_cmd', { id, name })
