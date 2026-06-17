@@ -15,6 +15,7 @@ import { projectRunningBalances } from '../lib/csv/balanceProjection'
 import { categoryItems } from '../lib/transactions/constants'
 import type { ImportMapping } from '../lib/types/ImportMapping'
 import type { CategoryRule } from '../lib/types/CategoryRule'
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 const emit = defineEmits<{ done: [] }>()
 const accountsStore = useAccountsStore()
@@ -28,6 +29,11 @@ const rawRows = ref<Record<string, string>[]>([])
 const savedMappings = ref<ImportMapping[]>([])
 const categoryRules = ref<CategoryRule[]>([])
 const newMappingName = ref('')
+const appliedMappingId = ref<number | null>(null)
+let appliedTimer: ReturnType<typeof setTimeout> | null = null
+
+const editingMappingId = ref<number | null>(null)
+const editingMappingName = ref('')
 
 const config = ref<MappingConfig>({
   dateColumn: '',
@@ -153,6 +159,7 @@ function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
+const csvFile = ref<File | null>(null)
 const include = ref<boolean[]>([])
 const rowCategories = ref<string[]>([])
 const manuallyOverridden = ref<boolean[]>([])
@@ -166,7 +173,7 @@ const seedBalance = ref(0)
 const previewColumns = computed(() => [
   { id: 'include', header: '' },
   { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
+  { accessorKey: 'description', header: 'Description', meta: { class: { th: 'w-full', td: 'max-w-0 w-full' } } },
   { id: 'type', header: 'Type' },
   { id: 'category', header: 'Category' },
   { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
@@ -181,8 +188,7 @@ onMounted(async () => {
   categoryRules.value = await categoryRulesApi.listCategoryRules()
 })
 
-async function onFile(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
+watch(csvFile, async (file) => {
   if (!file) return
   const text = await file.text()
   const result = parseCsv(text)
@@ -191,14 +197,52 @@ async function onFile(event: Event) {
   const detected = autoDetectMapping(result.headers, result.rows)
   config.value = { ...config.value, ...detected }
   step.value = 2
-}
+})
 
 function applySavedMapping(m: ImportMapping) {
-  // Spread config.value first so any fields missing from older saved mappings
-  // (e.g. amountMode, creditColumn added in later versions) fall back to the
-  // current defaults rather than being dropped entirely.
   config.value = { ...config.value, ...JSON.parse(m.config) }
-  toast.add({ title: `"${m.name}" mapping loaded`, color: 'success' })
+  if (appliedTimer !== null) clearTimeout(appliedTimer)
+  appliedMappingId.value = m.id
+  appliedTimer = setTimeout(() => {
+    appliedMappingId.value = null
+    appliedTimer = null
+  }, 1750)
+}
+
+function startRename(m: ImportMapping) {
+  editingMappingId.value = m.id
+  editingMappingName.value = m.name
+}
+
+function cancelRename() {
+  editingMappingId.value = null
+  editingMappingName.value = ''
+}
+
+async function saveRename(m: ImportMapping) {
+  const trimmed = editingMappingName.value.trim()
+  if (!trimmed) {
+    cancelRename()
+    return
+  }
+  try {
+    await mappingApi.updateImportMapping(m.id, trimmed)
+    savedMappings.value = await mappingApi.listImportMappings()
+  } catch {
+    toast.add({ title: 'Failed to rename mapping', color: 'error' })
+  }
+  cancelRename()
+}
+
+async function deleteMapping(m: ImportMapping) {
+  const ok = await confirm(`Delete "${m.name}"?`, { title: 'Delete mapping', kind: 'warning' })
+  if (!ok) return
+  try {
+    await mappingApi.deleteImportMapping(m.id)
+    savedMappings.value = await mappingApi.listImportMappings()
+  } catch {
+    toast.add({ title: 'Failed to delete mapping', color: 'error' })
+  }
 }
 
 function goToPreview() {
@@ -329,17 +373,30 @@ async function confirmImport() {
 <template>
   <div class="space-y-4">
     <!-- Step 1: file + account -->
-    <div v-if="step === 1" class="space-y-3">
-      <USelect
-        v-model="accountId"
-        :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
-        placeholder="Destination account"
+    <div v-if="step === 1" class="space-y-5">
+      <div class="space-y-1.5">
+        <p class="text-sm font-medium">Destination account</p>
+        <USelect
+          v-model="accountId"
+          :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
+          placeholder="Select an account"
+          class="w-full"
+        />
+      </div>
+      <UFileUpload
+        v-model="csvFile"
+        accept=".csv"
+        label="Drop your CSV file here"
+        description="or click to browse"
+        class="w-full"
       />
-      <input type="file" accept=".csv" :disabled="accountId == null" @change="onFile" />
-      <div v-if="savedMappings.length" class="text-sm">
-        <p class="text-muted mb-1">Saved mappings:</p>
-        <UButton v-for="m in savedMappings" :key="m.id" size="xs" variant="soft"
-          class="mr-1" @click="applySavedMapping(m)">{{ m.name }}</UButton>
+      <div v-if="savedMappings.length" class="border-t border-default pt-4 space-y-2">
+        <p class="text-xs text-muted">Apply a saved column mapping after upload:</p>
+        <div class="flex flex-wrap gap-1.5">
+          <UButton v-for="m in savedMappings" :key="m.id" size="xs" variant="soft" @click="applySavedMapping(m)">
+            {{ m.name }}
+          </UButton>
+        </div>
       </div>
     </div>
 
@@ -577,8 +634,12 @@ async function confirmImport() {
           <UCheckbox v-model="include[row.index]" />
         </template>
         <template #description-cell="{ row }">
-          {{ row.original.description }}
-          <span v-if="dupes[row.index]" class="text-xs text-amber-600">(dup)</span>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <UTooltip :text="row.original.description" class="min-w-0">
+              <span class="block truncate">{{ row.original.description }}</span>
+            </UTooltip>
+            <span v-if="dupes[row.index]" class="text-xs text-amber-600 shrink-0">(dup)</span>
+          </div>
         </template>
         <template #type-cell="{ row }">
           <template v-if="row.original.type === 'transfer'">
