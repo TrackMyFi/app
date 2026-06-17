@@ -200,6 +200,7 @@ watch(csvFile, async (file) => {
 })
 
 function applySavedMapping(m: ImportMapping) {
+  cancelRename()
   config.value = { ...config.value, ...JSON.parse(m.config) }
   if (appliedTimer !== null) clearTimeout(appliedTimer)
   appliedMappingId.value = m.id
