@@ -393,9 +393,60 @@ async function confirmImport() {
       <div v-if="savedMappings.length" class="border-t border-default pt-4 space-y-2">
         <p class="text-xs text-muted">Apply a saved column mapping after upload:</p>
         <div class="flex flex-wrap gap-1.5">
-          <UButton v-for="m in savedMappings" :key="m.id" size="xs" variant="soft" @click="applySavedMapping(m)">
-            {{ m.name }}
-          </UButton>
+          <div v-for="m in savedMappings" :key="m.id" class="group flex items-center gap-0.5">
+            <template v-if="editingMappingId !== m.id">
+              <UButton
+                size="xs"
+                variant="soft"
+                :color="appliedMappingId === m.id ? 'success' : 'neutral'"
+                :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
+                @click="applySavedMapping(m)"
+              >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="neutral"
+                icon="i-heroicons-pencil"
+                class="opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label="Rename mapping"
+                @click="startRename(m)"
+              />
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="error"
+                icon="i-heroicons-x-mark"
+                class="opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label="Delete mapping"
+                @click="deleteMapping(m)"
+              />
+            </template>
+            <template v-else>
+              <UInput
+                v-model="editingMappingName"
+                size="xs"
+                class="w-28"
+                @keydown.enter="saveRename(m)"
+                @keydown.escape="cancelRename"
+              />
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="success"
+                icon="i-heroicons-check"
+                aria-label="Save rename"
+                @click="saveRename(m)"
+              />
+              <UButton
+                size="xs"
+                variant="ghost"
+                color="neutral"
+                icon="i-heroicons-x-mark"
+                aria-label="Cancel rename"
+                @click="cancelRename"
+              />
+            </template>
+          </div>
         </div>
       </div>
     </div>
