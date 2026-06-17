@@ -391,11 +391,15 @@ async function confirmImport() {
         description="or click to browse"
         class="w-full"
       />
-      <div v-if="savedMappings.length" class="border-t border-default pt-4 space-y-2">
+      <div v-if="savedMappings.length" class="border-t border-default pt-4 space-y-1.5">
         <p class="text-xs text-muted">Apply a saved column mapping after upload:</p>
+        <p class="text-xs text-muted opacity-60">Right-click a mapping to rename or delete it.</p>
         <div class="flex flex-wrap gap-1.5">
-          <div v-for="m in savedMappings" :key="m.id" class="group flex items-center gap-0.5">
-            <template v-if="editingMappingId !== m.id">
+          <template v-for="m in savedMappings" :key="m.id">
+            <UContextMenu
+              v-if="editingMappingId !== m.id"
+              :items="[[{ label: 'Rename', icon: 'i-heroicons-pencil', onSelect: () => startRename(m) }, { label: 'Delete', icon: 'i-heroicons-trash', color: 'error', onSelect: () => deleteMapping(m) }]]"
+            >
               <UButton
                 size="xs"
                 variant="soft"
@@ -403,51 +407,13 @@ async function confirmImport() {
                 :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
                 @click="applySavedMapping(m)"
               >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
-              <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <UButton
-                  size="xs"
-                  variant="ghost"
-                  color="neutral"
-                  icon="i-heroicons-pencil"
-                  aria-label="Rename mapping"
-                  @click="startRename(m)"
-                />
-                <UButton
-                  size="xs"
-                  variant="ghost"
-                  color="error"
-                  icon="i-heroicons-x-mark"
-                  aria-label="Delete mapping"
-                  @click="deleteMapping(m)"
-                />
-              </div>
-            </template>
-            <template v-else>
-              <UInput
-                v-model="editingMappingName"
-                size="xs"
-                class="w-28"
-                @keydown.enter="saveRename(m)"
-                @keydown.escape="cancelRename"
-              />
-              <UButton
-                size="xs"
-                variant="ghost"
-                color="success"
-                icon="i-heroicons-check"
-                aria-label="Save rename"
-                @click="saveRename(m)"
-              />
-              <UButton
-                size="xs"
-                variant="ghost"
-                color="neutral"
-                icon="i-heroicons-x-mark"
-                aria-label="Cancel rename"
-                @click="cancelRename"
-              />
-            </template>
-          </div>
+            </UContextMenu>
+            <div v-else class="flex items-center gap-0.5">
+              <UInput v-model="editingMappingName" size="xs" class="w-28" @keydown.enter="saveRename(m)" @keydown.escape="cancelRename" />
+              <UButton size="xs" variant="ghost" color="success" icon="i-heroicons-check" aria-label="Save rename" @click="saveRename(m)" />
+              <UButton size="xs" variant="ghost" color="neutral" icon="i-heroicons-x-mark" aria-label="Cancel rename" @click="cancelRename" />
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -456,60 +422,27 @@ async function confirmImport() {
     <div v-else-if="step === 2" class="space-y-5">
 
       <!-- LOAD SAVED MAPPING -->
-      <div v-if="savedMappings.length" class="flex items-center gap-2 flex-wrap">
-        <p class="text-xs text-muted shrink-0">Load saved mapping:</p>
-        <div v-for="m in savedMappings" :key="m.id" class="group flex items-center gap-0.5">
-          <template v-if="editingMappingId !== m.id">
-            <UButton
-              size="xs"
-              variant="soft"
-              :color="appliedMappingId === m.id ? 'success' : 'neutral'"
-              :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
-              @click="applySavedMapping(m)"
-            >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
-            <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+      <div v-if="savedMappings.length" class="space-y-1.5">
+        <p class="text-xs text-muted">Load saved mapping: <span class="opacity-60">right-click to rename or delete.</span></p>
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <template v-for="m in savedMappings" :key="m.id">
+            <UContextMenu
+              v-if="editingMappingId !== m.id"
+              :items="[[{ label: 'Rename', icon: 'i-heroicons-pencil', onSelect: () => startRename(m) }, { label: 'Delete', icon: 'i-heroicons-trash', color: 'error', onSelect: () => deleteMapping(m) }]]"
+            >
               <UButton
                 size="xs"
-                variant="ghost"
-                color="neutral"
-                icon="i-heroicons-pencil"
-                aria-label="Rename mapping"
-                @click="startRename(m)"
-              />
-              <UButton
-                size="xs"
-                variant="ghost"
-                color="error"
-                icon="i-heroicons-x-mark"
-                aria-label="Delete mapping"
-                @click="deleteMapping(m)"
-              />
+                variant="soft"
+                :color="appliedMappingId === m.id ? 'success' : 'neutral'"
+                :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
+                @click="applySavedMapping(m)"
+              >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
+            </UContextMenu>
+            <div v-else class="flex items-center gap-0.5">
+              <UInput v-model="editingMappingName" size="xs" class="w-28" @keydown.enter="saveRename(m)" @keydown.escape="cancelRename" />
+              <UButton size="xs" variant="ghost" color="success" icon="i-heroicons-check" aria-label="Save rename" @click="saveRename(m)" />
+              <UButton size="xs" variant="ghost" color="neutral" icon="i-heroicons-x-mark" aria-label="Cancel rename" @click="cancelRename" />
             </div>
-          </template>
-          <template v-else>
-            <UInput
-              v-model="editingMappingName"
-              size="xs"
-              class="w-28"
-              @keydown.enter="saveRename(m)"
-              @keydown.escape="cancelRename"
-            />
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="success"
-              icon="i-heroicons-check"
-              aria-label="Save rename"
-              @click="saveRename(m)"
-            />
-            <UButton
-              size="xs"
-              variant="ghost"
-              color="neutral"
-              icon="i-heroicons-x-mark"
-              aria-label="Cancel rename"
-              @click="cancelRename"
-            />
           </template>
         </div>
       </div>
