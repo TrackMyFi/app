@@ -401,3 +401,62 @@ async fn get_transaction_missing_id_errors() {
     let result = transactions::get_transaction(&conn, 9999).await;
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn bulk_create_with_snapshots_sequential_balances() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &NewAccount {
+        name: "Checking".into(), r#type: "checking".into(), institution: None,
+        include_in_fire_calculations: false, created_at: "2026-01-01".into(),
+    }).await.unwrap();
+
+    // Seed balance: $1,000 on Jan 1 — gives base_balance something to start from.
+    accounts::add_balance(&conn, &accounts::NewBalance {
+        account_id: acct, balance: 1000.0, recorded_at: "2026-01-01".into(),
+    }).await.unwrap();
+
+    // Three rows in ascending date order, as the frontend sorts before calling.
+    let rows = vec![
+        NewTransaction {
+            account_id: acct, transfer_account_id: None,
+            amount: 100.0, description: "expense 1".into(),
+            date: "2026-01-02".into(), r#type: "expense".into(),
+            category: "uncategorized".into(), is_contribution: false,
+            import_source: "csv".into(), update_balance: true,
+            created_at: "2026-01-02".into(),
+        },
+        NewTransaction {
+            account_id: acct, transfer_account_id: None,
+            amount: 200.0, description: "expense 2".into(),
+            date: "2026-01-03".into(), r#type: "expense".into(),
+            category: "uncategorized".into(), is_contribution: false,
+            import_source: "csv".into(), update_balance: true,
+            created_at: "2026-01-03".into(),
+        },
+        NewTransaction {
+            account_id: acct, transfer_account_id: None,
+            amount: 500.0, description: "income".into(),
+            date: "2026-01-04".into(), r#type: "income".into(),
+            category: "uncategorized".into(), is_contribution: false,
+            import_source: "csv".into(), update_balance: true,
+            created_at: "2026-01-04".into(),
+        },
+    ];
+
+    let n = transactions::bulk_create_transactions_with_snapshots(&conn, &rows).await.unwrap();
+    assert_eq!(n, 3);
+
+    // All three transactions were inserted.
+    let page = transactions::list_transactions(&conn, &TransactionFilter::default()).await.unwrap();
+    assert_eq!(page.rows.len(), 3);
+
+    // Every transaction must have a generated_balance_id — snapshot was materialized.
+    assert!(page.rows.iter().all(|r| r.generated_balance_id.is_some()));
+
+    // Running balances chain correctly:
+    //   seed 1000 → -100 → 900 → -200 → 700 → +500 → 1200
+    assert_eq!(latest_balance(&conn, acct).await, 1200.0);
+
+    // 1 seed + 3 generated = 4 balance rows total.
+    assert_eq!(balance_count(&conn).await, 4);
+}

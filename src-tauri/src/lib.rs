@@ -64,6 +64,7 @@ pub fn run() {
             commands::transactions::update_transaction_cmd,
             commands::transactions::delete_transaction_cmd,
             commands::transactions::bulk_create_transactions_cmd,
+            commands::transactions::bulk_create_transactions_with_snapshots_cmd,
             commands::import_mappings::list_import_mappings_cmd,
             commands::import_mappings::create_import_mapping_cmd,
             commands::import_mappings::update_import_mapping_cmd,

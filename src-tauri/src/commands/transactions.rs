@@ -408,13 +408,17 @@ pub async fn delete_transaction(conn: &Connection, id: i32) -> Result<(), String
 
 /// Insert many transactions in one batch. Never materializes balance snapshots,
 /// and forces import_source = "csv".
+///
+/// Wrapped in a single transaction so all inserts are committed in one round-trip
+/// to Turso instead of one HTTP request per row (embedded replica write path).
 pub async fn bulk_create_transactions(
     conn: &Connection,
     rows: &[NewTransaction],
 ) -> Result<i64, String> {
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
     let mut count = 0i64;
     for t in rows {
-        conn.execute(
+        tx.execute(
             "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
              category, is_contribution, import_source, generated_balance_id, \
              generated_balance_to_id, created_at, updated_at) \
@@ -435,6 +439,30 @@ pub async fn bulk_create_transactions(
         .map_err(|e| e.to_string())?;
         count += 1;
     }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(count)
+}
+
+/// Import many transactions with balance snapshot generation in a single database
+/// transaction. Rows must arrive sorted by date (ascending) so each base_balance
+/// query sees the snapshots written by prior rows in the same transaction.
+///
+/// Uses manual BEGIN/COMMIT (not conn.transaction()) so we can reuse the existing
+/// create_transaction inner function and all its snapshot helpers unchanged.
+pub async fn bulk_create_transactions_with_snapshots(
+    conn: &Connection,
+    rows: &[NewTransaction],
+) -> Result<i64, String> {
+    conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
+    let mut count = 0i64;
+    for t in rows {
+        if let Err(e) = create_transaction(conn, t).await {
+            conn.execute("ROLLBACK", ()).await.ok();
+            return Err(e);
+        }
+        count += 1;
+    }
+    conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
     Ok(count)
 }
 
@@ -486,4 +514,13 @@ pub async fn bulk_create_transactions_cmd(
 ) -> Result<i64, String> {
     let conn = db.conn().await?;
     bulk_create_transactions(&conn, &transactions).await
+}
+
+#[tauri::command]
+pub async fn bulk_create_transactions_with_snapshots_cmd(
+    db: State<'_, Db>,
+    transactions: Vec<NewTransaction>,
+) -> Result<i64, String> {
+    let conn = db.conn().await?;
+    bulk_create_transactions_with_snapshots(&conn, &transactions).await
 }
