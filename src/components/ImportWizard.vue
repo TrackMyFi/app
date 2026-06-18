@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
 import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
-import { bulkCreateTransactions, createTransaction } from '../lib/api/transactions'
+import { bulkCreateTransactions, bulkCreateTransactionsWithSnapshots } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
 import { useToast } from '@nuxt/ui/composables'
@@ -168,6 +168,7 @@ const newRuleCategory = ref('discretionary')
 const newTransferKeyword = ref('')
 const newTransferAccountId = ref<number | undefined>(undefined)
 const generateSnapshots = ref(false)
+const importing = ref(false)
 const seedBalance = ref(0)
 
 const previewColumns = computed(() => [
@@ -344,26 +345,40 @@ async function confirmImport() {
       }),
     )
   } else {
-    if (needsSeed.value) {
-      await addBalance({
-        accountId: accountId.value!,
-        balance: seedBalance.value,
-        recordedAt: earliestDate.value,
+    importing.value = true
+    try {
+      if (needsSeed.value) {
+        await addBalance({
+          accountId: accountId.value!,
+          balance: seedBalance.value,
+          recordedAt: earliestDate.value,
+        })
+      }
+      const sorted = [...selectedRows]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((row) => {
+          const isLiabTransfer =
+            isLiabilityAccount.value && row.type === 'transfer' && row.transferAccountId != null
+          return {
+            ...row,
+            accountId: isLiabTransfer ? row.transferAccountId! : row.accountId,
+            transferAccountId: isLiabTransfer ? row.accountId : row.transferAccountId,
+            updateBalance: true,
+          }
+        })
+      await bulkCreateTransactionsWithSnapshots(sorted)
+      await accountsStore.load()
+    } catch (e: any) {
+      toast.add({
+        title: 'Import failed',
+        description: e?.message ?? String(e),
+        color: 'error',
+        duration: 0,
       })
+      return
+    } finally {
+      importing.value = false
     }
-    const sorted = [...selectedRows].sort((a, b) => a.date.localeCompare(b.date))
-    for (const row of sorted) {
-      // For liability accounts (credit cards), swap source/destination so the card
-      // is the destination of incoming payments (balance increases, PNC decreases).
-      const isLiabTransfer = isLiabilityAccount.value && row.type === 'transfer' && row.transferAccountId != null
-      await createTransaction({
-        ...row,
-        accountId: isLiabTransfer ? row.transferAccountId! : row.accountId,
-        transferAccountId: isLiabTransfer ? row.accountId : row.transferAccountId,
-        updateBalance: true,
-      })
-    }
-    await accountsStore.load()
   }
 
   await txnStore.load()
@@ -391,31 +406,6 @@ async function confirmImport() {
         description="or click to browse"
         class="w-full"
       />
-      <div v-if="savedMappings.length" class="border-t border-default pt-4 space-y-1.5">
-        <p class="text-xs text-muted">Apply a saved column mapping after upload:</p>
-        <p class="text-xs text-muted opacity-60">Right-click a mapping to rename or delete it.</p>
-        <div class="flex flex-wrap gap-1.5">
-          <template v-for="m in savedMappings" :key="m.id">
-            <UContextMenu
-              v-if="editingMappingId !== m.id"
-              :items="[[{ label: 'Rename', icon: 'i-heroicons-pencil', onSelect: () => startRename(m) }, { label: 'Delete', icon: 'i-heroicons-trash', color: 'error', onSelect: () => deleteMapping(m) }]]"
-            >
-              <UButton
-                size="xs"
-                variant="soft"
-                :color="appliedMappingId === m.id ? 'success' : 'neutral'"
-                :leading-icon="appliedMappingId === m.id ? 'i-heroicons-check' : undefined"
-                @click="applySavedMapping(m)"
-              >{{ appliedMappingId === m.id ? 'Applied' : m.name }}</UButton>
-            </UContextMenu>
-            <div v-else class="flex items-center gap-0.5">
-              <UInput v-model="editingMappingName" size="xs" class="w-28" @keydown.enter="saveRename(m)" @keydown.escape="cancelRename" />
-              <UButton size="xs" variant="ghost" color="success" icon="i-heroicons-check" aria-label="Save rename" @click="saveRename(m)" />
-              <UButton size="xs" variant="ghost" color="neutral" icon="i-heroicons-x-mark" aria-label="Cancel rename" @click="cancelRename" />
-            </div>
-          </template>
-        </div>
-      </div>
     </div>
 
     <!-- Step 2: map columns -->
@@ -423,7 +413,10 @@ async function confirmImport() {
 
       <!-- LOAD SAVED MAPPING -->
       <div v-if="savedMappings.length" class="space-y-1.5">
-        <p class="text-xs text-muted">Load saved mapping: <span class="opacity-60">right-click to rename or delete.</span></p>
+        <div class="mb-3">
+          <p class="text-xs">Apply a saved column mapping</p>
+          <p class="text-xs text-muted">Click to load, right-click to rename or delete it.</p>
+        </div>
         <div class="flex items-center gap-1.5 flex-wrap">
           <template v-for="m in savedMappings" :key="m.id">
             <UContextMenu
@@ -720,8 +713,15 @@ async function confirmImport() {
         </UButton>
       </div>
       <div class="flex justify-between">
-        <UButton variant="ghost" @click="step = 2">← Back to settings</UButton>
-        <UButton :disabled="!include.some(Boolean)" @click="confirmImport">Import selected</UButton>
+        <UButton variant="ghost" :disabled="importing" @click="step = 2">← Back to settings</UButton>
+        <div class="flex items-center gap-3">
+          <p v-if="importing" class="text-sm text-muted">
+            Saving {{ include.filter(Boolean).length }} transactions…
+          </p>
+          <UButton :disabled="!include.some(Boolean)" :loading="importing" @click="confirmImport">
+            Import selected
+          </UButton>
+        </div>
       </div>
     </div>
   </div>
