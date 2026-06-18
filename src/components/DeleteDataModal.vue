@@ -114,10 +114,10 @@ async function confirm() {
 
 function previewSummary(p: DeletionPreview) {
   const parts: string[] = []
-  if (p.transactions) parts.push(`${p.transactions} transaction${p.transactions !== 1 ? 's' : ''}`)
-  if (p.paychecks) parts.push(`${p.paychecks} paycheck${p.paychecks !== 1 ? 's' : ''}`)
-  if (p.balanceSnapshots) parts.push(`${p.balanceSnapshots} balance snapshot${p.balanceSnapshots !== 1 ? 's' : ''}`)
-  if (p.budgetMonths) parts.push(`${p.budgetMonths} budget month${p.budgetMonths !== 1 ? 's' : ''}`)
+  if (p.transactions) parts.push(`${p.transactions} transaction${p.transactions !== 1n ? 's' : ''}`)
+  if (p.paychecks) parts.push(`${p.paychecks} paycheck${p.paychecks !== 1n ? 's' : ''}`)
+  if (p.balanceSnapshots) parts.push(`${p.balanceSnapshots} balance snapshot${p.balanceSnapshots !== 1n ? 's' : ''}`)
+  if (p.budgetMonths) parts.push(`${p.budgetMonths} budget month${p.budgetMonths !== 1n ? 's' : ''}`)
   return parts.length ? parts.join(', ') : 'nothing (no data in this range)'
 }
 </script>
