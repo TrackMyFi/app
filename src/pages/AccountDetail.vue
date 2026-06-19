@@ -13,7 +13,6 @@ import type { ChartPoint } from '../components/AccountBalanceChart.vue'
 import AccountForm from '../components/AccountForm.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import DateInput from '../components/DateInput.vue'
-import TransactionDetail from '../components/TransactionDetail.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -132,7 +131,7 @@ async function deleteSnapshot(row: AccountBalance) {
 // ─── Linked transaction modal ─────────────────────────────────────────────────
 
 const txnModalOpen = ref(false)
-const txnForModal = ref<any>(null)
+const txnForModal = ref<number | null>(null)
 
 // We only have the linkedTransactionId, not the full Transaction object.
 // Show a minimal modal with just the linked txn ID for now.
@@ -263,9 +262,9 @@ async function deleteAccount() {
         <!-- Expanded rows -->
         <div v-if="openMonth === summary.month" class="bg-elevated/30">
           <div
-            v-for="(row, rIdx) in cachedRows(summary.month)"
+            v-for="row in cachedRows(summary.month)"
             :key="row.id"
-            :class="['grid grid-cols-[120px_1fr_100px] items-center px-6 py-2 border-t border-default', rIdx === 0 ? '' : '']"
+            class="grid grid-cols-[120px_1fr_100px] items-center px-6 py-2 border-t border-default"
           >
             <!-- Normal row -->
             <template v-if="editingSnapshotId !== row.id">
