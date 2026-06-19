@@ -52,6 +52,15 @@ pub struct AccountBalance {
     pub linked_transaction_id: Option<i32>,
 }
 
+#[derive(Serialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct BalanceMonthSummary {
+    pub month: String,        // "YYYY-MM"
+    pub count: i64,
+    pub latest_balance: f64,
+}
+
 #[derive(Serialize, Deserialize, TS, Clone)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
