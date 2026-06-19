@@ -1,59 +1,50 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useToast } from '@nuxt/ui/composables'
+import { useRouter } from 'vue-router'
 import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
-import BalanceForm from '../components/BalanceForm.vue'
-import DateInput from '../components/DateInput.vue'
-import CurrencyInput from '../components/CurrencyInput.vue'
+import StatCard from '../components/StatCard.vue'
 import type { Account } from '../lib/types/Account'
-import type { AccountBalance } from '../lib/types/AccountBalance'
-import { latestSnapshot, byRecencyDesc } from '../lib/balances/recency'
-import TransactionDetail from '../components/TransactionDetail.vue'
-import type { Transaction } from '../lib/types/Transaction'
-import { getTransaction } from '../lib/api/transactions'
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 const store = useAccountsStore()
-const toast = useToast()
+const router = useRouter()
 
-const editingBalanceId = ref<number | null>(null)
-const draftBalance = ref<number>(0)
-const draftDate = ref<string>('')
+onMounted(() => store.loadList())
 
-const balanceColumns = [
-  { accessorKey: 'recordedAt', header: 'Date' },
-  { id: 'balance', header: 'Balance', meta: { class: { th: 'text-right' } } },
-  { id: 'actions', header: '' },
-]
+const fmt = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 
-const formatted = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const latestBalanceMap = computed(() =>
+  new Map(store.latestBalances.map(b => [b.accountId, b.balance]))
+)
 
-function startEditBalance(b: AccountBalance) {
-  draftBalance.value = b.balance
-  draftDate.value = b.recordedAt
-  editingBalanceId.value = b.id
+const activeAccounts = computed(() => store.accounts.filter(a => a.isActive))
+const archivedAccounts = computed(() => store.accounts.filter(a => !a.isActive))
+const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations))
+const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations))
+
+const netWorth = computed(() =>
+  activeAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+)
+const fireTotal = computed(() =>
+  fireAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+)
+const nonFireTotal = computed(() =>
+  nonFireAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+)
+
+function latestBalance(accountId: number) {
+  const b = latestBalanceMap.value.get(accountId)
+  return b != null ? b.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '—'
 }
 
-function cancelEditBalance() {
-  editingBalanceId.value = null
+function navigate(account: Account) {
+  router.push({ name: 'account-detail', params: { id: account.id } })
 }
 
-async function saveBalance(b: AccountBalance) {
-  await store.updateBalanceSnapshot({ id: b.id, balance: draftBalance.value, recordedAt: draftDate.value })
-  toast.add({ title: 'Balance updated', color: 'success' })
-  editingBalanceId.value = null
-}
-
-async function removeBalance(b: AccountBalance) {
-  const ok = await confirm(
-    `Delete this balance snapshot from ${b.recordedAt}? This cannot be undone.`,
-    { title: 'Delete Snapshot?', kind: 'warning' },
-  )
-  if (ok) await store.removeBalanceSnapshot(b.id)
-}
-
+// Add / Edit account modal
 const isAccountModalOpen = ref(false)
 const editingAccount = ref<Account | null>(null)
 
@@ -67,54 +58,13 @@ function openEdit(account: Account) {
   isAccountModalOpen.value = true
 }
 
+watch(isAccountModalOpen, open => { if (!open) editingAccount.value = null })
+
 function onAccountSaved() {
   isAccountModalOpen.value = false
 }
 
-watch(isAccountModalOpen, (open) => {
-  if (!open) editingAccount.value = null
-})
-
-const isTransactionModalOpen = ref(false)
-const viewingTransaction = ref<Transaction | null>(null)
-
-async function openTransaction(id: number) {
-  viewingTransaction.value = await getTransaction(id)
-  isTransactionModalOpen.value = true
-}
-
-watch(isTransactionModalOpen, (open) => {
-  if (!open) viewingTransaction.value = null
-})
-
-onMounted(async () => {
-  await store.load()
-})
-
-const activeAccounts = computed(() =>
-  store.accounts.filter((a: Account) => a.isActive),
-)
-
-const archivedAccounts = computed(() =>
-  store.accounts.filter((a: Account) => !a.isActive),
-)
-
-function latestBalance(accountId: number): string {
-  const balances = store.allBalances.filter(
-    (b: AccountBalance) => b.accountId === accountId,
-  )
-  const latest = latestSnapshot(balances)
-  if (!latest) return '—'
-  return latest.balance.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-}
-
-function accountBalances(accountId: number): AccountBalance[] {
-  return store.allBalances
-    .filter((b: AccountBalance) => b.accountId === accountId)
-    .slice()
-    .sort(byRecencyDesc)
-}
-
+// Archive / Unarchive
 async function archive(id: number) {
   await store.archive(id)
 }
@@ -123,23 +73,148 @@ async function unarchive(id: number) {
   await store.unarchive(id)
 }
 
+// Delete (archived accounts only)
 async function remove(account: Account) {
   const ok = await confirm(
     `Permanently delete "${account.name}" and all of its balance snapshots? This cannot be undone.`,
-    { title: 'Delete Account?', kind: 'warning' }
-  );
+    { title: 'Delete Account?', kind: 'warning' },
+  )
   if (ok) await store.remove(account.id)
+}
+
+// Archived section toggle
+const showArchived = ref(false)
+
+// Dropdown menu items per account
+function activeMenuItems(account: Account) {
+  return [[
+    { label: 'Edit', icon: 'i-ph-pencil', onSelect: () => openEdit(account) },
+    { label: 'Archive', icon: 'i-ph-archive', onSelect: () => archive(account.id) },
+  ]]
+}
+
+function archivedMenuItems(account: Account) {
+  return [[
+    { label: 'Restore', icon: 'i-ph-arrow-counter-clockwise', onSelect: () => unarchive(account.id) },
+    { label: 'Delete', icon: 'i-ph-trash', color: 'error' as const, onSelect: () => remove(account) },
+  ]]
 }
 </script>
 
 <template>
   <div class="p-6 max-w-4xl">
-    <h1 class="text-2xl font-bold mb-6">Accounts</h1>
-
-    <div class="mb-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">Accounts</h1>
       <UButton icon="i-ph-plus" @click="openAdd">Add Account</UButton>
     </div>
 
+    <!-- Stats -->
+    <div class="grid grid-cols-3 gap-4 mb-8">
+      <StatCard label="Net Worth" :value="fmt(netWorth)" />
+      <StatCard label="FIRE Accounts" :value="fmt(fireTotal)" />
+      <StatCard label="Non-FIRE Accounts" :value="fmt(nonFireTotal)" />
+    </div>
+
+    <!-- FIRE Accounts -->
+    <div v-if="fireAccounts.length > 0" class="mb-8">
+      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-2">FIRE Accounts</p>
+      <div class="border border-default rounded-lg overflow-hidden">
+        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
+          <span />
+        </div>
+        <div
+          v-for="account in fireAccounts"
+          :key="account.id"
+          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
+          @click="navigate(account)"
+        >
+          <div>
+            <p class="text-sm font-medium">{{ account.name }}</p>
+            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
+          </div>
+          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
+          <span class="text-sm font-semibold text-right font-mono">{{ latestBalance(account.id) }}</span>
+          <div class="flex justify-center" @click.stop>
+            <UDropdownMenu :items="activeMenuItems(account)">
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" />
+            </UDropdownMenu>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Non-FIRE Accounts -->
+    <div v-if="nonFireAccounts.length > 0" class="mb-8">
+      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-2">Non-FIRE Accounts</p>
+      <div class="border border-default rounded-lg overflow-hidden">
+        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
+          <span />
+        </div>
+        <div
+          v-for="account in nonFireAccounts"
+          :key="account.id"
+          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
+          @click="navigate(account)"
+        >
+          <div>
+            <p class="text-sm font-medium">{{ account.name }}</p>
+            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
+          </div>
+          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
+          <span class="text-sm font-semibold text-right font-mono">{{ latestBalance(account.id) }}</span>
+          <div class="flex justify-center" @click.stop>
+            <UDropdownMenu :items="activeMenuItems(account)">
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" />
+            </UDropdownMenu>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Archived -->
+    <div v-if="archivedAccounts.length > 0">
+      <button
+        class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted mb-2"
+        @click="showArchived = !showArchived"
+      >
+        <span>{{ showArchived ? '▼' : '▶' }}</span>
+        <span>Archived ({{ archivedAccounts.length }})</span>
+      </button>
+      <div v-if="showArchived" class="border border-default rounded-lg overflow-hidden">
+        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
+          <span />
+        </div>
+        <div
+          v-for="account in archivedAccounts"
+          :key="account.id"
+          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0"
+        >
+          <div>
+            <p class="text-sm font-medium text-muted">{{ account.name }}</p>
+            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
+          </div>
+          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
+          <span class="text-sm text-muted text-right font-mono">{{ latestBalance(account.id) }}</span>
+          <div class="flex justify-center">
+            <UDropdownMenu :items="archivedMenuItems(account)">
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" />
+            </UDropdownMenu>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add / Edit account modal -->
     <UModal
       v-model:open="isAccountModalOpen"
       :title="editingAccount ? 'Edit Account' : 'Add Account'"
@@ -151,117 +226,6 @@ async function remove(account: Account) {
           :account="editingAccount ?? undefined"
           @saved="onAccountSaved"
         />
-      </template>
-    </UModal>
-
-    <div v-if="activeAccounts.length === 0" class="text-gray-500 text-sm mt-4">
-      No active accounts. Click "Add Account" to get started.
-    </div>
-
-    <div class="space-y-4">
-      <UCard v-for="account in activeAccounts" :key="account.id">
-        <template #header>
-          <div class="flex items-center justify-between">
-            <div>
-              <span class="font-semibold text-base">{{ account.name }}</span>
-              <span class="ml-2 text-sm text-gray-500">{{ labelForAccountType(account.type) }}</span>
-              <span v-if="account.institution" class="ml-2 text-sm text-gray-400">· {{ account.institution }}</span>
-            </div>
-            <div class="flex items-center gap-4">
-              <span class="text-sm text-gray-500">
-                FIRE: <span :class="account.includeInFireCalculations ? 'text-green-600 font-medium' : 'text-gray-400'">
-                  {{ account.includeInFireCalculations ? 'Yes' : 'No' }}
-                </span>
-              </span>
-              <span class="font-semibold">{{ latestBalance(account.id) }}</span>
-              <UButton
-                size="sm"
-                variant="ghost"
-                @click="openEdit(account)"
-              >
-                Edit
-              </UButton>
-              <UButton
-                size="sm"
-                color="error"
-                variant="ghost"
-                @click="archive(account.id)"
-              >
-                Archive
-              </UButton>
-            </div>
-          </div>
-        </template>
-
-        <div class="space-y-4">
-          <BalanceForm :account-id="account.id" />
-
-          <div v-if="accountBalances(account.id).length > 0">
-            <h3 class="text-sm font-medium text-gray-600 mb-2">Balance History</h3>
-            <UTable :data="accountBalances(account.id)" :columns="balanceColumns">
-              <template #recordedAt-cell="{ row }">
-                <DateInput v-if="editingBalanceId === row.original.id" v-model="draftDate" />
-                <span v-else class="text-gray-600">{{ row.original.recordedAt }}</span>
-              </template>
-              <template #balance-cell="{ row }">
-                <div class="flex justify-end">
-                  <CurrencyInput v-if="editingBalanceId === row.original.id" v-model="draftBalance" class="w-32" />
-                  <span v-else class="font-mono">{{ formatted(row.original.balance) }}</span>
-                </div>
-              </template>
-              <template #actions-cell="{ row }">
-                <div class="flex justify-end gap-1">
-                  <template v-if="editingBalanceId === row.original.id">
-                    <UButton size="xs" variant="ghost" @click="saveBalance(row.original)">Save</UButton>
-                    <UButton size="xs" variant="ghost" color="neutral" @click="cancelEditBalance">Cancel</UButton>
-                  </template>
-                  <template v-else>
-                    <UButton
-                      v-if="row.original.linkedTransactionId != null"
-                      size="xs"
-                      variant="ghost"
-                      icon="i-ph-receipt"
-                      title="View linked transaction"
-                      @click="openTransaction(row.original.linkedTransactionId)"
-                    />
-                    <UButton size="xs" variant="ghost" @click="startEditBalance(row.original)">Edit</UButton>
-                    <UButton size="xs" variant="ghost" color="error" @click="removeBalance(row.original)">Delete</UButton>
-                  </template>
-                </div>
-              </template>
-            </UTable>
-          </div>
-        </div>
-      </UCard>
-    </div>
-
-    <div v-if="archivedAccounts.length > 0" class="mt-10">
-      <h2 class="text-lg font-semibold mb-1">Archived</h2>
-      <p class="text-sm text-gray-500 mb-4">
-        Archived accounts are excluded from your dashboard totals. Restore one to include it again,
-        or permanently delete it (removes the account and its balance history).
-      </p>
-      <div class="space-y-2">
-        <UCard v-for="account in archivedAccounts" :key="account.id">
-          <div class="flex items-center justify-between">
-            <div>
-              <span class="font-medium">{{ account.name }}</span>
-              <span class="ml-2 text-sm text-gray-500">{{ labelForAccountType(account.type) }}</span>
-              <span v-if="account.institution" class="ml-2 text-sm text-gray-400">· {{ account.institution }}</span>
-              <span class="ml-2 text-sm text-gray-400">· {{ latestBalance(account.id) }}</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <UButton size="sm" variant="ghost" @click="unarchive(account.id)">Restore</UButton>
-              <UButton size="sm" color="error" variant="soft" @click="remove(account)">Delete</UButton>
-            </div>
-          </div>
-        </UCard>
-      </div>
-    </div>
-
-    <UModal v-model:open="isTransactionModalOpen" title="Transaction details">
-      <template #body>
-        <TransactionDetail v-if="viewingTransaction" :transaction="viewingTransaction" />
       </template>
     </UModal>
   </div>
