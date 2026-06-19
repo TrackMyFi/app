@@ -37,7 +37,7 @@ const nonFireTotal = computed(() =>
 
 function latestBalance(accountId: number) {
   const b = latestBalanceMap.value.get(accountId)
-  return b != null ? b.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : '—'
+  return b != null ? b.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '—'
 }
 
 function navigate(account: Account) {
