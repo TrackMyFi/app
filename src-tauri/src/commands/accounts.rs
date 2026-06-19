@@ -272,6 +272,31 @@ pub async fn list_balance_month_summaries(
     Ok(out)
 }
 
+pub async fn list_balances_for_month(
+    conn: &Connection,
+    account_id: i32,
+    month: &str,
+) -> Result<Vec<AccountBalance>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+             FROM account_balance b \
+             LEFT JOIN txn t \
+               ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \
+             WHERE b.account_id = ?1 \
+               AND strftime('%Y-%m', b.recorded_at) = ?2 \
+             ORDER BY b.recorded_at DESC",
+            libsql::params![account_id, month.to_string()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_balance(&row)?);
+    }
+    Ok(out)
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -351,4 +376,14 @@ pub async fn list_balance_month_summaries_cmd(
 ) -> Result<Vec<BalanceMonthSummary>, String> {
     let conn = db.conn().await?;
     list_balance_month_summaries(&conn, account_id).await
+}
+
+#[tauri::command]
+pub async fn list_balances_for_month_cmd(
+    db: State<'_, Db>,
+    account_id: i32,
+    month: String,
+) -> Result<Vec<AccountBalance>, String> {
+    let conn = db.conn().await?;
+    list_balances_for_month(&conn, account_id, &month).await
 }
