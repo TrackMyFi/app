@@ -37,23 +37,48 @@ async function refreshSummaries() {
 
 // ─── Accordion ──────────────────────────────────────────────────────────────
 
-const openMonth = ref<string | null>(null)
+const openMonthValue = ref<string | undefined>(undefined)
+const openMonth = computed(() => openMonthValue.value ?? null)
 const monthCache = ref(new Map<string, AccountBalance[]>())
 
-async function toggleMonth(month: string) {
-  if (openMonth.value === month) {
-    openMonth.value = null
-    return
-  }
-  if (!monthCache.value.has(month)) {
+watch(openMonthValue, async (month) => {
+  if (month && !monthCache.value.has(month)) {
     const rows = await api.listBalancesForMonth(accountId.value, month)
     monthCache.value.set(month, rows)
   }
-  openMonth.value = month
-}
+})
+
+const accordionItems = computed(() =>
+  monthSummaries.value.map((s, i) => {
+    const prev = monthSummaries.value[i + 1]
+    const delta = prev != null ? s.latestBalance - prev.latestBalance : null
+    const deltaPercent = (delta != null && prev != null && Math.abs(prev.latestBalance) >= 0.01)
+      ? (delta / Math.abs(prev.latestBalance)) * 100
+      : null
+    return {
+      label: fmtMonthLabel(s.month),
+      value: s.month,
+      count: s.count,
+      latestBalance: s.latestBalance,
+      delta: delta !== 0 ? delta : null,
+      deltaPercent,
+    }
+  })
+)
 
 function cachedRows(month: string): AccountBalance[] {
   return monthCache.value.get(month) ?? []
+}
+
+function getSnapshotDelta(month: string, rowId: number): { delta: number; pct: number | null } | null {
+  const rows = cachedRows(month)
+  const idx = rows.findIndex(r => r.id === rowId)
+  if (idx === -1 || idx === rows.length - 1) return null
+  const prev = rows[idx + 1]
+  const delta = rows[idx].balance - prev.balance
+  if (delta === 0) return null
+  const pct = Math.abs(prev.balance) >= 0.01 ? (delta / Math.abs(prev.balance)) * 100 : null
+  return { delta, pct }
 }
 
 async function invalidateMonth(month: string) {
@@ -86,9 +111,11 @@ const chartTitle = computed(() =>
 
 // ─── Snapshot formatting ─────────────────────────────────────────────────────
 
-const fmtDate = (s: string) => DateTime.fromISO(s).toFormat('MMM d, yyyy')
+const fmtDate = (s: string) => DateTime.fromISO(s).toFormat('MMM dd')
 const fmtMoney = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtMonthLabel = (s: string) => DateTime.fromISO(s + '-01').toFormat('MMMM yyyy')
+const fmtDelta = (delta: number) => (delta > 0 ? '+' : '') + delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+const fmtPercent = (pct: number | null) => pct == null ? '' : (pct > 0 ? '+' : '') + pct.toFixed(1) + '%'
 
 // ─── Inline snapshot editing ─────────────────────────────────────────────────
 
@@ -198,7 +225,7 @@ async function deleteAccount() {
 </script>
 
 <template>
-  <div v-if="account" class="p-6 max-w-3xl">
+  <div v-if="account" class="p-6">
     <!-- Back link -->
     <button
       class="text-sm text-primary hover:underline mb-4 flex items-center gap-1"
@@ -237,67 +264,58 @@ async function deleteAccount() {
     </div>
 
     <!-- Month accordion -->
-    <div class="border border-default rounded-lg overflow-hidden mb-8">
-      <div v-if="monthSummaries.length === 0" class="px-4 py-8 text-center text-sm text-muted">
+    <div class="mb-8">
+      <div v-if="monthSummaries.length === 0" class="border border-default rounded-lg px-4 py-8 text-center text-sm text-muted">
         No snapshots yet
       </div>
-      <div
-        v-for="(summary, idx) in monthSummaries"
-        :key="summary.month"
-        :class="['border-default', idx < monthSummaries.length - 1 ? 'border-b' : '']"
+      <UAccordion
+        v-else
+        v-model="openMonthValue"
+        :items="accordionItems"
+        collapsible
       >
-        <!-- Month header row -->
-        <button
-          class="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-elevated/50 transition-colors"
-          @click="toggleMonth(summary.month)"
-        >
-          <span class="text-sm font-medium">
-            {{ openMonth === summary.month ? '▼' : '▶' }} {{ fmtMonthLabel(summary.month) }}
-          </span>
-          <span class="text-xs text-muted">
-            {{ summary.count }} snapshot{{ summary.count !== 1 ? 's' : '' }} · {{ fmtMoney(summary.latestBalance) }}
-          </span>
-        </button>
-
-        <!-- Expanded rows -->
-        <div v-if="openMonth === summary.month" class="bg-elevated/30">
+        <template #trailing="{ item, open }">
+          <div class="flex-1 flex items-center gap-3 mx-3">
+            <span class="text-xs text-muted w-24 text-end mr-auto">
+              {{ item.count }} snapshot{{ item.count !== 1 ? 's' : '' }}
+            </span>
+            <UBadge v-if="item.delta != null" :icon="item.delta > 0 ? 'i-ph-trend-up' : 'i-ph-trend-down'" :color="item.delta > 0 ? 'success' : 'error'" variant="soft" size="sm">
+              {{ fmtDelta(item.delta) }}
+              <template v-if="item.deltaPercent != null">&nbsp;({{ fmtPercent(item.deltaPercent) }})</template>
+            </UBadge>
+            <span class="text-xs text-muted w-20 text-end">
+              {{ fmtMoney(item.latestBalance) }}
+            </span>
+          </div>
+          <UIcon
+            name="i-ph-caret-down"
+            class="w-4 h-4 shrink-0 transition-transform duration-200"
+            :class="open ? 'rotate-180' : ''"
+          />
+        </template>
+        <template #body="{ item }">
           <div
-            v-for="row in cachedRows(summary.month)"
+            v-for="row in cachedRows(item.value)"
             :key="row.id"
-            class="grid grid-cols-[120px_1fr_100px] items-center px-6 py-2 border-t border-default"
+            class="grid items-center py-1.5 border-t border-default"
+            :class="editingSnapshotId === row.id ? 'grid-cols-[75px_1fr_100px]' : 'grid-cols-[75px_1fr_auto_100px]'"
           >
-            <!-- Normal row -->
             <template v-if="editingSnapshotId !== row.id">
               <span class="text-xs text-muted">{{ fmtDate(row.recordedAt) }}</span>
-              <span class="text-sm font-semibold">{{ fmtMoney(row.balance) }}</span>
+              <span class="text-xs font-semibold">{{ fmtMoney(row.balance) }}</span>
+              <template v-for="d in [getSnapshotDelta(item.value, row.id)]">
+                <UBadge v-if="d" :icon="d.delta > 0 ? 'i-ph-trend-up' : 'i-ph-trend-down'" :color="d.delta > 0 ? 'success' : 'error'" variant="soft" size="sm" class="mr-6">
+                  {{ fmtDelta(d.delta) }}
+                  <template v-if="d.pct != null">&nbsp;({{ fmtPercent(d.pct) }})</template>
+                </UBadge>
+                <span v-else />
+              </template>
               <div class="flex items-center justify-end gap-1">
-                <UButton
-                  v-if="row.linkedTransactionId != null"
-                  size="xs"
-                  variant="ghost"
-                  color="neutral"
-                  icon="i-ph-receipt"
-                  title="Linked transaction"
-                  @click="openTxnModal(row)"
-                />
-                <UButton
-                  size="xs"
-                  variant="ghost"
-                  color="neutral"
-                  icon="i-ph-pencil"
-                  @click="startEdit(row)"
-                />
-                <UButton
-                  size="xs"
-                  variant="ghost"
-                  color="error"
-                  icon="i-ph-trash"
-                  @click="deleteSnapshot(row)"
-                />
+                <UButton v-if="row.linkedTransactionId != null" size="xs" variant="ghost" color="neutral" icon="i-ph-receipt" title="Linked transaction" @click="openTxnModal(row)" />
+                <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" @click="startEdit(row)" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="deleteSnapshot(row)" />
               </div>
             </template>
-
-            <!-- Inline edit row -->
             <template v-else>
               <DateInput v-model="editDate" class="text-xs" />
               <CurrencyInput v-model="editBalance" class="text-sm mx-2" />
@@ -307,8 +325,8 @@ async function deleteAccount() {
               </div>
             </template>
           </div>
-        </div>
-      </div>
+        </template>
+      </UAccordion>
     </div>
 
     <!-- Danger zone -->

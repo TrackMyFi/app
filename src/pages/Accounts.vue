@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAccountsStore } from '../stores/accounts'
-import { labelForAccountType } from '../lib/accountTypes'
+import { labelForAccountType, isLiability } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
 import StatCard from '../components/StatCard.vue'
 import type { Account } from '../lib/types/Account'
@@ -25,14 +25,19 @@ const archivedAccounts = computed(() => store.accounts.filter(a => !a.isActive))
 const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations))
 const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations))
 
+const signedBalance = (a: Account) => {
+  const b = latestBalanceMap.value.get(a.id) ?? 0
+  return isLiability(a.type) ? -b : b
+}
+
 const netWorth = computed(() =>
-  activeAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+  activeAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
 )
 const fireTotal = computed(() =>
-  fireAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+  fireAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
 )
 const nonFireTotal = computed(() =>
-  nonFireAccounts.value.reduce((s, a) => s + (latestBalanceMap.value.get(a.id) ?? 0), 0)
+  nonFireAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
 )
 
 function latestBalance(accountId: number) {
@@ -102,7 +107,7 @@ function archivedMenuItems(account: Account) {
 </script>
 
 <template>
-  <div class="p-6 max-w-4xl">
+  <div class="p-6">
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Accounts</h1>
