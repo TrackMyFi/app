@@ -5,6 +5,7 @@ import { DateTime } from 'luxon'
 import { useBudgetStore } from '../stores/budget'
 import { useAccountsStore } from '../stores/accounts'
 import CurrencyInput from '../components/CurrencyInput.vue'
+import MonthPicker from '../components/MonthPicker.vue'
 
 const store = useBudgetStore()
 const accountsStore = useAccountsStore()
@@ -13,14 +14,7 @@ const toast = useToast()
 const editingTarget = ref(false)
 const targetInput = ref<number | null>(null)
 
-const monthItems = computed(() =>
-  store.months.map((m) => ({
-    label: formatMonth(m.year, m.month),
-    value: `${m.year}-${m.month}`,
-  }))
-)
-
-const selectedMonthKey = ref<string>('')
+const selectedDate = ref<DateTime>(DateTime.now().startOf('month'))
 
 function formatMonth(year: number, month: number): string {
   return DateTime.fromObject({ year, month }).toFormat('MMMM yyyy')
@@ -35,11 +29,9 @@ function accountName(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
 }
 
-async function onMonthChange(value: unknown) {
-  const key = value as string
-  selectedMonthKey.value = key
-  const [year, month] = key.split('-').map(Number)
-  await store.load(year, month)
+async function onMonthChange(dt: DateTime) {
+  selectedDate.value = dt
+  await store.load(dt.year, dt.month)
 }
 
 function setActiveSection(section: 'income' | 'savings' | 'fixed' | 'discretionary') {
@@ -115,7 +107,7 @@ onMounted(async () => {
   await Promise.all([accountsStore.load(), store.loadMonths()])
   if (store.months.length > 0) {
     const m = store.months[0]
-    selectedMonthKey.value = `${m.year}-${m.month}`
+    selectedDate.value = DateTime.local(m.year, m.month, 1).startOf('month')
     await store.load(m.year, m.month)
   }
 })
@@ -126,12 +118,7 @@ onMounted(async () => {
     <!-- Header -->
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Budget</h1>
-      <USelect
-        :model-value="selectedMonthKey"
-        :items="monthItems"
-        class="w-44"
-        @update:model-value="onMonthChange"
-      />
+      <MonthPicker :model-value="selectedDate" @update:model-value="onMonthChange" />
     </div>
 
     <!-- Empty state: no months at all -->

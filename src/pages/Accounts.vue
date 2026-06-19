@@ -223,7 +223,7 @@ function archivedMenuItems(account: Account) {
     <UModal
       v-model:open="isAccountModalOpen"
       :title="editingAccount ? 'Edit Account' : 'Add Account'"
-      class="w-112"
+      class="w-100"
     >
       <template #body>
         <AccountForm

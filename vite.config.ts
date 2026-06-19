@@ -11,6 +11,13 @@ export default defineConfig(async () => ({
     vue(), 
     ui({
       ui: {
+        accordion: {
+          slots: {
+            root: 'w-full u-accordion',
+            trigger: 'group flex-1 flex items-center gap-1.5 font-medium text-sm px-3 py-3.5 outline-primary/25 focus-visible:outline-3 min-w-0 rounded-md',
+            body: 'text-sm py-3.5 px-3',
+          },
+        },
         table: {
           slots: {
             td: 'px-4 py-2 text-sm text-default whitespace-nowrap [&:has([role=checkbox])]:pe-0',

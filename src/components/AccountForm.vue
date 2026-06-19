@@ -85,8 +85,8 @@ async function onSubmit() {
       </div>
     </div>
     
-    <div class="pt-4 sm:pt-6 flex justify-end items-center gap-3">
-      <UButton type="submit" :disabled="!form.name">
+    <div class="pt-4 flex justify-end items-center gap-3">
+      <UButton type="submit" :disabled="!form.name" block>
         {{ isEdit ? 'Save Changes' : 'Add Account' }}
       </UButton>
     </div>

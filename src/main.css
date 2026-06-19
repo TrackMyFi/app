@@ -1,2 +1,6 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+.u-accordion button[data-state="open"] {
+  background-color: var(--ui-bg-elevated);
+}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { VisXYContainer, VisLine, VisAxis } from '@unovis/vue'
+import { VisXYContainer, VisLine, VisAxis, VisCrosshair, VisTooltip } from '@unovis/vue'
 import { DateTime } from 'luxon'
 
 export type ChartPoint = { date: string; balance: number }
@@ -18,6 +18,17 @@ const tickFormatX = (t: number | Date) => {
     ? DateTime.fromMillis(ms).toFormat('LLL yyyy')
     : DateTime.fromMillis(ms).toFormat('MMM d')
 }
+
+const crosshairTemplate = (d: D) => {
+  const ms = d.t
+  const date = props.mode === 'monthly'
+    ? DateTime.fromMillis(ms).toFormat('MMMM yyyy')
+    : DateTime.fromMillis(ms).toFormat('MMM d, yyyy')
+  const balance = d.v.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+  return `<div style="padding:6px 10px;font-size:12px;line-height:1.6">
+    <strong>${date}</strong><br/>Balance: ${balance}
+  </div>`
+}
 </script>
 
 <template>
@@ -25,5 +36,7 @@ const tickFormatX = (t: number | Date) => {
     <VisLine :x="x" :y="y" />
     <VisAxis type="x" :tick-format="tickFormatX" />
     <VisAxis type="y" />
+    <VisCrosshair :x="x" :y="y" :template="crosshairTemplate" />
+    <VisTooltip />
   </VisXYContainer>
 </template>

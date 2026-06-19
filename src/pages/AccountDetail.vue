@@ -113,7 +113,7 @@ const chartTitle = computed(() =>
 
 const fmtDate = (s: string) => DateTime.fromISO(s).toFormat('MMM dd')
 const fmtMoney = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
-const fmtMonthLabel = (s: string) => DateTime.fromISO(s + '-01').toFormat('MMMM yyyy')
+const fmtMonthLabel = (s: string) => DateTime.fromISO(s + '-01').toFormat('MMM yyyy')
 const fmtDelta = (delta: number) => (delta > 0 ? '+' : '') + delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtPercent = (pct: number | null) => pct == null ? '' : (pct > 0 ? '+' : '') + pct.toFixed(1) + '%'
 
@@ -245,8 +245,8 @@ async function deleteAccount() {
         </p>
       </div>
       <div class="flex gap-2">
-        <UButton size="sm" @click="editAccountModalOpen = true">Edit</UButton>
-        <UButton size="sm" variant="ghost" color="neutral" @click="archiveAccount">Archive</UButton>
+        <UButton @click="editAccountModalOpen = true">Edit</UButton>
+        <UButton variant="subtle" color="error" @click="archiveAccount">Archive</UButton>
       </div>
     </div>
 
@@ -272,18 +272,22 @@ async function deleteAccount() {
         v-else
         v-model="openMonthValue"
         :items="accordionItems"
+        class="u-accordion border border-default rounded-xl"
         collapsible
       >
+        <template #default="{ item }">
+          <div class="w-18">{{ item.label }}</div>
+        </template>
         <template #trailing="{ item, open }">
           <div class="flex-1 flex items-center gap-3 mx-3">
-            <span class="text-xs text-muted w-24 text-end mr-auto">
+            <span class="text-xs text-muted mr-auto">
               {{ item.count }} snapshot{{ item.count !== 1 ? 's' : '' }}
             </span>
             <UBadge v-if="item.delta != null" :icon="item.delta > 0 ? 'i-ph-trend-up' : 'i-ph-trend-down'" :color="item.delta > 0 ? 'success' : 'error'" variant="soft" size="sm">
               {{ fmtDelta(item.delta) }}
               <template v-if="item.deltaPercent != null">&nbsp;({{ fmtPercent(item.deltaPercent) }})</template>
             </UBadge>
-            <span class="text-xs text-muted w-20 text-end">
+            <span class="w-20 text-end">
               {{ fmtMoney(item.latestBalance) }}
             </span>
           </div>
@@ -297,7 +301,7 @@ async function deleteAccount() {
           <div
             v-for="row in cachedRows(item.value)"
             :key="row.id"
-            class="grid items-center py-1.5 border-t border-default"
+            class="grid items-center py-1.5 not-first:border-t border-default"
             :class="editingSnapshotId === row.id ? 'grid-cols-[75px_1fr_100px]' : 'grid-cols-[75px_1fr_auto_100px]'"
           >
             <template v-if="editingSnapshotId !== row.id">
@@ -330,31 +334,31 @@ async function deleteAccount() {
     </div>
 
     <!-- Danger zone -->
-    <div class="border border-error/30 rounded-lg p-4">
+    <div v-if="!account.isActive" class="border border-error/30 rounded-lg p-4">
       <h3 class="text-sm font-semibold text-error mb-1">Danger Zone</h3>
       <p class="text-xs text-muted mb-3">Permanently deletes this account and all of its balance snapshots. Cannot be undone.</p>
       <UButton color="error" variant="outline" size="sm" @click="deleteAccount">Delete Account</UButton>
     </div>
 
     <!-- Edit account modal -->
-    <UModal v-model:open="editAccountModalOpen" title="Edit Account" class="w-112">
+    <UModal v-model:open="editAccountModalOpen" title="Edit Account" class="w-100">
       <template #body>
         <AccountForm :key="account.id" :account="account" @saved="onAccountSaved" />
       </template>
     </UModal>
 
     <!-- Add snapshot modal -->
-    <UModal v-model:open="addModalOpen" title="Add Snapshot" class="w-96">
+    <UModal v-model:open="addModalOpen" title="Add Snapshot" class="w-84">
       <template #body>
         <div class="space-y-4">
           <UFormField label="Balance">
             <CurrencyInput v-model="newBalance" class="w-full" />
           </UFormField>
           <UFormField label="Date">
-            <DateInput v-model="newDate" />
+            <DateInput v-model="newDate" class="w-full" />
           </UFormField>
           <div class="flex justify-end pt-2">
-            <UButton @click="submitAddSnapshot">Add Snapshot</UButton>
+            <UButton @click="submitAddSnapshot" block>Add Snapshot</UButton>
           </div>
         </div>
       </template>
