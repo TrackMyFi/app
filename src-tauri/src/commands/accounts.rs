@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::models::{Account, AccountBalance};
+use crate::models::{Account, AccountBalance, BalanceMonthSummary};
 use libsql::Connection;
 use serde::Deserialize;
 use tauri::State;
@@ -50,6 +50,14 @@ fn row_to_balance(row: &libsql::Row) -> Result<AccountBalance, String> {
         balance: row.get(2).map_err(|e| e.to_string())?,
         recorded_at: row.get(3).map_err(|e| e.to_string())?,
         linked_transaction_id: row.get(4).map_err(|e| e.to_string())?,
+    })
+}
+
+fn row_to_month_summary(row: &libsql::Row) -> Result<BalanceMonthSummary, String> {
+    Ok(BalanceMonthSummary {
+        month: row.get(0).map_err(|e| e.to_string())?,
+        count: row.get(1).map_err(|e| e.to_string())?,
+        latest_balance: row.get(2).map_err(|e| e.to_string())?,
     })
 }
 
@@ -236,6 +244,34 @@ pub async fn list_latest_balances(conn: &Connection) -> Result<Vec<AccountBalanc
     Ok(out)
 }
 
+pub async fn list_balance_month_summaries(
+    conn: &Connection,
+    account_id: i32,
+) -> Result<Vec<BalanceMonthSummary>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT \
+               strftime('%Y-%m', recorded_at) AS month, \
+               COUNT(*) AS count, \
+               (SELECT balance FROM account_balance b2 \
+                WHERE b2.account_id = ?1 \
+                  AND strftime('%Y-%m', b2.recorded_at) = strftime('%Y-%m', account_balance.recorded_at) \
+                ORDER BY b2.recorded_at DESC LIMIT 1) AS latest_balance \
+             FROM account_balance \
+             WHERE account_id = ?1 \
+             GROUP BY month \
+             ORDER BY month DESC",
+            libsql::params![account_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_month_summary(&row)?);
+    }
+    Ok(out)
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -306,4 +342,13 @@ pub async fn list_all_balances_cmd(db: State<'_, Db>) -> Result<Vec<AccountBalan
 pub async fn list_latest_balances_cmd(db: State<'_, Db>) -> Result<Vec<AccountBalance>, String> {
     let conn = db.conn().await?;
     list_latest_balances(&conn).await
+}
+
+#[tauri::command]
+pub async fn list_balance_month_summaries_cmd(
+    db: State<'_, Db>,
+    account_id: i32,
+) -> Result<Vec<BalanceMonthSummary>, String> {
+    let conn = db.conn().await?;
+    list_balance_month_summaries(&conn, account_id).await
 }
