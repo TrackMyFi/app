@@ -4,6 +4,7 @@ const routes = [
   { path: '/onboarding', name: 'onboarding', component: () => import('./pages/Onboarding.vue') },
   { path: '/', name: 'dashboard', component: () => import('./pages/Dashboard.vue') },
   { path: '/accounts', name: 'accounts', component: () => import('./pages/Accounts.vue') },
+  { path: '/accounts/:id', name: 'account-detail', component: () => import('./pages/AccountDetail.vue') },
   { path: '/transactions', name: 'transactions', component: () => import('./pages/Transactions.vue') },
   { path: '/paychecks', name: 'paychecks', component: () => import('./pages/Paychecks.vue') },
   { path: '/contributions', name: 'contributions', component: () => import('./pages/Contributions.vue') },
