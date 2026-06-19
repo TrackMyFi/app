@@ -213,6 +213,29 @@ pub async fn list_all_balances(conn: &Connection) -> Result<Vec<AccountBalance>,
     Ok(out)
 }
 
+pub async fn list_latest_balances(conn: &Connection) -> Result<Vec<AccountBalance>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+             FROM account_balance b \
+             INNER JOIN ( \
+               SELECT account_id, MAX(recorded_at) AS max_date \
+               FROM account_balance \
+               GROUP BY account_id \
+             ) latest ON b.account_id = latest.account_id AND b.recorded_at = latest.max_date \
+             LEFT JOIN txn t \
+               ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id",
+            (),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_balance(&row)?);
+    }
+    Ok(out)
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -277,4 +300,10 @@ pub async fn add_balance_cmd(db: State<'_, Db>, balance: NewBalance) -> Result<(
 pub async fn list_all_balances_cmd(db: State<'_, Db>) -> Result<Vec<AccountBalance>, String> {
     let conn = db.conn().await?;
     list_all_balances(&conn).await
+}
+
+#[tauri::command]
+pub async fn list_latest_balances_cmd(db: State<'_, Db>) -> Result<Vec<AccountBalance>, String> {
+    let conn = db.conn().await?;
+    list_latest_balances(&conn).await
 }
