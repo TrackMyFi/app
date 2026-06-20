@@ -29,6 +29,19 @@ const rows = computed<ContributionRow[]>(() => {
 
 const ytdTotal = computed(() => rows.value.reduce((s, r) => s + r.total, 0))
 
+// Collapsed by default — cards above give the summary; transactions are detail-on-demand.
+const expandedGroups = ref(new Set<string>(rows.value.map((v) => v.label)))
+
+function toggleGroup(label: string) {
+  if (expandedGroups.value.has(label)) {
+    expandedGroups.value.delete(label)
+  } else {
+    expandedGroups.value.add(label)
+  }
+  // Trigger reactivity on the Set
+  expandedGroups.value = new Set(expandedGroups.value)
+}
+
 function accountName(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
 }
@@ -37,7 +50,6 @@ function accountType(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.type ?? ''
 }
 
-// Transactions belonging to a given row's account types, for the selected year.
 function rowTxns(row: ContributionRow) {
   return store.txns.filter(
     (t) =>
@@ -54,11 +66,10 @@ function pct(n: number | undefined): string {
   return n === undefined ? '—' : `${(n * 100).toFixed(0)}%`
 }
 
-// Amber when near the cap (80-99%) or over it (>100%); green when on track or exactly maxed.
 function barColor(pctUsed: number | undefined): string {
   if (pctUsed === undefined) return 'bg-success'
-  if (pctUsed > 1) return 'bg-amber-500'
-  if (pctUsed >= 0.8 && pctUsed < 1) return 'bg-amber-500'
+  if (pctUsed > 1) return 'bg-error'
+  if (pctUsed >= 0.8) return 'bg-warning'
   return 'bg-success'
 }
 
@@ -89,6 +100,7 @@ const contributionColumns = [
 async function onYearChange(year: unknown) {
   const y = Number(year)
   selectedYear.value = y
+  expandedGroups.value = new Set()
   await store.load(y)
 }
 
@@ -102,7 +114,7 @@ onMounted(async () => {
 <template>
   <div class="p-6 space-y-6">
     <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-semibold">Contributions</h1>
+      <h1 class="text-2xl font-bold">Contributions</h1>
       <USelect
         :model-value="selectedYear"
         :items="store.years.map((y) => ({ label: String(y), value: y }))"
@@ -117,73 +129,120 @@ onMounted(async () => {
       variant="soft"
       icon="i-ph-info"
       :title="`IRS limits estimated from ${resolved.estimatedFrom}`"
-      :description="`Update irsLimits.ts when ${selectedYear} limits are announced.`"
+      :description="`Official ${selectedYear} limits haven't been published yet. These figures are projected from prior-year data.`"
     />
 
-    <div class="flex gap-6 text-sm">
-      <span>YTD Total: <strong>{{ money(ytdTotal) }}</strong></span>
-      <span class="text-muted">{{ rows.length }} account types</span>
+    <!-- YTD aggregate stat -->
+    <div v-if="rows.length">
+      <div class="text-xs font-semibold text-muted uppercase tracking-wider mb-1">{{ selectedYear }} Total</div>
+      <div class="text-3xl font-bold font-mono tabular-nums">{{ money(ytdTotal) }}</div>
+      <div class="text-xs text-muted mt-1">across {{ rows.length }} contribution {{ rows.length === 1 ? 'type' : 'types' }}</div>
     </div>
 
     <!-- Card grid -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div v-if="rows.length" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
       <div
         v-for="row in rows"
         :key="row.label"
         class="border border-default rounded-lg p-4 space-y-2"
       >
-        <div class="text-sm font-medium">{{ row.label }}</div>
-        <div class="text-xl font-bold tabular-nums">{{ money(row.total) }}</div>
+        <div class="text-xs font-semibold text-muted uppercase tracking-wider">{{ row.label }}</div>
+        <div class="text-xl font-bold tabular-nums font-mono">{{ money(row.total) }}</div>
+
         <template v-if="row.limit !== undefined">
-          <div class="bg-elevated rounded-full h-1.5 overflow-hidden">
+          <div
+            role="progressbar"
+            :aria-valuenow="Math.round((row.pctUsed ?? 0) * 100)"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`${row.label}: ${pct(row.pctUsed)} of ${limitLabel(row)}`"
+            class="bg-elevated rounded-full h-2 overflow-hidden"
+          >
             <div
-              class="h-full rounded-full"
+              class="h-full rounded-full transition-all duration-300"
               :class="barColor(row.pctUsed)"
               :style="{ width: barWidth(row.pctUsed) }"
             />
           </div>
-          <div class="text-xs text-muted">{{ pct(row.pctUsed) }} of {{ limitLabel(row) }}</div>
+          <div
+            v-if="row.pctUsed !== undefined && row.pctUsed > 1"
+            class="text-xs font-medium text-error"
+          >
+            Over limit — excess contributions may be subject to a 6% excise tax
+          </div>
+          <div v-else class="text-xs text-muted">{{ pct(row.pctUsed) }} of {{ limitLabel(row) }}</div>
         </template>
         <div v-else class="text-xs text-muted">No IRS limit</div>
+
         <div
           v-if="row.yoyDelta !== undefined"
           class="text-xs"
-          :class="row.yoyDelta > 0 ? 'text-success' : row.yoyDelta < 0 ? 'text-error' : 'text-muted'"
+          :class="row.yoyDelta > 0 ? 'text-success' : row.yoyDelta < 0 ? 'text-muted' : 'text-muted'"
         >
-          {{ row.yoyDelta > 0 ? '+' : '' }}{{ money(row.yoyDelta) }} vs {{ selectedYear - 1 }}
+          {{ row.yoyDelta > 0 ? '+' : '' }}<span class="font-mono tabular-nums">{{ money(row.yoyDelta) }}</span> vs {{ selectedYear - 1 }}
         </div>
+
         <div
           v-if="row.breakdown"
-          class="text-xs text-muted pt-2 border-t border-default/50"
+          class="text-xs text-muted pt-2 border-t border-default/50 space-y-0.5"
         >
-          {{ row.breakdown.map((b) => `${b.label}: ${money(b.total)}`).join(' · ') }}
+          <div v-for="b in row.breakdown" :key="b.type" class="flex justify-between">
+            <span>{{ b.label }}</span>
+            <span class="font-mono tabular-nums">{{ money(b.total) }}</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <p v-if="!rows.length" class="text-muted text-sm">
-      No contributions recorded for {{ selectedYear }}.
-    </p>
+    <!-- Empty state -->
+    <div v-if="!rows.length" class="py-12 text-center space-y-2">
+      <div class="text-sm font-medium">No contributions recorded for {{ selectedYear }}</div>
+      <p class="text-sm text-muted max-w-sm mx-auto">
+        Contributions are imported automatically from Paychecks or recorded individually in Transactions.
+      </p>
+    </div>
 
-    <!-- Grouped transaction table -->
-    <div v-for="row in rows" :key="`group-${row.label}`" class="border border-default rounded-lg overflow-hidden">
-      <div class="bg-elevated px-4 py-2 flex justify-between items-center">
+    <!-- Grouped transaction tables (collapsible) -->
+    <div
+      v-for="row in rows"
+      :key="`group-${row.label}`"
+      class="border border-default rounded-lg overflow-hidden"
+    >
+      <button
+        class="w-full bg-elevated px-4 py-2.5 flex justify-between items-center hover:bg-accented/50 transition-colors duration-150 text-left"
+        :aria-expanded="expandedGroups.has(row.label)"
+        @click="toggleGroup(row.label)"
+      >
         <span class="font-medium text-sm">{{ row.label }}</span>
-        <div class="flex gap-4 text-xs text-muted">
-          <span>YTD: <strong class="text-default">{{ money(row.total) }}</strong></span>
-          <span v-if="row.limit !== undefined">Limit: <strong class="text-default">{{ money(row.limit) }}</strong></span>
-          <span v-if="row.pctUsed !== undefined">{{ pct(row.pctUsed) }}</span>
+        <div class="flex items-center gap-4">
+          <div class="flex gap-4 text-xs text-muted">
+            <span>YTD: <strong class="text-default font-mono tabular-nums">{{ money(row.total) }}</strong></span>
+            <span v-if="row.limit !== undefined">Limit: <strong class="text-default font-mono tabular-nums">{{ money(row.limit) }}</strong></span>
+            <span
+              v-if="row.pctUsed !== undefined"
+              :class="row.pctUsed > 1 ? 'text-error font-medium' : ''"
+            >{{ pct(row.pctUsed) }}</span>
+          </div>
+          <UIcon
+            :name="expandedGroups.has(row.label) ? 'i-ph-caret-up' : 'i-ph-caret-down'"
+            class="text-muted w-4 h-4 shrink-0"
+          />
         </div>
+      </button>
+
+      <div v-if="expandedGroups.has(row.label)">
+        <UTable :data="rowTxns(row)" :columns="contributionColumns">
+          <template #account-cell="{ row: txnRow }">
+            <span class="text-muted">{{ accountName(txnRow.original.accountId) }}</span>
+          </template>
+          <template #source-cell="{ row: txnRow }">
+            <span class="text-muted text-xs">{{ importLabel(txnRow.original.importSource) }}</span>
+          </template>
+          <template #amount-cell="{ row: txnRow }">
+            <span class="font-mono tabular-nums">{{ money(txnRow.original.amount) }}</span>
+          </template>
+        </UTable>
       </div>
-      <UTable :data="rowTxns(row)" :columns="contributionColumns">
-        <template #account-cell="{ row: txnRow }">
-          <span class="text-muted">{{ accountName(txnRow.original.accountId) }}</span>
-        </template>
-        <template #source-cell="{ row: txnRow }">
-          <span class="text-muted text-xs">{{ importLabel(txnRow.original.importSource) }}</span>
-        </template>
-        <template #amount-cell="{ row: txnRow }">{{ money(txnRow.original.amount) }}</template>
-      </UTable>
     </div>
   </div>
 </template>
