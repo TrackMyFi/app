@@ -74,6 +74,7 @@ Sync config (`sync.json`) is stored outside the database in the app config dir. 
 
 - **Router**: uses `createWebHashHistory` (required for Tauri webview compatibility — no real HTTP server)
 - **UI library**: Nuxt UI v4 (configured with emerald primary / mist neutral palette and icon overrides in `vite.config.ts`)
+- **Contextual colors**: Always use NuxtUI semantic color utilities — never raw Tailwind color scales for semantic meaning. Mapping: red → `text-error`/`bg-error`/`border-error`, green → `text-success`/`bg-success`/`border-success`, yellow → `text-warning`/`bg-warning`/`border-warning`, blue → `text-info`/`bg-info`/`border-info`. These CSS-variable-backed utilities handle dark mode automatically, so no `dark:` variant is needed. Opacity modifiers still work (e.g. `bg-success/10`).
 - **Icons**: Phosphor icons via `i-ph-*` class names (Iconify)
 - **Charts**: Unovis (`@unovis/vue`)
 - **Dates**: Luxon for date math; `@internationalized/date` for calendar primitives

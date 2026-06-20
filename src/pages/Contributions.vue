@@ -56,10 +56,10 @@ function pct(n: number | undefined): string {
 
 // Amber when near the cap (80-99%) or over it (>100%); green when on track or exactly maxed.
 function barColor(pctUsed: number | undefined): string {
-  if (pctUsed === undefined) return 'bg-green-500'
+  if (pctUsed === undefined) return 'bg-success'
   if (pctUsed > 1) return 'bg-amber-500'
   if (pctUsed >= 0.8 && pctUsed < 1) return 'bg-amber-500'
-  return 'bg-green-500'
+  return 'bg-success'
 }
 
 function barWidth(pctUsed: number | undefined): string {
@@ -148,7 +148,7 @@ onMounted(async () => {
         <div
           v-if="row.yoyDelta !== undefined"
           class="text-xs"
-          :class="row.yoyDelta > 0 ? 'text-green-600' : row.yoyDelta < 0 ? 'text-red-600' : 'text-muted'"
+          :class="row.yoyDelta > 0 ? 'text-success' : row.yoyDelta < 0 ? 'text-error' : 'text-muted'"
         >
           {{ row.yoyDelta > 0 ? '+' : '' }}{{ money(row.yoyDelta) }} vs {{ selectedYear - 1 }}
         </div>

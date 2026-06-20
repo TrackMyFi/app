@@ -26,7 +26,7 @@ const money = (n: number) =>
     <dt class="text-gray-500">Amount</dt>
     <dd
       class="col-span-2 tabular-nums font-medium"
-      :class="transaction.type === 'income' ? 'text-green-600' : transaction.type === 'expense' ? 'text-red-600' : ''"
+      :class="transaction.type === 'income' ? 'text-success' : transaction.type === 'expense' ? 'text-error' : ''"
     >
       {{ money(transaction.amount) }}
     </dd>

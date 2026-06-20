@@ -202,10 +202,10 @@ onMounted(async () => {
         </button>
 
         <!-- Free Money (non-clickable, green bg) -->
-        <div class="flex flex-col gap-1 p-4 border-r border-default bg-green-500/10 flex-1 min-w-0">
-          <span class="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">Free Money</span>
-          <span class="text-xl font-bold tabular-nums text-green-700 dark:text-green-400">{{ money(store.summary.freeMoney) }}</span>
-          <span class="text-xs text-green-600/70 dark:text-green-500/70">&nbsp;</span>
+        <div class="flex flex-col gap-1 p-4 border-r border-default bg-success/10 flex-1 min-w-0">
+          <span class="text-xs font-semibold uppercase tracking-wide text-success">Free Money</span>
+          <span class="text-xl font-bold tabular-nums text-success">{{ money(store.summary.freeMoney) }}</span>
+          <span class="text-xs text-success/70">&nbsp;</span>
         </div>
 
         <!-- Discretionary -->
@@ -218,7 +218,7 @@ onMounted(async () => {
           <span class="text-xl font-bold tabular-nums">{{ money(store.summary.discretionary.total) }}</span>
           <span
             class="text-xs font-medium"
-            :class="discretionaryRemaining >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
+            :class="discretionaryRemaining >= 0 ? 'text-success' : 'text-error'"
           >
             {{ money(discretionaryRemaining) }} remaining
           </span>

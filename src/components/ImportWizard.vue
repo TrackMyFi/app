@@ -524,8 +524,8 @@ async function confirmImport() {
                   <span
                     class="text-xs font-medium px-2 py-0.5 rounded-full"
                     :class="exampleEntry.parsed.type === 'income'
-                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
+                      ? 'bg-success/15 text-success'
+                      : 'bg-error/15 text-error'"
                   >{{ exampleEntry.parsed.type }}</span>
                   <span class="tabular-nums font-medium">{{ money(exampleEntry.parsed.amount) }}</span>
                 </div>

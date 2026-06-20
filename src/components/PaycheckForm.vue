@@ -364,13 +364,13 @@ async function save() {
           <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
           <div v-for="item in preview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
             <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
-            <span class="tabular-nums text-green-600">{{ money(item.amount) }}</span>
+            <span class="tabular-nums text-success">{{ money(item.amount) }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <p v-if="saveError" class="text-sm text-red-500">{{ saveError }}</p>
+    <p v-if="saveError" class="text-sm text-error">{{ saveError }}</p>
 
     <div class="flex justify-end gap-2 pt-2">
       <UButton type="submit">{{ props.editing ? 'Save' : props.copyFrom ? 'Copy paycheck' : 'Add paycheck' }}</UButton>
