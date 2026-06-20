@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { VisXYContainer, VisGroupedBar, VisLine, VisAxis, VisTooltip, VisCrosshair } from '@unovis/vue'
 import { GroupedBar } from '@unovis/ts'
 import { DateTime } from 'luxon'
@@ -59,7 +59,24 @@ const yLine = (d: LinePoint) => d.v
 
 const xBar = (d: MonthPoint) => d.t
 const yBar = [(d: MonthPoint) => d.income, (d: MonthPoint) => d.expense]
-const barColors = ['#22c55e', '#ef4444']
+
+// Read semantic colors from the design system at mount time for Unovis SVG compatibility
+const successColor = ref('#22c55e')
+const errorColor = ref('#ef4444')
+
+onMounted(() => {
+  const el = document.createElement('span')
+  document.body.appendChild(el)
+  el.className = 'text-success'
+  const s = getComputedStyle(el).color
+  if (s) successColor.value = s
+  el.className = 'text-error'
+  const e = getComputedStyle(el).color
+  if (e) errorColor.value = e
+  document.body.removeChild(el)
+})
+
+const barColors = computed(() => [successColor.value, errorColor.value])
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -88,24 +105,24 @@ const lineCrosshairTemplate = (d: LinePoint) => {
 
 // ─── Bar chart tooltip ────────────────────────────────────────────────────────
 
-const tooltipTriggers = {
+const tooltipTriggers = computed(() => ({
   [GroupedBar.selectors.bar]: (d: MonthPoint) => {
     const month = DateTime.fromMillis(d.t).toFormat('MMMM yyyy')
     return `<div style="padding:6px 10px;font-size:12px;line-height:1.8">
       <strong>${month}</strong><br/>
-      <span style="color:#22c55e">Income: ${money(d.income)}</span><br/>
-      <span style="color:#ef4444">Expense: ${money(d.expense)}</span><br/>
+      <span style="color:${successColor.value}">Income: ${money(d.income)}</span><br/>
+      <span style="color:${errorColor.value}">Expense: ${money(d.expense)}</span><br/>
       Net: ${money(d.net)}
     </div>`
   },
-}
+}))
 </script>
 
 <template>
   <div class="grid grid-cols-3 gap-6">
     <!-- Cumulative net line: 2/3 -->
     <div class="col-span-2">
-      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-2">Cumulative Net</p>
+      <p class="text-xs font-medium text-muted mb-2">Cumulative Net</p>
       <VisXYContainer :data="lineData" :height="200">
         <VisLine :x="xLine" :y="yLine" />
         <VisAxis type="x" :tick-format="tickFormatX" />
@@ -117,7 +134,7 @@ const tooltipTriggers = {
 
     <!-- Income vs expense bars: 1/3 -->
     <div class="col-span-1">
-      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-2">Income vs. Expense</p>
+      <p class="text-xs font-medium text-muted mb-2">Income vs. Expense</p>
       <VisXYContainer :data="monthlyAggregates" :height="200">
         <VisGroupedBar :x="xBar" :y="yBar" :color="barColors" />
         <VisAxis type="x" :tick-format="tickFormatX" />

@@ -11,7 +11,7 @@ import DateInput from './DateInput.vue'
 import type { Transaction } from '../lib/types/Transaction'
 
 const props = defineProps<{ editing: Transaction | null }>()
-const emit = defineEmits<{ saved: [] }>()
+const emit = defineEmits<{ saved: []; cancel: [] }>()
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
@@ -110,6 +110,14 @@ function accountName(id: number): string {
 
 async function save() {
   if (form.accountId == null) return
+  if (!form.amount || form.amount <= 0) {
+    toast.add({ title: 'Amount must be greater than zero', color: 'error' })
+    return
+  }
+  if (isTransfer.value && form.transferAccountId === form.accountId) {
+    toast.add({ title: 'Transfer source and destination must be different', color: 'error' })
+    return
+  }
   const now = DateTime.now().toISO()!
   if (props.editing) {
     await store.update({
@@ -187,6 +195,7 @@ async function save() {
     </div>
 
     <div class="flex justify-end gap-2 pt-2">
+      <UButton variant="ghost" color="neutral" type="button" @click="emit('cancel')">Cancel</UButton>
       <UButton type="submit">{{ props.editing ? 'Save' : 'Add' }} Transaction</UButton>
     </div>
   </form>

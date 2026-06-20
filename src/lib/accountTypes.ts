@@ -1,6 +1,6 @@
 export const ACCOUNT_TYPES = [
   'checking', 'savings', 'brokerage', '401k', 'roth_401k',
-  'traditional_ira', 'roth_ira', 'hsa', 'real_estate', 'crypto', 'liability',
+  'traditional_ira', 'roth_ira', 'hsa', 'real_estate', 'crypto', 'liability', 'mortgage',
 ] as const
 export type AccountType = typeof ACCOUNT_TYPES[number]
 
@@ -16,6 +16,7 @@ export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
   real_estate: 'Real Estate',
   crypto: 'Crypto',
   liability: 'Liability',
+  mortgage: 'Mortgage',
 }
 
 export const labelForAccountType = (type: string): string =>
@@ -30,7 +31,8 @@ export const INVESTMENT_TYPES = new Set<string>(
   ['brokerage','401k','roth_401k','traditional_ira','roth_ira','hsa','crypto'],
 )
 export const isInvestment = (t: string) => INVESTMENT_TYPES.has(t)
-export const isLiability = (t: string) => t === 'liability'
+export const isLiability = (t: string) => t === 'liability' || t === 'mortgage'
+export const isEquity = (t: string) => t === 'real_estate' || t === 'mortgage'
 export const defaultIncludeInFire = (t: AccountType) => INVESTMENT_TYPES.has(t)
 
 export const investmentTypeItems = [...INVESTMENT_TYPES].map((t) => ({

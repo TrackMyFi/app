@@ -5,7 +5,7 @@ import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { contributionItems } from '../lib/paychecks/index'
-import { INVESTMENT_TYPES, investmentTypeItems } from '../lib/accountTypes'
+import { INVESTMENT_TYPES, investmentTypeItems, isLiability } from '../lib/accountTypes'
 import { payPeriodItems } from '../lib/paychecks/constants'
 import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
@@ -151,7 +151,7 @@ const investmentAccountItems = computed(() =>
 
 const depositAccountItems = computed(() =>
   accountsStore.accounts
-    .filter((a) => !INVESTMENT_TYPES.has(a.type) && a.type !== 'liability' && a.isActive)
+    .filter((a) => !INVESTMENT_TYPES.has(a.type) && !isLiability(a.type) && a.isActive)
     .map((a) => ({ label: a.name, value: a.id })),
 )
 

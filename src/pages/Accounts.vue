@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
-import { labelForAccountType, isLiability } from '../lib/accountTypes'
+import { labelForAccountType, isLiability, isEquity } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
 import StatCard from '../components/StatCard.vue'
 import type { Account } from '../lib/types/Account'
@@ -27,8 +27,9 @@ const latestDateMap = computed(() =>
 
 const activeAccounts = computed(() => store.accounts.filter(a => a.isActive))
 const archivedAccounts = computed(() => store.accounts.filter(a => !a.isActive))
-const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations))
-const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations))
+const equityAccounts = computed(() => activeAccounts.value.filter(a => isEquity(a.type)))
+const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations && !isEquity(a.type)))
+const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations && !isEquity(a.type)))
 
 const signedBalance = (a: Account) => {
   const b = latestBalanceMap.value.get(a.id) ?? 0
@@ -43,6 +44,9 @@ const fireTotal = computed(() =>
 )
 const nonFireTotal = computed(() =>
   nonFireAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
+)
+const equityTotal = computed(() =>
+  equityAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
 )
 
 function latestBalance(accountId: number) {
@@ -134,10 +138,11 @@ function archivedMenuItems(account: Account) {
     </div>
 
     <!-- Stats -->
-    <div class="grid grid-cols-3 gap-4 mb-8">
+    <div :class="['grid gap-4 mb-8', equityAccounts.length > 0 ? 'grid-cols-4' : 'grid-cols-3']">
       <StatCard label="Net Worth" :value="fmt(netWorth)" />
       <StatCard label="FIRE Accounts" :value="fmt(fireTotal)" />
       <StatCard label="Non-FIRE Accounts" :value="fmt(nonFireTotal)" />
+      <StatCard v-if="equityAccounts.length > 0" label="Equity" :value="fmt(equityTotal)" />
     </div>
 
     <!-- Empty state: no accounts at all -->
@@ -158,7 +163,7 @@ function archivedMenuItems(account: Account) {
     <div v-if="fireAccounts.length > 0" class="mb-8">
       <p class="text-xs text-muted font-medium mb-2">FIRE Accounts</p>
       <div class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
@@ -167,7 +172,7 @@ function archivedMenuItems(account: Account) {
         <div
           v-for="account in fireAccounts"
           :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
+          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
           @click="navigate(account)"
         >
           <div>
@@ -179,7 +184,7 @@ function archivedMenuItems(account: Account) {
             <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
             <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
           </div>
-          <div class="flex justify-center" @click.stop>
+          <div class="flex justify-end" @click.stop>
             <UDropdownMenu :items="activeMenuItems(account)">
               <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
             </UDropdownMenu>
@@ -192,7 +197,7 @@ function archivedMenuItems(account: Account) {
     <div v-if="nonFireAccounts.length > 0" class="mb-8">
       <p class="text-xs text-muted font-medium mb-2">Non-FIRE Accounts</p>
       <div class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
@@ -201,7 +206,7 @@ function archivedMenuItems(account: Account) {
         <div
           v-for="account in nonFireAccounts"
           :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
+          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
           @click="navigate(account)"
         >
           <div>
@@ -213,7 +218,41 @@ function archivedMenuItems(account: Account) {
             <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
             <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
           </div>
-          <div class="flex justify-center" @click.stop>
+          <div class="flex justify-end" @click.stop>
+            <UDropdownMenu :items="activeMenuItems(account)">
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
+            </UDropdownMenu>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Equity -->
+    <div v-if="equityAccounts.length > 0" class="mb-8">
+      <p class="text-xs text-muted font-medium mb-2">Equity</p>
+      <div class="border border-default rounded-lg overflow-hidden">
+        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
+          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
+          <span />
+        </div>
+        <div
+          v-for="account in equityAccounts"
+          :key="account.id"
+          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
+          @click="navigate(account)"
+        >
+          <div>
+            <p class="text-sm font-medium">{{ account.name }}</p>
+            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
+          </div>
+          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
+          <div class="text-right">
+            <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
+            <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
+          </div>
+          <div class="flex justify-end" @click.stop>
             <UDropdownMenu :items="activeMenuItems(account)">
               <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
             </UDropdownMenu>
@@ -233,7 +272,7 @@ function archivedMenuItems(account: Account) {
         <span>Archived ({{ archivedAccounts.length }})</span>
       </button>
       <div v-if="showArchived" class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_36px] bg-elevated px-4 py-2 border-b border-default">
+        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
           <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
@@ -253,7 +292,7 @@ function archivedMenuItems(account: Account) {
             <p class="text-sm text-muted font-mono">{{ latestBalance(account.id) }}</p>
             <p v-if="formatBalanceDate(account.id)" class="text-xs text-muted">{{ formatBalanceDate(account.id) }}</p>
           </div>
-          <div class="flex justify-center">
+          <div class="flex justify-end">
             <UDropdownMenu :items="archivedMenuItems(account)">
               <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
             </UDropdownMenu>

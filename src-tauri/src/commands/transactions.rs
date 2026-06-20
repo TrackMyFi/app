@@ -199,7 +199,10 @@ async fn is_liability(conn: &Connection, account_id: i32) -> Result<bool, String
         .await
         .map_err(|e| e.to_string())?;
     match rows.next().await.map_err(|e| e.to_string())? {
-        Some(r) => Ok(r.get::<String>(0).map_err(|e| e.to_string())? == "liability"),
+        Some(r) => {
+            let t = r.get::<String>(0).map_err(|e| e.to_string())?;
+            Ok(t == "liability" || t == "mortgage")
+        }
         None => Ok(false),
     }
 }

@@ -21,10 +21,10 @@ function effectiveDelta(t: Transaction): number {
 const CATEGORY_ORDER = ['savings', 'fixed', 'discretionary', 'uncategorized'] as const
 
 const CATEGORY_BAR_COLOR: Record<string, string> = {
-  savings:       'bg-gradient-to-br from-info/75 to-info/50 border border-info',
-  fixed:         'bg-gradient-to-br from-warning/75 to-warning/50 border border-warning',
-  discretionary: 'bg-gradient-to-br from-error/75 to-error/50 border border-error',
-  uncategorized: 'bg-gradient-to-br from-inverted/75 to-inverted/50 border border-inverted',
+  savings:       'bg-info/60',
+  fixed:         'bg-warning/60',
+  discretionary: 'bg-error/60',
+  uncategorized: 'bg-inverted/30',
 }
 
 const totals = computed(() => {
@@ -68,7 +68,7 @@ function money(n: number) {
     <div class="flex items-center gap-3">
       <span class="w-28 text-xs text-muted shrink-0">Income</span>
       <div class="flex-1 h-4 bg-muted/20 rounded-full overflow-hidden">
-        <div class="h-full bg-gradient-to-br from-success/75 to-success/50 border border-success rounded-full" style="width:100%" />
+        <div class="h-full bg-success/60 rounded-full" style="width:100%" />
       </div>
       <span class="w-24 text-right text-sm font-semibold tabular-nums text-success">{{ money(totals.income) }}</span>
       <span class="w-8 text-right text-xs text-muted">100%</span>

@@ -141,7 +141,7 @@ const rows = computed(() => store.page.rows)
 
 const columns = [
   { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description', meta: { class: { td: 'max-w-[300px] truncate' } } },
+  { accessorKey: 'description', header: 'Description' },
   { id: 'account', header: 'Account' },
   { id: 'type', header: 'Type' },
   { id: 'category', header: 'Category' },
@@ -179,20 +179,22 @@ onMounted(async () => {
     <div class="border border-default rounded-lg p-4">
       <div class="flex items-center justify-between mb-4">
         <MonthPicker :model-value="selectedDate" @update:model-value="onMonthChange" />
-        <div class="flex rounded-md overflow-hidden border border-default text-xs">
-          <button
-            class="px-3 py-1 transition-colors"
-            :class="chartMode === 'monthly' ? 'bg-primary text-white' : 'hover:bg-elevated'"
+        <div class="flex gap-1">
+          <UButton
+            size="xs"
+            :variant="chartMode === 'monthly' ? 'subtle' : 'ghost'"
+            :color="chartMode === 'monthly' ? 'primary' : 'neutral'"
             @click="chartMode = 'monthly'"
-          >Monthly</button>
-          <button
-            class="px-3 py-1 transition-colors border-l border-default"
-            :class="chartMode === 'annual' ? 'bg-primary text-white' : 'hover:bg-elevated'"
+          >Monthly</UButton>
+          <UButton
+            size="xs"
+            :variant="chartMode === 'annual' ? 'subtle' : 'ghost'"
+            :color="chartMode === 'annual' ? 'primary' : 'neutral'"
             @click="chartMode = 'annual'"
-          >Annual</button>
+          >Annual</UButton>
         </div>
       </div>
-      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-3">{{ chartTitle }}</p>
+      <p class="text-sm text-muted mb-3">{{ chartTitle }}</p>
       <template v-if="chartMode === 'monthly'">
         <TransactionMonthlyBreakdown
           v-if="store.page.rows.length > 0"
@@ -214,28 +216,50 @@ onMounted(async () => {
     <!-- Stats row -->
     <div class="grid grid-cols-2 gap-4">
       <div class="border border-default rounded-lg p-4">
-        <div class="flex items-center gap-3 mb-2">
-          <p class="text-xs font-semibold uppercase tracking-widest text-muted">
-            {{ monthLabel }}
-          </p>
-          <span class="text-xs text-muted/75">
-            ({{ store.page.totalCount }} transactions)
-          </span>
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-sm font-medium text-heading">{{ monthLabel }}</p>
+          <span class="text-xs text-muted">{{ store.page.totalCount }} transactions</span>
         </div>
-        <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-          <span>Income: <strong class="text-success">{{ money(monthlyTotals.income) }}</strong></span>
-          <span>Expense: <strong class="text-error">{{ money(monthlyTotals.expense) }}</strong></span>
-          <span>Net: <strong>{{ money(monthlyTotals.net) }}</strong></span>
-          <span>Savings Rate: <strong :class="monthlyTotals.net >= 0 ? 'text-success' : 'text-error'">{{ monthlySavingsRate }}</strong></span>
+        <div class="grid grid-cols-4 gap-3">
+          <div>
+            <p class="text-base font-semibold tabular-nums text-success">{{ money(monthlyTotals.income) }}</p>
+            <p class="text-xs text-muted mt-0.5">Income</p>
+          </div>
+          <div>
+            <p class="text-base font-semibold tabular-nums text-error">{{ money(monthlyTotals.expense) }}</p>
+            <p class="text-xs text-muted mt-0.5">Expense</p>
+          </div>
+          <div>
+            <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net) }}</p>
+            <p class="text-xs text-muted mt-0.5">Net</p>
+          </div>
+          <div class="border-l border-default pl-3">
+            <p class="text-xl font-bold tabular-nums" :class="monthlyTotals.net >= 0 ? 'text-success' : 'text-error'">{{ monthlySavingsRate }}</p>
+            <p class="text-xs text-muted mt-0.5">Savings Rate</p>
+          </div>
         </div>
       </div>
       <div class="border border-default rounded-lg p-4">
-        <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-2">{{ yearLabel }} Annual</p>
-        <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-          <span>Income: <strong class="text-success">{{ money(annualTotals.income) }}</strong></span>
-          <span>Expense: <strong class="text-error">{{ money(annualTotals.expense) }}</strong></span>
-          <span>Net: <strong>{{ money(annualTotals.net) }}</strong></span>
-          <span>Savings Rate: <strong :class="annualTotals.net >= 0 ? 'text-success' : 'text-error'">{{ annualSavingsRate }}</strong></span>
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-sm font-medium text-heading">{{ yearLabel }} Annual</p>
+        </div>
+        <div class="grid grid-cols-4 gap-3">
+          <div>
+            <p class="text-base font-semibold tabular-nums text-success">{{ money(annualTotals.income) }}</p>
+            <p class="text-xs text-muted mt-0.5">Income</p>
+          </div>
+          <div>
+            <p class="text-base font-semibold tabular-nums text-error">{{ money(annualTotals.expense) }}</p>
+            <p class="text-xs text-muted mt-0.5">Expense</p>
+          </div>
+          <div>
+            <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net) }}</p>
+            <p class="text-xs text-muted mt-0.5">Net</p>
+          </div>
+          <div class="border-l border-default pl-3">
+            <p class="text-xl font-bold tabular-nums" :class="annualTotals.net >= 0 ? 'text-success' : 'text-error'">{{ annualSavingsRate }}</p>
+            <p class="text-xs text-muted mt-0.5">Savings Rate</p>
+          </div>
         </div>
       </div>
     </div>
@@ -268,6 +292,9 @@ onMounted(async () => {
     <!-- Table -->
     <div class="border border-default rounded-lg overflow-hidden">
       <UTable :data="rows" :columns="columns" empty="No transactions yet.">
+        <template #description-cell="{ row }">
+          <span class="block max-w-[300px] truncate" :title="row.original.description">{{ row.original.description }}</span>
+        </template>
         <template #account-cell="{ row }">
           {{ accountName(row.original.accountId) }}
           <span v-if="row.original.type === 'transfer'"> → {{ accountName(row.original.transferAccountId) }}</span>
@@ -284,7 +311,7 @@ onMounted(async () => {
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
       <template #body>
-        <TransactionForm :editing="editing" @saved="onSaved" />
+        <TransactionForm :editing="editing" @saved="onSaved" @cancel="isModalOpen = false" />
       </template>
     </UModal>
 
