@@ -26,9 +26,9 @@ const IRS_LIMITS: Record<number, YearLimits> = {
     hsaCatchUpAge: 55, hsaCatchUp: 1000,
   },
   2026: {
-    k401: 23500, ira: 7000, hsaSelf: 4400, hsaFamily: 8700,
-    k401CatchUpAge: 50, k401CatchUp: 7500,
-    iraCatchUpAge: 50, iraCatchUp: 1000,
+    k401: 24500, ira: 7500, hsaSelf: 4400, hsaFamily: 8750,
+    k401CatchUpAge: 50, k401CatchUp: 8000,
+    iraCatchUpAge: 50, iraCatchUp: 1100,
     hsaCatchUpAge: 55, hsaCatchUp: 1000,
   },
 }
