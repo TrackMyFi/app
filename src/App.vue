@@ -3,14 +3,18 @@ import { onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useSyncStore } from './stores/sync'
 import { useFireProfileStore } from './stores/fireProfile'
+import { useUpdaterStore } from './stores/updater'
+import UpdateNotifier from './components/UpdateNotifier.vue'
 
 const router = useRouter()
 const route = useRoute()
 const syncStore = useSyncStore()
 const fireProfileStore = useFireProfileStore()
+const updaterStore = useUpdaterStore()
 
 onMounted(async () => {
   syncStore.init()
+  updaterStore.init()
   try {
     await fireProfileStore.load()
   } catch {
@@ -62,5 +66,6 @@ const links = [
         <RouterView />
       </main>
     </div>
+    <UpdateNotifier />
   </UApp>
 </template>

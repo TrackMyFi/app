@@ -5,6 +5,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useSyncStore } from '../stores/sync'
+import { useUpdaterStore } from '../stores/updater'
 import {
   saveSyncConfig,
   clearSyncConfig,
@@ -46,10 +47,21 @@ const form = reactive<FireProfileForm>({
   hsaCoverage: 'self',
 })
 
+const updater = useUpdaterStore()
+const upToDate = ref(false)
+
+async function checkForUpdates() {
+  upToDate.value = false
+  await updater.check()
+  // The popover handles the "available" case; surface the all-clear here.
+  if (updater.status === 'idle') upToDate.value = true
+}
+
 onMounted(async () => {
   await store.load()
   if (store.profile) Object.assign(form, store.profile)
   categoryRules.value = await categoryRulesApi.listCategoryRules()
+  await updater.loadVersion()
 })
 
 async function onSubmit() {
@@ -327,6 +339,42 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
         <UButton size="sm" variant="soft" :disabled="!newRuleKeyword.trim()" @click="addCategoryRule">
           Add rule
         </UButton>
+      </div>
+    </section>
+
+    <hr class="border-default" />
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-bold">Updates</h2>
+      <div class="border border-default rounded-lg p-4 space-y-3">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">
+              TrackMyFI
+              <span class="text-muted font-normal">
+                v{{ updater.currentVersion || '—' }}
+              </span>
+            </p>
+            <p class="text-sm text-muted">
+              <template v-if="updater.status === 'available'">
+                Version {{ updater.newVersion }} is available.
+              </template>
+              <template v-else-if="updater.status === 'ready'">
+                Update installed — restart to apply.
+              </template>
+              <template v-else-if="upToDate">You're on the latest version.</template>
+              <template v-else>Check GitHub Releases for a newer version.</template>
+            </p>
+          </div>
+          <UButton
+            variant="soft"
+            icon="i-ph-arrow-clockwise"
+            :loading="updater.status === 'checking'"
+            @click="checkForUpdates"
+          >
+            Check for updates
+          </UButton>
+        </div>
       </div>
     </section>
 
