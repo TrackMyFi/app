@@ -33,7 +33,7 @@ const crosshairTemplate = (d: D) => {
 
 <template>
   <VisXYContainer :data="data()" :height="200">
-    <VisLine :x="x" :y="y" />
+    <VisLine :x="x" :y="y" color="var(--ui-primary)" />
     <VisAxis type="x" :tick-format="tickFormatX" />
     <VisAxis type="y" />
     <VisCrosshair :x="x" :y="y" :template="crosshairTemplate" />

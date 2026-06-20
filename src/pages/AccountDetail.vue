@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { DateTime } from 'luxon'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType } from '../lib/accountTypes'
 import * as api from '../lib/api/accounts'
+import { getTransaction } from '../lib/api/transactions'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import type { BalanceMonthSummary } from '../lib/types/BalanceMonthSummary'
+import type { Transaction } from '../lib/types/Transaction'
 import AccountBalanceChart from '../components/AccountBalanceChart.vue'
 import type { ChartPoint } from '../components/AccountBalanceChart.vue'
 import AccountForm from '../components/AccountForm.vue'
+import StatCard from '../components/StatCard.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import DateInput from '../components/DateInput.vue'
 
@@ -117,6 +120,12 @@ const fmtMonthLabel = (s: string) => DateTime.fromISO(s + '-01').toFormat('MMM y
 const fmtDelta = (delta: number) => (delta > 0 ? '+' : '') + delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 const fmtPercent = (pct: number | null) => pct == null ? '' : (pct > 0 ? '+' : '') + pct.toFixed(1) + '%'
 
+const currentBalance = computed(() => monthSummaries.value[0]?.latestBalance ?? null)
+const currentBalanceAsOf = computed(() => monthSummaries.value[0] ? fmtMonthLabel(monthSummaries.value[0].month) : '')
+const headerMenuItems = computed(() => [[
+  { label: 'Archive', icon: 'i-ph-archive', onSelect: archiveAccount },
+]])
+
 // ─── Inline snapshot editing ─────────────────────────────────────────────────
 
 const editingSnapshotId = ref<number | null>(null)
@@ -158,14 +167,25 @@ async function deleteSnapshot(row: AccountBalance) {
 // ─── Linked transaction modal ─────────────────────────────────────────────────
 
 const txnModalOpen = ref(false)
-const txnForModal = ref<number | null>(null)
+const txnData = ref<Transaction | null>(null)
+const txnLoading = ref(false)
 
-// We only have the linkedTransactionId, not the full Transaction object.
-// Show a minimal modal with just the linked txn ID for now.
-function openTxnModal(balance: AccountBalance) {
-  txnForModal.value = balance.linkedTransactionId
+async function openTxnModal(balance: AccountBalance) {
+  txnData.value = null
   txnModalOpen.value = true
+  if (balance.linkedTransactionId != null) {
+    txnLoading.value = true
+    try {
+      txnData.value = await getTransaction(balance.linkedTransactionId)
+    } finally {
+      txnLoading.value = false
+    }
+  }
 }
+
+watch(txnModalOpen, open => {
+  if (!open) txnData.value = null
+})
 
 // ─── Add snapshot modal ───────────────────────────────────────────────────────
 
@@ -227,34 +247,47 @@ async function deleteAccount() {
 <template>
   <div v-if="account" class="p-6">
     <!-- Back link -->
-    <button
+    <RouterLink
+      :to="{ name: 'accounts' }"
       class="text-sm text-primary hover:underline mb-4 flex items-center gap-1"
-      @click="router.push({ name: 'accounts' })"
     >
-      ← Accounts
-    </button>
+      <UIcon name="i-ph-arrow-left" class="w-4 h-4" />
+      Accounts
+    </RouterLink>
 
     <!-- Header -->
-    <div class="flex items-start justify-between mb-6">
+    <div class="flex items-start justify-between mb-4">
       <div>
         <h1 class="text-2xl font-bold">{{ account.name }}</h1>
         <p class="text-sm text-muted mt-0.5">
           {{ labelForAccountType(account.type) }}
           <template v-if="account.institution"> · {{ account.institution }}</template>
-          <template v-if="account.includeInFireCalculations"> · FIRE ✓</template>
+          <template v-if="account.includeInFireCalculations"> · FIRE <UIcon name="i-ph-check-circle" class="w-3.5 h-3.5 text-success inline-block align-text-bottom" aria-hidden="true" /></template>
         </p>
       </div>
       <div class="flex gap-2">
         <UButton @click="editAccountModalOpen = true">Edit</UButton>
-        <UButton variant="subtle" color="error" @click="archiveAccount">Archive</UButton>
+        <UDropdownMenu :items="headerMenuItems">
+          <UButton variant="ghost" color="neutral" icon="i-ph-dots-three" aria-label="More options" />
+        </UDropdownMenu>
       </div>
     </div>
 
+    <!-- Current balance stat -->
+    <StatCard
+      v-if="currentBalance !== null"
+      label="Current Balance"
+      :value="fmtMoney(currentBalance)"
+      :hint="`as of ${currentBalanceAsOf}`"
+      class="mb-6"
+    />
+
     <!-- Chart -->
     <div class="border border-default rounded-lg p-4 mb-6">
-      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-3">{{ chartTitle }}</p>
+      <p class="text-xs font-semibold uppercase tracking-widest text-muted mb-3 transition-opacity duration-200">{{ chartTitle }}</p>
       <AccountBalanceChart v-if="chartPoints.length > 0" :points="chartPoints" :mode="chartMode" />
       <p v-else class="text-sm text-muted text-center py-8">No snapshots yet</p>
+      <p v-if="chartMode === 'monthly' && chartPoints.length > 0" class="text-xs text-muted mt-2">Open a month below to see daily snapshot detail.</p>
     </div>
 
     <!-- Accordion header -->
@@ -272,7 +305,7 @@ async function deleteAccount() {
         v-else
         v-model="openMonthValue"
         :items="accordionItems"
-        class="u-accordion border border-default rounded-xl"
+        class="u-accordion border border-default rounded-lg"
         collapsible
       >
         <template #default="{ item }">
@@ -287,7 +320,7 @@ async function deleteAccount() {
               {{ fmtDelta(item.delta) }}
               <template v-if="item.deltaPercent != null">&nbsp;({{ fmtPercent(item.deltaPercent) }})</template>
             </UBadge>
-            <span class="w-20 text-end">
+            <span class="w-20 text-end font-mono">
               {{ fmtMoney(item.latestBalance) }}
             </span>
           </div>
@@ -306,7 +339,7 @@ async function deleteAccount() {
           >
             <template v-if="editingSnapshotId !== row.id">
               <span class="text-xs text-muted">{{ fmtDate(row.recordedAt) }}</span>
-              <span class="text-xs font-semibold">{{ fmtMoney(row.balance) }}</span>
+              <span class="text-sm font-semibold font-mono">{{ fmtMoney(row.balance) }}</span>
               <template v-for="d in [getSnapshotDelta(item.value, row.id)]">
                 <UBadge v-if="d" :icon="d.delta > 0 ? 'i-ph-trend-up' : 'i-ph-trend-down'" :color="d.delta > 0 ? 'success' : 'error'" variant="soft" size="sm" class="mr-6">
                   {{ fmtDelta(d.delta) }}
@@ -315,9 +348,9 @@ async function deleteAccount() {
                 <span v-else />
               </template>
               <div class="flex items-center justify-end gap-1">
-                <UButton v-if="row.linkedTransactionId != null" size="xs" variant="ghost" color="neutral" icon="i-ph-receipt" title="Linked transaction" @click="openTxnModal(row)" />
-                <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" @click="startEdit(row)" />
-                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="deleteSnapshot(row)" />
+                <UButton v-if="row.linkedTransactionId != null" size="xs" variant="ghost" color="neutral" icon="i-ph-receipt" aria-label="View linked transaction" @click="openTxnModal(row)" />
+                <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" aria-label="Edit snapshot" @click="startEdit(row)" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" aria-label="Delete snapshot" @click="deleteSnapshot(row)" />
               </div>
             </template>
             <template v-else>
@@ -364,10 +397,33 @@ async function deleteAccount() {
       </template>
     </UModal>
 
-    <!-- Linked transaction modal (minimal — just shows transaction ID) -->
+    <!-- Linked transaction modal -->
     <UModal v-model:open="txnModalOpen" title="Linked Transaction">
       <template #body>
-        <p class="text-sm text-muted">Transaction #{{ txnForModal }}</p>
+        <div v-if="txnLoading" class="text-sm text-muted text-center py-4">Loading…</div>
+        <div v-else-if="txnData" class="space-y-3">
+          <div class="flex justify-between items-baseline gap-4">
+            <span class="text-xs text-muted">Amount</span>
+            <span :class="['text-sm font-semibold font-mono', txnData.amount >= 0 ? 'text-success' : 'text-error']">{{ fmtMoney(txnData.amount) }}</span>
+          </div>
+          <div class="flex justify-between items-baseline gap-4">
+            <span class="text-xs text-muted">Date</span>
+            <span class="text-sm">{{ DateTime.fromISO(txnData.date).toFormat('MMM d, yyyy') }}</span>
+          </div>
+          <div v-if="txnData.description" class="flex justify-between items-start gap-4">
+            <span class="text-xs text-muted shrink-0">Description</span>
+            <span class="text-sm text-right">{{ txnData.description }}</span>
+          </div>
+          <div v-if="txnData.category" class="flex justify-between items-baseline gap-4">
+            <span class="text-xs text-muted">Category</span>
+            <span class="text-sm capitalize">{{ txnData.category }}</span>
+          </div>
+          <div class="flex justify-between items-baseline gap-4">
+            <span class="text-xs text-muted">Type</span>
+            <span class="text-sm capitalize">{{ txnData.type }}</span>
+          </div>
+        </div>
+        <p v-else class="text-sm text-muted text-center py-4">Transaction not found.</p>
       </template>
     </UModal>
   </div>

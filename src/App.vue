@@ -42,6 +42,7 @@ const links = [
           <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
         </div>
         <template v-for="l in links" :key="l.label">
+          <div v-if="l.label === 'Settings'" class="border-t border-default mx-2 my-1" />
           <RouterLink
             v-if="l.to"
             :to="l.to"
