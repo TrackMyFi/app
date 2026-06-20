@@ -61,6 +61,17 @@ const accountItems = computed(() =>
   accountsStore.accounts.map((a) => ({ label: a.name, value: a.id })),
 )
 
+const isContributionTransfer = computed(() => {
+  if (!isTransfer.value || form.accountId == null || form.transferAccountId == null) return false
+  const src = accountsStore.accounts.find((a) => a.id === form.accountId)
+  const dst = accountsStore.accounts.find((a) => a.id === form.transferAccountId)
+  return src != null && dst != null && !isInvestment(src.type) && isInvestment(dst.type)
+})
+
+watch([() => form.accountId, () => form.transferAccountId], () => {
+  if (!props.editing) form.isContribution = isContributionTransfer.value
+})
+
 // Default the switch on for cash/liability accounts, off for investment accounts.
 function defaultUpdateBalance(accountId: number | undefined): boolean {
   if (accountId == null) return false
@@ -160,7 +171,7 @@ async function save() {
     <UFormField v-if="!isTransfer" label="Category">
       <USelect v-model="form.category" :items="categoryItems" class="w-full" />
     </UFormField>
-    <UCheckbox v-if="!isTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
+    <UCheckbox v-if="!isTransfer || isContributionTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
 
     <div class="rounded-lg border border-default p-3 space-y-2">
       <USwitch v-model="updateBalance" label="Update account balance" />

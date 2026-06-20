@@ -42,7 +42,7 @@ function rowTxns(row: ContributionRow) {
   return store.txns.filter(
     (t) =>
       t.date.startsWith(String(selectedYear.value)) &&
-      row.accountTypes.includes(accountType(t.accountId)),
+      row.accountTypes.includes(accountType(t.transferAccountId ?? t.accountId)),
   )
 }
 

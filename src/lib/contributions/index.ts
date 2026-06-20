@@ -83,7 +83,8 @@ function sumByType(
   const out = new Map<string, number>()
   for (const t of txns) {
     if (!t.date.startsWith(yearPrefix)) continue
-    const type = typeOf.get(t.accountId)
+    const effectiveId = t.transferAccountId ?? t.accountId
+    const type = typeOf.get(effectiveId)
     if (!type) continue // orphan txn (account deleted) — excluded
     // Amounts are summed signed: a negative (refund/correction) contribution
     // legitimately nets the type total down.
