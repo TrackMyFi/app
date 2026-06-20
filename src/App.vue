@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useRouter, useRoute } from 'vue-router'
 import { useSyncStore } from './stores/sync'
 import { useFireProfileStore } from './stores/fireProfile'
@@ -12,9 +13,20 @@ const syncStore = useSyncStore()
 const fireProfileStore = useFireProfileStore()
 const updaterStore = useUpdaterStore()
 
+// Bumped when the backend's background sync catch-up finishes pulling the cloud.
+// Keying the active route component on this remounts it, re-running its onMounted
+// loaders so freshly-pulled data replaces the last-synced snapshot shown at boot.
+// Fires once shortly after launch (before the user interacts), so no active form
+// or scroll state is disrupted.
+const refreshNonce = ref(0)
+let unlistenRefresh: UnlistenFn | undefined
+
 onMounted(async () => {
   syncStore.init()
   updaterStore.init()
+  unlistenRefresh = await listen('data-refreshed', () => {
+    refreshNonce.value++
+  })
   try {
     await fireProfileStore.load()
   } catch {
@@ -24,6 +36,8 @@ onMounted(async () => {
     router.push('/onboarding')
   }
 })
+
+onUnmounted(() => unlistenRefresh?.())
 
 const links = [
   { label: 'Dashboard', to: '/', icon: 'i-ph-squares-four' },
@@ -63,7 +77,9 @@ const links = [
         </template>
       </nav>
       <main class="flex-1 overflow-auto">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <component :is="Component" :key="`${route.fullPath}:${refreshNonce}`" />
+        </RouterView>
       </main>
     </div>
     <UpdateNotifier />

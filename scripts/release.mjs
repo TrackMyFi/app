@@ -4,6 +4,11 @@
 //
 //   npm run release -- v0.2.0   (the leading "v" is optional)
 //
+// The actual release build (compile, sign, bundle, publish) happens in GitHub
+// Actions once the tag is pushed — nothing is built locally for distribution.
+// Before tagging, this runs a quick local compile to catch a broken build so we
+// never push a tag that fails CI. Skip that with --skip-checks if you're sure.
+//
 // Any other uncommitted changes are intentionally left alone — only the version
 // files are staged and committed.
 
@@ -30,7 +35,9 @@ function capture(cmd) {
 
 // --- Parse + validate the requested version -------------------------------
 
-const raw = process.argv[2]
+const args = process.argv.slice(2)
+const skipChecks = args.includes('--skip-checks')
+const raw = args.find((a) => !a.startsWith('--'))
 if (!raw) fail('Usage: npm run release -- v0.2.0')
 
 const version = raw.replace(/^v/, '') // bare semver for file contents
@@ -51,6 +58,17 @@ const existingTags = capture('git tag --list').split('\n')
 if (existingTags.includes(tag)) fail(`Tag ${tag} already exists.`)
 
 console.log(`\nReleasing ${current} → ${version} (tag ${tag})\n`)
+
+// --- Pre-flight: compile locally so a broken tag never reaches CI ----------
+
+if (skipChecks) {
+  console.log('Skipping pre-flight build checks (--skip-checks).\n')
+} else {
+  console.log('Pre-flight: building frontend + checking Rust (--skip-checks to bypass)…')
+  run('npm run build')
+  run('cargo check --manifest-path src-tauri/Cargo.toml')
+  console.log('')
+}
 
 // --- Bump every file that carries the version -----------------------------
 

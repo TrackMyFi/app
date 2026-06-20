@@ -242,6 +242,31 @@ pub async fn do_sync(app: &AppHandle) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Startup catch-up for synced mode, run in the background so the app is
+/// interactive immediately (serving last-synced data from the local replica file
+/// — see `crate::db::init`, which no longer blocks startup on a network pull).
+///
+/// Order matters: pull first, THEN migrate. A pull brings down any migration
+/// another device already applied to the primary, so this device sees it as
+/// applied and skips it rather than re-running it through to the primary. If the
+/// pull fails (e.g. offline) we still migrate, so a freshly-updated app has its
+/// schema; the rare cross-device double-apply only matters when offline on a new
+/// release.
+///
+/// Emits `data-refreshed` when done so the frontend re-reads — picking up either
+/// freshly-pulled remote edits or a just-applied migration.
+pub async fn initial_catch_up(app: &AppHandle) -> Result<(), String> {
+    let db = app.state::<crate::db::Db>();
+    if !db.is_synced() {
+        return Ok(());
+    }
+    let pull = do_sync(app).await;
+    let conn = db.conn().await?;
+    crate::migrations::run(&conn).await?;
+    let _ = app.emit("data-refreshed", ());
+    pull
+}
+
 #[tauri::command]
 pub async fn get_sync_status(app: AppHandle) -> Result<SyncStatus, String> {
     Ok(snapshot(&app))

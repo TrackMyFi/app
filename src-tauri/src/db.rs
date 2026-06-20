@@ -98,8 +98,12 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
                 .build()
                 .await
                 .map_err(|e| e.to_string())?;
-            // Pull on startup so this device sees other devices' edits.
-            db.sync().await.map_err(|e| e.to_string())?;
+            // Deliberately NO startup `db.sync()` here. The local replica file
+            // already holds the last-synced data, so reads are served instantly
+            // and the window renders immediately. The initial cloud pull (so this
+            // device sees other devices' edits) plus migrations run in the
+            // background once the app is interactive — see `sync::initial_catch_up`,
+            // kicked off from `lib.rs`'s setup hook.
             (db, DbMode::Synced)
         }
         DbSource::LocalReplicaFile => {
@@ -118,8 +122,15 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
         }
     };
 
-    let conn = db.connect().map_err(|e| e.to_string())?;
-    crate::migrations::run(&conn).await?;
+    // Local modes have no network pull, so migrate inline now — it's fast and
+    // purely local. Synced mode defers migrations to the background catch-up
+    // (after the first pull) so startup never waits on the network, and so a
+    // migration already applied on another device is pulled before this device
+    // would try to re-apply it. See `sync::initial_catch_up`.
+    if mode == DbMode::Local {
+        let conn = db.connect().map_err(|e| e.to_string())?;
+        crate::migrations::run(&conn).await?;
+    }
     Ok(Db { db, mode })
 }
 

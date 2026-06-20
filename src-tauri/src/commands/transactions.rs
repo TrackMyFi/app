@@ -2,10 +2,11 @@ use crate::db::Db;
 use crate::models::Transaction;
 use libsql::{params, Connection, Value};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use ts_rs::TS;
 use tauri::State;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NewTransaction {
     pub account_id: i32,
@@ -121,6 +122,43 @@ fn build_where(f: &TransactionFilter, params: &mut Vec<Value>) -> String {
     } else {
         format!("WHERE {}", clauses.join(" AND "))
     }
+}
+
+/// Pure balance-delta computation with a pre-loaded `is_liability` bool.
+/// Mirrors `side_delta` but avoids a DB query per row during bulk import.
+fn side_delta_pure(is_liability: bool, ty: &str, amount: f64, to_side: bool) -> f64 {
+    if to_side {
+        if is_liability { -amount } else { amount }
+    } else if ty == "transfer" {
+        if is_liability { amount } else { -amount }
+    } else {
+        let asset_delta = if ty == "income" { amount } else { -amount };
+        if is_liability { -asset_delta } else { asset_delta }
+    }
+}
+
+/// Escape single quotes in a string for use as a SQL string literal.
+fn sql_escape(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Newest balance in a date-sorted `(date, balance)` slice where `date <= query_date`.
+fn mem_base_balance(snaps: &[(String, f64)], date: &str) -> f64 {
+    snaps
+        .iter()
+        .rev()
+        .find(|(d, _)| d.as_str() <= date)
+        .map(|(_, b)| *b)
+        .unwrap_or(0.0)
+}
+
+/// Insert `(date, balance)` into a sorted Vec, placing it after all existing entries
+/// at the same date so backward iteration finds the most recently inserted entry first.
+fn mem_snaps_insert(snaps: &mut Vec<(String, f64)>, date: String, balance: f64) {
+    // partition_point returns the first index where d > date; inserting there
+    // places the new entry after all same-or-earlier entries.
+    let pos = snaps.partition_point(|(d, _)| d.as_str() <= date.as_str());
+    snaps.insert(pos, (date, balance));
 }
 
 pub async fn list_transactions(
@@ -554,27 +592,208 @@ pub async fn bulk_create_transactions(
     Ok(count)
 }
 
-/// Import many transactions with balance snapshot generation in a single database
-/// transaction. Rows must arrive sorted by date (ascending) so each base_balance
-/// query sees the snapshots written by prior rows in the same transaction.
+/// Import many transactions with balance snapshot generation.
 ///
-/// Uses manual BEGIN/COMMIT (not conn.transaction()) so we can reuse the existing
-/// create_transaction inner function and all its snapshot helpers unchanged.
+/// Rows must arrive sorted by date (ascending). The prior implementation called
+/// `create_transaction` per row, making ~3 remote round-trips per row (base_balance
+/// read + snapshot INSERT + txn INSERT). This rewrite instead:
+///
+/// 1. Preloads account types and all existing balance snapshots for each account
+///    involved (local reads, no network hops on an embedded replica).
+/// 2. Walks rows in order, computing snapshot values in memory (no per-row reads).
+/// 3. Pre-reads `sqlite_sequence` to determine the IDs the next INSERTs will receive.
+/// 4. Emits a single `execute_batch` call containing all snapshot + txn INSERTs
+///    inside one BEGIN/COMMIT — exactly ONE remote round-trip for all writes.
 pub async fn bulk_create_transactions_with_snapshots(
     conn: &Connection,
     rows: &[NewTransaction],
 ) -> Result<i64, String> {
-    conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
-    let mut count = 0i64;
-    for t in rows {
-        if let Err(e) = create_transaction(conn, t).await {
-            conn.execute("ROLLBACK", ()).await.ok();
-            return Err(e);
-        }
-        count += 1;
+    if rows.is_empty() {
+        return Ok(0);
     }
-    conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
-    Ok(count)
+
+    // Collect the unique account IDs referenced in this batch.
+    let mut account_ids: Vec<i32> = Vec::new();
+    for t in rows {
+        if !account_ids.contains(&t.account_id) {
+            account_ids.push(t.account_id);
+        }
+        if let Some(id) = t.transfer_account_id {
+            if !account_ids.contains(&id) {
+                account_ids.push(id);
+            }
+        }
+    }
+
+    // Preload account types (local reads — served from replica file, no network hop).
+    let mut account_is_liability: HashMap<i32, bool> = HashMap::new();
+    for &id in &account_ids {
+        account_is_liability.insert(id, is_liability(conn, id).await?);
+    }
+
+    // Preload all existing balance snapshots per account, sorted date ASC.
+    // Keeps our in-memory `base_balance` simulation accurate: manual balance
+    // entries between import rows act as anchors, matching what the per-row path
+    // would see via its `base_balance` DB queries.
+    let mut mem_snaps: HashMap<i32, Vec<(String, f64)>> = HashMap::new();
+    for &id in &account_ids {
+        let mut snaps: Vec<(String, f64)> = Vec::new();
+        let mut rows_q = conn
+            .query(
+                "SELECT recorded_at, balance FROM account_balance \
+                 WHERE account_id = ?1 ORDER BY recorded_at ASC, id ASC",
+                params![id],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        while let Some(r) = rows_q.next().await.map_err(|e| e.to_string())? {
+            snaps.push((
+                r.get::<String>(0).map_err(|e| e.to_string())?,
+                r.get::<f64>(1).map_err(|e| e.to_string())?,
+            ));
+        }
+        mem_snaps.insert(id, snaps);
+    }
+
+    // Walk rows in date order, computing snapshot values in memory.
+    struct PendingSnap {
+        account_id: i32,
+        balance: f64,
+        recorded_at: String,
+    }
+    let mut pending_snaps: Vec<PendingSnap> = Vec::new();
+    // Per input row: indices into pending_snaps for generated_balance_id / _to_id.
+    let mut txn_snap_idxs: Vec<(Option<usize>, Option<usize>)> = Vec::new();
+
+    for t in rows {
+        if !t.update_balance {
+            txn_snap_idxs.push((None, None));
+            continue;
+        }
+
+        let is_liab_src = *account_is_liability.get(&t.account_id).unwrap_or(&false);
+
+        if t.r#type == "transfer" {
+            let to = t.transfer_account_id.ok_or("transfer requires transferAccountId")?;
+            let is_liab_dst = *account_is_liability.get(&to).unwrap_or(&false);
+
+            let src_base = mem_base_balance(mem_snaps.get(&t.account_id).unwrap(), &t.date);
+            let src_new = src_base + side_delta_pure(is_liab_src, "transfer", t.amount, false);
+
+            let dst_base = mem_base_balance(mem_snaps.get(&to).unwrap(), &t.date);
+            let dst_new = dst_base + side_delta_pure(is_liab_dst, "transfer", t.amount, true);
+
+            let snap_idx = pending_snaps.len();
+            pending_snaps.push(PendingSnap {
+                account_id: t.account_id,
+                balance: src_new,
+                recorded_at: t.date.clone(),
+            });
+            let snap_to_idx = pending_snaps.len();
+            pending_snaps.push(PendingSnap {
+                account_id: to,
+                balance: dst_new,
+                recorded_at: t.date.clone(),
+            });
+
+            // Simulate the inserts so subsequent rows see these balances.
+            mem_snaps_insert(mem_snaps.get_mut(&t.account_id).unwrap(), t.date.clone(), src_new);
+            mem_snaps_insert(mem_snaps.get_mut(&to).unwrap(), t.date.clone(), dst_new);
+
+            txn_snap_idxs.push((Some(snap_idx), Some(snap_to_idx)));
+        } else {
+            let src_base = mem_base_balance(mem_snaps.get(&t.account_id).unwrap(), &t.date);
+            let new_bal = src_base + side_delta_pure(is_liab_src, &t.r#type, t.amount, false);
+
+            let snap_idx = pending_snaps.len();
+            pending_snaps.push(PendingSnap {
+                account_id: t.account_id,
+                balance: new_bal,
+                recorded_at: t.date.clone(),
+            });
+            mem_snaps_insert(mem_snaps.get_mut(&t.account_id).unwrap(), t.date.clone(), new_bal);
+
+            txn_snap_idxs.push((Some(snap_idx), None));
+        }
+    }
+
+    // Determine the first snapshot ID the batch will receive. SQLite AUTOINCREMENT
+    // assigns IDs in order starting at seq+1 (seq = last-ever-assigned ID).
+    let next_snap_id: i64 = if pending_snaps.is_empty() {
+        0 // unused
+    } else {
+        let mut r = conn
+            .query(
+                "SELECT COALESCE(\
+                    (SELECT seq FROM sqlite_sequence WHERE name='account_balance'), 0)",
+                (),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let row = r
+            .next()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "missing sqlite_sequence row".to_string())?;
+        row.get::<i64>(0).map_err(|e| e.to_string())? + 1
+    };
+
+    // Build one SQL batch — all snapshot + txn INSERTs inside a single BEGIN/COMMIT.
+    // execute_batch sends this as one HTTP request to the Turso primary, collapsing
+    // the previous N*3 round-trips into exactly 1.
+    let mut sql = String::with_capacity(pending_snaps.len() * 120 + rows.len() * 300 + 32);
+    sql.push_str("BEGIN;\n");
+
+    for snap in &pending_snaps {
+        sql.push_str(&format!(
+            "INSERT INTO account_balance (account_id, balance, recorded_at) \
+             VALUES ({}, {}, '{}');\n",
+            snap.account_id,
+            snap.balance,
+            sql_escape(&snap.recorded_at),
+        ));
+    }
+
+    for (i, t) in rows.iter().enumerate() {
+        let (snap_idx_opt, snap_to_idx_opt) = txn_snap_idxs[i];
+        let gen_id_sql = match snap_idx_opt {
+            Some(idx) => (next_snap_id + idx as i64).to_string(),
+            None => "NULL".to_string(),
+        };
+        let gen_to_id_sql = match snap_to_idx_opt {
+            Some(idx) => (next_snap_id + idx as i64).to_string(),
+            None => "NULL".to_string(),
+        };
+        let transfer_id_sql = match t.transfer_account_id {
+            Some(id) => id.to_string(),
+            None => "NULL".to_string(),
+        };
+        sql.push_str(&format!(
+            "INSERT INTO txn (account_id, transfer_account_id, amount, description, \
+             date, type, category, is_contribution, import_source, \
+             generated_balance_id, generated_balance_to_id, created_at, updated_at) \
+             VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', {}, '{}', {}, {}, '{}', '{}');\n",
+            t.account_id,
+            transfer_id_sql,
+            t.amount,
+            sql_escape(&t.description),
+            sql_escape(&t.date),
+            sql_escape(&t.r#type),
+            sql_escape(&t.category),
+            i32::from(t.is_contribution),
+            sql_escape(&t.import_source),
+            gen_id_sql,
+            gen_to_id_sql,
+            sql_escape(&t.created_at),
+            sql_escape(&t.created_at),
+        ));
+    }
+
+    sql.push_str("COMMIT;\n");
+
+    conn.execute_batch(&sql).await.map_err(|e| e.to_string())?;
+
+    Ok(rows.len() as i64)
 }
 
 // ---- thin command wrappers ----
@@ -700,4 +919,241 @@ pub async fn bulk_create_transactions_with_snapshots_cmd(
 ) -> Result<i64, String> {
     let conn = db.conn().await?;
     bulk_create_transactions_with_snapshots(&conn, &transactions).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libsql::Builder;
+
+    async fn setup_db() -> Connection {
+        let db = Builder::new_local(":memory:").build().await.unwrap();
+        let conn = db.connect().unwrap();
+        crate::migrations::run(&conn).await.unwrap();
+        conn
+    }
+
+    async fn insert_account(conn: &Connection, name: &str, ty: &str) -> i32 {
+        conn.execute(
+            "INSERT INTO account (name, type, is_active, include_in_fire_calculations, created_at) \
+             VALUES (?1, ?2, 1, 0, '2024-01-01')",
+            params![name, ty],
+        )
+        .await
+        .unwrap();
+        conn.last_insert_rowid() as i32
+    }
+
+    async fn insert_balance(conn: &Connection, account_id: i32, balance: f64, date: &str) {
+        conn.execute(
+            "INSERT INTO account_balance (account_id, balance, recorded_at) VALUES (?1, ?2, ?3)",
+            params![account_id, balance, date],
+        )
+        .await
+        .unwrap();
+    }
+
+    fn make_txn(account_id: i32, ty: &str, amount: f64, date: &str) -> NewTransaction {
+        NewTransaction {
+            account_id,
+            transfer_account_id: None,
+            amount,
+            description: format!("{ty} {amount}"),
+            date: date.to_string(),
+            r#type: ty.to_string(),
+            category: "test".to_string(),
+            is_contribution: false,
+            import_source: "csv".to_string(),
+            update_balance: true,
+            created_at: "2024-01-01T00:00:00".to_string(),
+        }
+    }
+
+    fn make_transfer(from: i32, to: i32, amount: f64, date: &str) -> NewTransaction {
+        NewTransaction {
+            account_id: from,
+            transfer_account_id: Some(to),
+            amount,
+            description: format!("transfer {amount}"),
+            date: date.to_string(),
+            r#type: "transfer".to_string(),
+            category: "transfer".to_string(),
+            is_contribution: false,
+            import_source: "csv".to_string(),
+            update_balance: true,
+            created_at: "2024-01-01T00:00:00".to_string(),
+        }
+    }
+
+    // Reads (account_id, amount, date, type, generated_balance, generated_balance_to) per txn,
+    // ordered by date then id. The balance values verify that snapshot linking is correct.
+    async fn read_txn_summaries(
+        conn: &Connection,
+    ) -> Vec<(i32, f64, String, String, Option<f64>, Option<f64>)> {
+        let mut rows = conn
+            .query(
+                "SELECT t.account_id, t.amount, t.date, t.type, b1.balance, b2.balance \
+                 FROM txn t \
+                 LEFT JOIN account_balance b1 ON b1.id = t.generated_balance_id \
+                 LEFT JOIN account_balance b2 ON b2.id = t.generated_balance_to_id \
+                 ORDER BY t.date, t.id",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().await.unwrap() {
+            out.push((
+                r.get::<i32>(0).unwrap(),
+                r.get::<f64>(1).unwrap(),
+                r.get::<String>(2).unwrap(),
+                r.get::<String>(3).unwrap(),
+                r.get::<Option<f64>>(4).unwrap(),
+                r.get::<Option<f64>>(5).unwrap(),
+            ));
+        }
+        out
+    }
+
+    // Reference implementation: the original row-by-row path using create_transaction.
+    // Used only in tests to verify the new batched path produces identical output.
+    async fn row_by_row_with_snapshots(
+        conn: &Connection,
+        rows: &[NewTransaction],
+    ) -> Result<i64, String> {
+        conn.execute("BEGIN", ()).await.map_err(|e| e.to_string())?;
+        let mut count = 0i64;
+        for t in rows {
+            if let Err(e) = create_transaction(conn, t).await {
+                conn.execute("ROLLBACK", ()).await.ok();
+                return Err(e);
+            }
+            count += 1;
+        }
+        conn.execute("COMMIT", ()).await.map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
+    #[tokio::test]
+    async fn income_and_expense_accumulate_running_balance() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking").await;
+
+        let rows = vec![
+            make_txn(acc, "income", 1000.0, "2024-01-15"),
+            make_txn(acc, "expense", 500.0, "2024-01-20"),
+            make_txn(acc, "income", 200.0, "2024-01-20"),
+        ];
+
+        let count = bulk_create_transactions_with_snapshots(&conn, &rows).await.unwrap();
+        assert_eq!(count, 3);
+
+        let sums = read_txn_summaries(&conn).await;
+        assert_eq!(sums.len(), 3);
+        // 0 + 1000 = 1000
+        assert_eq!(sums[0].4, Some(1000.0));
+        // 1000 - 500 = 500
+        assert_eq!(sums[1].4, Some(500.0));
+        // 500 + 200 = 700 (two rows share the same date; second sees first's snapshot)
+        assert_eq!(sums[2].4, Some(700.0));
+    }
+
+    #[tokio::test]
+    async fn transfer_writes_two_snapshots() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let savings = insert_account(&conn, "Savings", "savings").await;
+        insert_balance(&conn, checking, 1000.0, "2024-01-01").await;
+        insert_balance(&conn, savings, 500.0, "2024-01-01").await;
+
+        let rows = vec![make_transfer(checking, savings, 300.0, "2024-01-15")];
+        bulk_create_transactions_with_snapshots(&conn, &rows).await.unwrap();
+
+        let sums = read_txn_summaries(&conn).await;
+        assert_eq!(sums.len(), 1);
+        assert_eq!(sums[0].4, Some(700.0)); // checking: 1000 - 300
+        assert_eq!(sums[0].5, Some(800.0)); // savings:  500 + 300
+    }
+
+    #[tokio::test]
+    async fn manual_balance_in_date_range_acts_as_anchor() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking").await;
+        // Manual balance at 2024-02-01 — between the two import rows.
+        insert_balance(&conn, acc, 2000.0, "2024-02-01").await;
+
+        let rows = vec![
+            make_txn(acc, "income", 100.0, "2024-01-15"), // before the manual balance
+            make_txn(acc, "income", 200.0, "2024-03-01"), // after  the manual balance
+        ];
+        bulk_create_transactions_with_snapshots(&conn, &rows).await.unwrap();
+
+        let sums = read_txn_summaries(&conn).await;
+        assert_eq!(sums.len(), 2);
+        // Row at 2024-01-15: no snap before this date → base 0, balance after = 100
+        assert_eq!(sums[0].4, Some(100.0));
+        // Row at 2024-03-01: latest snap at or before this date is the manual 2000
+        // (trumps the 100 snap at 2024-01-15), balance after = 2000 + 200 = 2200
+        assert_eq!(sums[1].4, Some(2200.0));
+    }
+
+    #[tokio::test]
+    async fn liability_expense_increases_balance() {
+        let conn = setup_db().await;
+        let credit = insert_account(&conn, "Credit Card", "liability").await;
+
+        let rows = vec![
+            make_txn(credit, "expense", 200.0, "2024-01-15"),
+            make_txn(credit, "income", 50.0, "2024-01-20"), // payment / refund
+        ];
+        bulk_create_transactions_with_snapshots(&conn, &rows).await.unwrap();
+
+        let sums = read_txn_summaries(&conn).await;
+        // Expense raises liability balance: 0 + 200 = 200
+        assert_eq!(sums[0].4, Some(200.0));
+        // Income (payment) lowers liability balance: 200 - 50 = 150
+        assert_eq!(sums[1].4, Some(150.0));
+    }
+
+    #[tokio::test]
+    async fn batch_matches_row_by_row_output() {
+        // Run the old reference path on conn1, the new batched path on conn2,
+        // then assert that every txn's linked balance values are identical.
+        let conn1 = setup_db().await;
+        let c1 = insert_account(&conn1, "Checking", "checking").await;
+        let s1 = insert_account(&conn1, "Savings", "savings").await;
+        let cr1 = insert_account(&conn1, "Credit Card", "liability").await;
+        insert_balance(&conn1, c1, 5000.0, "2024-01-01").await;
+        insert_balance(&conn1, s1, 2000.0, "2024-01-01").await;
+
+        let conn2 = setup_db().await;
+        let c2 = insert_account(&conn2, "Checking", "checking").await;
+        let s2 = insert_account(&conn2, "Savings", "savings").await;
+        let cr2 = insert_account(&conn2, "Credit Card", "liability").await;
+        insert_balance(&conn2, c2, 5000.0, "2024-01-01").await;
+        insert_balance(&conn2, s2, 2000.0, "2024-01-01").await;
+
+        // Account IDs are deterministic (1, 2, 3) in both fresh DBs.
+        assert_eq!((c1, s1, cr1), (c2, s2, cr2));
+
+        let rows1 = vec![
+            make_txn(c1, "income", 3000.0, "2024-01-15"),
+            make_txn(c1, "expense", 150.0, "2024-01-20"),
+            make_transfer(c1, s1, 500.0, "2024-01-25"),
+            make_txn(cr1, "expense", 200.0, "2024-02-01"),
+            make_txn(c1, "income", 100.0, "2024-02-05"),
+        ];
+        let rows2 = rows1.clone();
+
+        row_by_row_with_snapshots(&conn1, &rows1).await.unwrap();
+        bulk_create_transactions_with_snapshots(&conn2, &rows2).await.unwrap();
+
+        let sums1 = read_txn_summaries(&conn1).await;
+        let sums2 = read_txn_summaries(&conn2).await;
+
+        assert_eq!(sums1.len(), sums2.len(), "row count mismatch");
+        for (i, (a, b)) in sums1.iter().zip(sums2.iter()).enumerate() {
+            assert_eq!(a, b, "txn {i} differs:\n  row-by-row: {a:?}\n  batched:    {b:?}");
+        }
+    }
 }

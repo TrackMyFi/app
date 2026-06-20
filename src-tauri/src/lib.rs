@@ -39,9 +39,16 @@ pub fn run() {
                 lock: tokio::sync::Mutex::new(()),
             });
 
-            // Background backstop sync (only meaningful in synced mode; do_sync no-ops otherwise).
+            // Background sync (only meaningful in synced mode; the calls no-op otherwise).
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // Immediate startup catch-up: pull the cloud + migrate + refresh
+                // the UI, off the critical path so the window already shows
+                // last-synced local data instead of waiting on the network.
+                if let Err(e) = sync::initial_catch_up(&handle).await {
+                    eprintln!("warning: initial sync catch-up failed: {e}");
+                }
+                // Backstop pull for long-open sessions.
                 let mut tick =
                     tokio::time::interval(std::time::Duration::from_secs(sync::SYNC_INTERVAL_SECS));
                 tick.tick().await; // consume the immediate first tick
