@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { CATEGORY_LABELS } from '../lib/transactions/constants'
-import { isLiability } from '../lib/accountTypes'
+import { classifyFlow } from '../lib/transactions/flow'
 import type { Transaction } from '../lib/types/Transaction'
 import type { Account } from '../lib/types/Account'
 
@@ -9,14 +9,6 @@ const props = defineProps<{
   transactions: Transaction[]
   accounts: Account[]
 }>()
-
-function effectiveDelta(t: Transaction): number {
-  if (t.type === 'income') return t.amount
-  if (t.type === 'expense') return -t.amount
-  if (t.transferAccountId == null) return 0
-  const destType = props.accounts.find(a => a.id === t.transferAccountId)?.type ?? ''
-  return isLiability(destType) ? -t.amount : 0
-}
 
 const CATEGORY_ORDER = ['savings', 'fixed', 'discretionary', 'uncategorized'] as const
 
@@ -32,12 +24,10 @@ const totals = computed(() => {
   const byCategory = new Map<string, number>()
 
   for (const t of props.transactions) {
-    const delta = effectiveDelta(t)
-    if (delta > 0) {
-      income += delta
-    } else if (delta < 0) {
-      const cat = t.category || 'uncategorized'
-      byCategory.set(cat, (byCategory.get(cat) ?? 0) + Math.abs(delta))
+    const f = classifyFlow(t, props.accounts)
+    income += f.inflow
+    if (f.outflow > 0 && f.bucket) {
+      byCategory.set(f.bucket, (byCategory.get(f.bucket) ?? 0) + f.outflow)
     }
   }
 

@@ -2,8 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from '../lib/csv/mapping'
-import { bulkCreateTransactions, bulkCreateTransactionsWithSnapshots } from '../lib/api/transactions'
+import { applyMapping, autoDetectMapping, detectDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from '../lib/csv/mapping'
+import { bulkCreateTransactions, bulkCreateTransactionsWithSnapshots, listTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
 import { useToast } from '@nuxt/ui/composables'
@@ -109,16 +109,22 @@ const runningBalances = computed(() =>
     : [],
 )
 
-const dupes = computed(() =>
+const existingRefs = ref<ExistingRef[]>([])
+
+const exactDupes = computed(() =>
   accountId.value == null
     ? []
-    : detectDuplicates(
-        parsed.value,
-        txnStore.page.rows.map((r) => ({
-          accountId: r.accountId, date: r.date, amount: r.amount, description: r.description,
-        })),
-        accountId.value,
-      ),
+    : detectDuplicates(parsed.value, existingRefs.value, accountId.value),
+)
+
+const transferDupes = computed(() =>
+  accountId.value == null
+    ? []
+    : detectTransferCounterparts(parsed.value, existingRefs.value, accountId.value),
+)
+
+const dupes = computed(() =>
+  parsed.value.map((_, i) => Boolean(exactDupes.value[i]) || Boolean(transferDupes.value[i])),
 )
 
 function dupeRowClass(row: { index: number }) {
@@ -261,10 +267,26 @@ watch(parsed, (newParsed) => {
   )
 })
 
-watch(accountId, (newId) => {
-  if (newId == null) return
+watch(accountId, async (newId) => {
+  if (newId == null) {
+    existingRefs.value = []
+    return
+  }
   const acct = accountsStore.accounts.find((a) => a.id === newId)
   if (acct && isInvestment(acct.type)) generateSnapshots.value = false
+
+  // The backend filter is `(account_id = ? OR transfer_account_id = ?)`, so this
+  // returns both this account's own rows (for exact dedup) and transfers whose
+  // other side is this account (for transfer-counterpart dedup).
+  const page = await listTransactions({ accountId: newId, limit: 1_000_000 })
+  existingRefs.value = page.rows.map((r) => ({
+    accountId: r.accountId,
+    date: r.date,
+    amount: r.amount,
+    description: r.description,
+    type: r.type,
+    transferAccountId: r.transferAccountId,
+  }))
 })
 
 watch(priorSnapshot, (snap) => {
@@ -663,7 +685,13 @@ async function confirmImport() {
             <UTooltip :text="row.original.description" class="min-w-0">
               <span class="block truncate">{{ row.original.description }}</span>
             </UTooltip>
-            <span v-if="dupes[row.index]" class="text-xs text-amber-600 shrink-0">(dup)</span>
+            <span v-if="exactDupes[row.index]" class="text-xs text-amber-600 shrink-0">(dup)</span>
+            <UTooltip
+              v-else-if="transferDupes[row.index]"
+              text="Looks like the other side of an existing transfer — unchecked to avoid double-counting."
+            >
+              <span class="text-xs text-amber-600 shrink-0">(transfer dup)</span>
+            </UTooltip>
           </div>
         </template>
         <template #type-cell="{ row }">

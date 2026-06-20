@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { VisXYContainer, VisGroupedBar, VisLine, VisAxis, VisTooltip, VisCrosshair } from '@unovis/vue'
 import { GroupedBar } from '@unovis/ts'
 import { DateTime } from 'luxon'
-import { isLiability } from '../lib/accountTypes'
+import { classifyFlow } from '../lib/transactions/flow'
 import type { Transaction } from '../lib/types/Transaction'
 import type { Account } from '../lib/types/Account'
 
@@ -14,14 +14,6 @@ const props = defineProps<{
 
 // ─── Data aggregation ─────────────────────────────────────────────────────────
 
-function effectiveDelta(t: Transaction): number {
-  if (t.type === 'income') return t.amount
-  if (t.type === 'expense') return -t.amount
-  if (t.transferAccountId == null) return 0
-  const destType = props.accounts.find(a => a.id === t.transferAccountId)?.type ?? ''
-  return isLiability(destType) ? -t.amount : 0
-}
-
 type MonthPoint = { t: number; income: number; expense: number; net: number }
 
 const monthlyAggregates = computed((): MonthPoint[] => {
@@ -30,10 +22,11 @@ const monthlyAggregates = computed((): MonthPoint[] => {
     const month = t.date.slice(0, 7)
     if (!byMonth.has(month)) byMonth.set(month, { income: 0, expense: 0, net: 0 })
     const entry = byMonth.get(month)!
-    const delta = effectiveDelta(t)
-    if (delta > 0) entry.income += delta
-    else if (delta < 0) entry.expense += Math.abs(delta)
-    entry.net += delta
+    const f = classifyFlow(t, props.accounts)
+    entry.income += f.inflow
+    // Spending only — savings/contributions are excluded so they don't read as expenses.
+    if (!f.isSavings) entry.expense += f.outflow
+    entry.net += f.inflow - (f.isSavings ? 0 : f.outflow)
   }
   return [...byMonth.entries()]
     .sort(([a], [b]) => a.localeCompare(b))

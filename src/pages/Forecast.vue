@@ -11,12 +11,13 @@ import {
   type ForecastInputs, type VariantForecast, type FireVariant,
 } from '../lib/fire'
 import ForecastChart from '../components/ForecastChart.vue'
+import { CHART_COLORS } from '../lib/forecastColors'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
 const contrib = useContributionsStore()
 
-const open = ref(false) // what-if drawer
+const open = ref(false)
 
 onMounted(async () => {
   await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
@@ -26,7 +27,6 @@ const inputs = computed(() => activeFireInputs(acc.accounts, acc.allBalances))
 const investable = computed(() => investableNetWorth(inputs.value.accounts, inputs.value.balances))
 const asOf = computed(() => DateTime.now().toISODate()!)
 
-// Baseline derived monthly contribution (actual trailing-12mo, else savingsRate estimate).
 const baseline = computed(() => {
   if (!fp.profile) return { monthly: 0, estimated: true }
   const rate = savingsRate(inputs.value.accounts, inputs.value.balances, fp.profile.annualIncome, asOf.value)
@@ -34,7 +34,6 @@ const baseline = computed(() => {
   return derivedMonthlyContribution(contrib.txns, asOf.value, estimateMonthly)
 })
 
-// What-if override state. null = use baseline/profile value.
 const ov = reactive<{ monthly: number | null; returnRate: number | null; inflation: number | null; retireAge: number | null }>({
   monthly: null, returnRate: null, inflation: null, retireAge: null,
 })
@@ -45,7 +44,6 @@ function reset() {
   ov.monthly = null; ov.returnRate = null; ov.inflation = null; ov.retireAge = null
 }
 
-// Effective slider values (override ?? baseline/profile).
 const effMonthly = computed(() => ov.monthly ?? baseline.value.monthly)
 const effReturn = computed(() => ov.returnRate ?? fp.profile?.expectedReturnRate ?? 0)
 const effInflation = computed(() => ov.inflation ?? fp.profile?.inflationRate ?? 0)
@@ -71,7 +69,6 @@ const forecasts = computed<VariantForecast[]>(() =>
 
 const regular = computed(() => forecasts.value.find(f => f.variant === 'regular') ?? null)
 
-// Chart horizon: months to the Regular FI date, else months to retirement, else 30y. Padded.
 const chartPoints = computed(() => {
   const fi = forecastInputs.value
   const reg = regular.value
@@ -86,12 +83,6 @@ const chartPoints = computed(() => {
 const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const labels: Record<FireVariant, string> = { lean: 'Lean FIRE', regular: 'FIRE', fat: 'Fat FIRE' }
 
-function coastText(v: VariantForecast): string {
-  if (v.coasting) return 'Coasting ✓'
-  return v.coastCrossingDate ? `by ${v.coastCrossingDate.toFormat('LLL yyyy')}` : '—'
-}
-
-// Slider models bound to override values, seeded from effective values.
 const sMonthly = computed({ get: () => effMonthly.value, set: v => { ov.monthly = v ?? null } })
 const sReturn = computed({ get: () => effReturn.value, set: v => { ov.returnRate = v ?? null } })
 const sInflation = computed({ get: () => effInflation.value, set: v => { ov.inflation = v ?? null } })
@@ -102,7 +93,7 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
   <div class="p-6 space-y-6">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Forecast</h1>
-      <UButton icon="i-ph-sliders-horizontal" color="neutral" variant="outline" @click="open = true">
+      <UButton v-if="fp.profile" icon="i-ph-sliders-horizontal" color="neutral" variant="outline" @click="open = true">
         What-if
       </UButton>
     </div>
@@ -112,68 +103,155 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
       <UButton size="xs" color="neutral" variant="ghost" @click="reset">Reset to baseline</UButton>
     </div>
 
-    <div v-if="regular" class="border border-default rounded-lg p-4">
-      <h2 class="font-semibold mb-2">Projected growth — {{ labels.regular }}</h2>
-      <ForecastChart :points="chartPoints" :fire-number="regular.fireNumber" :coast-number="regular.coastNumber" />
-      <div class="flex gap-4 text-xs text-muted mt-2">
-        <span><span class="inline-block w-3 border-t-2 align-middle" style="border-color:#6366f1" /> Investable</span>
-        <span><span class="inline-block w-3 border-t-2 border-dashed align-middle" style="border-color:#22c55e" /> FIRE number</span>
-        <span><span class="inline-block w-3 border-t-2 border-dashed align-middle" style="border-color:#f59e0b" /> Coast number</span>
-      </div>
+    <!-- Empty state -->
+    <div v-if="!fp.profile" class="border border-default rounded-lg p-10 text-center">
+      <span class="i-ph-chart-line-up text-4xl text-muted block mx-auto mb-3" />
+      <div class="font-semibold text-heading mb-1">No FIRE profile configured</div>
+      <p class="text-sm text-muted mb-4">Set up your income, target expenses, and return assumptions to see projections.</p>
+      <UButton to="/settings" color="neutral" variant="outline">Go to Settings</UButton>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <UCard v-for="v in forecasts" :key="v.variant" :class="v.variant === 'regular' ? 'ring-1 ring-primary' : ''">
-        <div class="text-sm text-muted uppercase tracking-wide">{{ labels[v.variant] }}</div>
-        <div class="text-xl font-semibold mt-1">{{ fmt(v.fireNumber) }}</div>
-        <dl class="mt-3 space-y-1 text-sm">
-          <div class="flex justify-between"><dt class="text-muted">Projected FI</dt>
-            <dd>{{ v.fiDate ? v.fiDate.toFormat('LLL yyyy') : '—' }}</dd></div>
-          <div class="flex justify-between"><dt class="text-muted">Years to FI</dt>
-            <dd>{{ v.yearsToFi !== null ? v.yearsToFi.toFixed(1) : '—' }}</dd></div>
-          <div class="flex justify-between"><dt class="text-muted">Coast number</dt>
-            <dd>{{ fmt(v.coastNumber) }}</dd></div>
-          <div class="flex justify-between"><dt class="text-muted">Coast status</dt>
-            <dd :class="v.coasting ? 'text-success' : ''">{{ coastText(v) }}</dd></div>
-          <div class="flex justify-between"><dt class="text-muted">Required / mo</dt>
-            <dd>{{ v.requiredMonthly !== null ? fmt(v.requiredMonthly) : '—' }}</dd></div>
-        </dl>
-      </UCard>
-    </div>
+    <template v-else>
+      <!-- Hero + chart -->
+      <div v-if="regular" class="border border-default rounded-lg overflow-hidden">
+        <div class="px-4 pt-4 pb-4 border-b border-default">
+          <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-1">{{ labels.regular }} date</div>
+          <div class="text-3xl font-bold font-mono text-heading leading-none">
+            {{ regular.fiDate ? regular.fiDate.toFormat('LLL yyyy') : '—' }}
+          </div>
+          <div class="flex gap-4 mt-2 text-sm text-muted">
+            <span v-if="regular.yearsToFi !== null" class="font-mono">{{ regular.yearsToFi.toFixed(1) }}y away</span>
+            <span class="font-mono">{{ fmt(regular.fireNumber) }} target</span>
+          </div>
+        </div>
+        <div class="p-4 pt-3">
+          <ForecastChart :points="chartPoints" :fire-number="regular.fireNumber" :coast-number="regular.coastNumber" />
+          <div class="flex gap-4 text-xs text-muted mt-2">
+            <span>
+              <span class="inline-block w-3 border-t-2 align-middle" :style="{ borderColor: CHART_COLORS.portfolio }" />
+              Investable
+            </span>
+            <span>
+              <span class="inline-block w-3 border-t-2 border-dashed align-middle" :style="{ borderColor: CHART_COLORS.fire }" />
+              FIRE number
+            </span>
+            <span>
+              <span class="inline-block w-3 border-t-2 border-dashed align-middle" :style="{ borderColor: CHART_COLORS.coast }" />
+              Coast number
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Variant cards -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <UCard v-for="v in forecasts" :key="v.variant" :class="v.variant === 'regular' ? 'ring-1 ring-primary' : ''">
+          <div class="text-xs font-semibold text-muted uppercase tracking-wider">{{ labels[v.variant] }}</div>
+          <div class="text-2xl font-bold font-mono mt-1">{{ fmt(v.fireNumber) }}</div>
+          <dl class="mt-3 space-y-1 text-sm">
+            <div class="flex justify-between">
+              <dt class="text-muted">Projected FI</dt>
+              <dd>{{ v.fiDate ? v.fiDate.toFormat('LLL yyyy') : '—' }}</dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-muted">Years to FI</dt>
+              <dd class="font-mono">{{ v.yearsToFi !== null ? v.yearsToFi.toFixed(1) : '—' }}</dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-muted">Coast number</dt>
+              <dd class="font-mono">{{ fmt(v.coastNumber) }}</dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-muted">Coast status</dt>
+              <dd :class="v.coasting ? 'text-success' : ''">
+                <template v-if="v.coasting">
+                  <span class="i-ph-check-circle size-4 inline-block align-text-bottom mr-0.5" />Coasting
+                </template>
+                <template v-else>
+                  {{ v.coastCrossingDate ? `by ${v.coastCrossingDate.toFormat('LLL yyyy')}` : '—' }}
+                </template>
+              </dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-muted">Required monthly</dt>
+              <dd class="font-mono">{{ v.requiredMonthly !== null ? fmt(v.requiredMonthly) : '—' }}</dd>
+            </div>
+          </dl>
+        </UCard>
+      </div>
+    </template>
 
     <USlideover v-model:open="open" title="What-if scenario" side="right">
       <template #body>
         <div class="space-y-6">
           <div>
-            <div class="flex justify-between text-sm mb-1">
-              <label>Monthly contribution</label><span>{{ fmt(sMonthly) }}</span>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Monthly contribution</label>
+              <input
+                type="number"
+                :value="Math.round(effMonthly)"
+                @change="ov.monthly = Number(($event.target as HTMLInputElement).value)"
+                :min="0" :max="20000" :step="100"
+                class="w-24 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+              />
             </div>
             <USlider v-model="sMonthly" :min="0" :max="20000" :step="100" />
+            <p v-if="baseline.estimated" class="text-xs text-muted mt-1.5">
+              Estimated — less than 12 months of contribution history.
+            </p>
           </div>
+
           <div>
-            <div class="flex justify-between text-sm mb-1">
-              <label>Expected return</label><span>{{ (sReturn * 100).toFixed(1) }}%</span>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Expected return</label>
+              <div class="flex items-center gap-0.5">
+                <input
+                  type="number"
+                  :value="(sReturn * 100).toFixed(1)"
+                  @change="ov.returnRate = Number(($event.target as HTMLInputElement).value) / 100"
+                  :min="0" :max="15" :step="0.5"
+                  class="w-16 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+                />
+                <span class="text-sm text-muted">%</span>
+              </div>
             </div>
             <USlider v-model="sReturn" :min="0" :max="0.15" :step="0.005" />
           </div>
+
           <div>
-            <div class="flex justify-between text-sm mb-1">
-              <label>Inflation</label><span>{{ (sInflation * 100).toFixed(1) }}%</span>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Inflation</label>
+              <div class="flex items-center gap-0.5">
+                <input
+                  type="number"
+                  :value="(sInflation * 100).toFixed(1)"
+                  @change="ov.inflation = Number(($event.target as HTMLInputElement).value) / 100"
+                  :min="0" :max="10" :step="0.5"
+                  class="w-16 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+                />
+                <span class="text-sm text-muted">%</span>
+              </div>
             </div>
             <USlider v-model="sInflation" :min="0" :max="0.1" :step="0.005" />
           </div>
+
           <div>
-            <div class="flex justify-between text-sm mb-1">
-              <label>Retirement age</label><span>{{ sRetire }}</span>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Retirement age</label>
+              <input
+                type="number"
+                :value="sRetire"
+                @change="ov.retireAge = Number(($event.target as HTMLInputElement).value)"
+                :min="fp.currentAge || 18" :max="80" :step="1"
+                class="w-16 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+              />
             </div>
             <USlider v-model="sRetire" :min="fp.currentAge || 18" :max="80" :step="1" />
           </div>
+
           <div v-if="isScenario" class="pt-2 border-t border-default">
             <UButton block color="neutral" variant="soft" @click="reset">Reset to baseline</UButton>
           </div>
-          <p v-if="baseline.estimated" class="text-xs text-muted">
-            Baseline contribution is estimated — less than 12 months of contribution history.
-          </p>
         </div>
       </template>
     </USlideover>

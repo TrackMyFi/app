@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMapping, autoDetectMapping, detectDuplicates, parseAmount, type MappingConfig } from './mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from './mapping'
 
 const config: MappingConfig = {
   dateColumn: 'Posting Date',
@@ -69,6 +69,68 @@ describe('detectDuplicates', () => {
     const parsed = applyMapping(rows, config)
     const existing = [{ accountId: 99, date: '2026-03-01', amount: 40, description: 'Coffee' }]
     expect(detectDuplicates(parsed, existing, 7)).toEqual([false, false])
+  })
+})
+
+describe('detectTransferCounterparts', () => {
+  // Importing the Citi (id 5) statement. An existing transfer lives on the PNC
+  // account (id 7) pointing at Citi — the same real-world card payment.
+  const existingTransfer: ExistingRef = {
+    accountId: 7,
+    date: '2026-05-21',
+    amount: 236.83,
+    description: 'CITI CARD ONLINE PAYMENT ACH WEB',
+    type: 'transfer',
+    transferAccountId: 5,
+  }
+
+  const citiRow = [
+    { 'Posting Date': '05/20/2026', Amount: '236.83', Description: 'ONLINE PAYMENT, THANK YOU' },
+  ]
+
+  it('flags the counterpart despite a different description and a 1-day date gap', () => {
+    const parsed = applyMapping(citiRow, { ...config, amountSign: 'positive-is-expense' })
+    expect(detectTransferCounterparts(parsed, [existingTransfer], 5)).toEqual([true])
+  })
+
+  it('does not flag when the date is outside the ±3-day window', () => {
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/26/2026', Amount: '236.83', Description: 'ONLINE PAYMENT, THANK YOU' }],
+      config,
+    )
+    expect(detectTransferCounterparts(parsed, [existingTransfer], 5)).toEqual([false])
+  })
+
+  it('does not flag when amounts differ', () => {
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/20/2026', Amount: '100.00', Description: 'ONLINE PAYMENT, THANK YOU' }],
+      config,
+    )
+    expect(detectTransferCounterparts(parsed, [existingTransfer], 5)).toEqual([false])
+  })
+
+  it("does not flag when the existing transfer's other side is a different account", () => {
+    const parsed = applyMapping(citiRow, config)
+    // Importing account 9, but the transfer's other side is account 5.
+    expect(detectTransferCounterparts(parsed, [existingTransfer], 9)).toEqual([false])
+  })
+
+  it('does not flag a plain (non-transfer) existing row of the same amount', () => {
+    const parsed = applyMapping(citiRow, config)
+    const existing: ExistingRef = { ...existingTransfer, type: 'expense', transferAccountId: null }
+    expect(detectTransferCounterparts(parsed, [existing], 5)).toEqual([false])
+  })
+
+  it('consumes each existing transfer once', () => {
+    const parsed = applyMapping(
+      [
+        { 'Posting Date': '05/20/2026', Amount: '236.83', Description: 'ONLINE PAYMENT, THANK YOU' },
+        { 'Posting Date': '05/20/2026', Amount: '236.83', Description: 'ANOTHER PAYMENT' },
+      ],
+      config,
+    )
+    // Only one existing transfer, so only one of the two rows is flagged.
+    expect(detectTransferCounterparts(parsed, [existingTransfer], 5)).toEqual([true, false])
   })
 })
 

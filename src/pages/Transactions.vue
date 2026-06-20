@@ -3,8 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { DateTime } from 'luxon'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
-import { transactionTypeItems, categoryItems, labelForTransactionType, labelForCategory } from '../lib/transactions/constants'
-import { isLiability } from '../lib/accountTypes'
+import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
+import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
 import * as api from '../lib/api/transactions'
 import TransactionForm from '../components/TransactionForm.vue'
 import ImportWizard from '../components/ImportWizard.vue'
@@ -106,34 +106,16 @@ async function loadYearData() {
 
 // ─── Totals ────────────────────────────────────────────────────────────────────
 
-function effectiveDelta(t: Transaction): number {
-  if (t.type === 'income') return t.amount
-  if (t.type === 'expense') return -t.amount
-  if (t.transferAccountId == null) return 0
-  const destType = accountsStore.accounts.find(a => a.id === t.transferAccountId)?.type ?? ''
-  return isLiability(destType) ? -t.amount : 0
+const monthlyTotals = computed(() => cashFlowTotals(store.page.rows, accountsStore.accounts))
+const annualTotals = computed(() => cashFlowTotals(yearTransactions.value, accountsStore.accounts))
+
+function formatSavingsRate(totals: { income: number; expense: number; savings: number; net: number }): string {
+  const rate = savingsRate(totals)
+  return rate == null ? '—' : (rate * 100).toFixed(1) + '%'
 }
 
-function cashFlowTotals(txns: Transaction[]) {
-  let income = 0, expense = 0, net = 0
-  for (const t of txns) {
-    if (t.type === 'income') income += t.amount
-    else if (t.type === 'expense') expense += t.amount
-    net += effectiveDelta(t)
-  }
-  return { income, expense, net }
-}
-
-const monthlyTotals = computed(() => cashFlowTotals(store.page.rows))
-const annualTotals = computed(() => cashFlowTotals(yearTransactions.value))
-
-function savingsRate(totals: { income: number; net: number }): string {
-  if (totals.income <= 0) return '—'
-  return ((totals.net / totals.income) * 100).toFixed(1) + '%'
-}
-
-const monthlySavingsRate = computed(() => savingsRate(monthlyTotals.value))
-const annualSavingsRate = computed(() => savingsRate(annualTotals.value))
+const monthlySavingsRate = computed(() => formatSavingsRate(monthlyTotals.value))
+const annualSavingsRate = computed(() => formatSavingsRate(annualTotals.value))
 
 // ─── Table ─────────────────────────────────────────────────────────────────────
 
@@ -143,7 +125,6 @@ const columns = [
   { accessorKey: 'date', header: 'Date' },
   { accessorKey: 'description', header: 'Description' },
   { id: 'account', header: 'Account' },
-  { id: 'type', header: 'Type' },
   { id: 'category', header: 'Category' },
   { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
   { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
@@ -156,6 +137,34 @@ function accountName(id: number | null): string {
 
 function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+}
+
+// ─── Amount direction indicator ──────────────────────────────────────────────
+
+const DIRECTION_COLOR: Record<FlowDirection, string> = {
+  inflow: 'text-success',
+  outflow: 'text-error',
+  neutral: 'text-muted',
+}
+
+// Transfers always use the ⇄ glyph; colour encodes the asset/liability direction.
+// Plain income/expense use a horizontal arrow: right = money in, left = money out.
+function flowIcon(t: Transaction): string {
+  const { direction, isTransfer } = classifyFlow(t, accountsStore.accounts)
+  if (isTransfer) return 'i-ph-arrows-left-right'
+  return direction === 'inflow' ? 'i-ph-arrow-right' : 'i-ph-arrow-left'
+}
+
+function flowColor(t: Transaction): string {
+  return DIRECTION_COLOR[classifyFlow(t, accountsStore.accounts).direction]
+}
+
+function directionLabel(t: Transaction): string {
+  const { direction, isTransfer } = classifyFlow(t, accountsStore.accounts)
+  if (!isTransfer) return direction === 'inflow' ? 'Income' : 'Expense'
+  if (direction === 'inflow') return 'Transfer in'
+  if (direction === 'outflow') return 'Transfer out'
+  return 'Transfer'
 }
 
 onMounted(async () => {
@@ -214,13 +223,13 @@ onMounted(async () => {
     </div>
 
     <!-- Stats row -->
-    <div class="grid grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
       <div class="border border-default rounded-lg p-4">
         <div class="flex items-center justify-between mb-3">
           <p class="text-sm font-medium text-heading">{{ monthLabel }}</p>
           <span class="text-xs text-muted">{{ store.page.totalCount }} transactions</span>
         </div>
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-5 gap-3">
           <div>
             <p class="text-base font-semibold tabular-nums text-success">{{ money(monthlyTotals.income) }}</p>
             <p class="text-xs text-muted mt-0.5">Income</p>
@@ -230,11 +239,15 @@ onMounted(async () => {
             <p class="text-xs text-muted mt-0.5">Expense</p>
           </div>
           <div>
+            <p class="text-base font-semibold tabular-nums text-info">{{ money(monthlyTotals.savings) }}</p>
+            <p class="text-xs text-muted mt-0.5">Savings</p>
+          </div>
+          <div>
             <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net) }}</p>
             <p class="text-xs text-muted mt-0.5">Net</p>
           </div>
           <div class="border-l border-default pl-3">
-            <p class="text-xl font-bold tabular-nums" :class="monthlyTotals.net >= 0 ? 'text-success' : 'text-error'">{{ monthlySavingsRate }}</p>
+            <p class="text-xl font-bold tabular-nums" :class="monthlyTotals.savings > 0 ? 'text-info' : 'text-muted'">{{ monthlySavingsRate }}</p>
             <p class="text-xs text-muted mt-0.5">Savings Rate</p>
           </div>
         </div>
@@ -243,7 +256,7 @@ onMounted(async () => {
         <div class="flex items-center justify-between mb-3">
           <p class="text-sm font-medium text-heading">{{ yearLabel }} Annual</p>
         </div>
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-5 gap-3">
           <div>
             <p class="text-base font-semibold tabular-nums text-success">{{ money(annualTotals.income) }}</p>
             <p class="text-xs text-muted mt-0.5">Income</p>
@@ -253,11 +266,15 @@ onMounted(async () => {
             <p class="text-xs text-muted mt-0.5">Expense</p>
           </div>
           <div>
+            <p class="text-base font-semibold tabular-nums text-info">{{ money(annualTotals.savings) }}</p>
+            <p class="text-xs text-muted mt-0.5">Savings</p>
+          </div>
+          <div>
             <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net) }}</p>
             <p class="text-xs text-muted mt-0.5">Net</p>
           </div>
           <div class="border-l border-default pl-3">
-            <p class="text-xl font-bold tabular-nums" :class="annualTotals.net >= 0 ? 'text-success' : 'text-error'">{{ annualSavingsRate }}</p>
+            <p class="text-xl font-bold tabular-nums" :class="annualTotals.savings > 0 ? 'text-info' : 'text-muted'">{{ annualSavingsRate }}</p>
             <p class="text-xs text-muted mt-0.5">Savings Rate</p>
           </div>
         </div>
@@ -299,9 +316,24 @@ onMounted(async () => {
           {{ accountName(row.original.accountId) }}
           <span v-if="row.original.type === 'transfer'"> → {{ accountName(row.original.transferAccountId) }}</span>
         </template>
-        <template #type-cell="{ row }">{{ labelForTransactionType(row.original.type) }}</template>
-        <template #category-cell="{ row }">{{ labelForCategory(row.original.category) }}</template>
-        <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
+        <template #category-cell="{ row }">
+          <div class="flex items-center gap-1.5">
+            <UBadge
+              v-if="row.original.isContribution"
+              color="info"
+              variant="subtle"
+              size="sm"
+              icon="i-ph-piggy-bank"
+            >Contribution</UBadge>
+            <span v-else>{{ labelForCategory(row.original.category) }}</span>
+          </div>
+        </template>
+        <template #amount-cell="{ row }">
+          <span class="inline-flex items-center justify-end gap-1.5" :class="flowColor(row.original)">
+            <UIcon :name="flowIcon(row.original)" class="size-4 shrink-0" :title="directionLabel(row.original)" />
+            {{ money(row.original.amount) }}
+          </span>
+        </template>
         <template #actions-cell="{ row }">
           <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
           <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(row.original)" />

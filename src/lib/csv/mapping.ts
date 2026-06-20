@@ -36,6 +36,8 @@ export interface ExistingRef {
   date: string
   amount: number
   description: string
+  type?: string
+  transferAccountId?: number | null
 }
 
 export interface CategoryRuleInput {
@@ -190,4 +192,45 @@ export function detectDuplicates(
       .map((e) => key(e.date, e.amount, e.description)),
   )
   return parsed.map((p) => seen.has(key(p.date, p.amount, p.description)))
+}
+
+/** Default ± window (in days) for matching the two sides of a transfer. */
+export const TRANSFER_DATE_TOLERANCE_DAYS = 3
+
+/**
+ * Return a parallel array: true where the parsed row looks like the counterpart
+ * of an existing transfer whose *other* side is `accountId`.
+ *
+ * A transfer between two of your accounts is stored as a single row on one
+ * account (with `transferAccountId` pointing at the other). When you later
+ * import the other account's statement, the same event shows up with a
+ * different description and often a slightly different date, so it can't be
+ * matched on the exact date|amount|description key. Here we match on amount +
+ * a date window instead, ignoring the description.
+ */
+export function detectTransferCounterparts(
+  parsed: ParsedTransaction[],
+  existing: ExistingRef[],
+  accountId: number,
+  toleranceDays = TRANSFER_DATE_TOLERANCE_DAYS,
+): boolean[] {
+  // Existing transfers whose other side is the account being imported into.
+  // Their primary accountId is necessarily a different account.
+  const counterparts = existing.filter(
+    (e) => e.type === 'transfer' && e.transferAccountId === accountId,
+  )
+  const consumed = new Array(counterparts.length).fill(false)
+
+  return parsed.map((p) => {
+    const pDate = DateTime.fromISO(p.date)
+    const matchIdx = counterparts.findIndex(
+      (c, i) =>
+        !consumed[i] &&
+        Math.abs(c.amount - p.amount) < 0.005 &&
+        Math.abs(DateTime.fromISO(c.date).diff(pDate, 'days').days) <= toleranceDays,
+    )
+    if (matchIdx === -1) return false
+    consumed[matchIdx] = true
+    return true
+  })
 }
