@@ -382,32 +382,6 @@ async fn balance_before(conn: &Connection, account_id: i32, date: &str) -> Resul
     }
 }
 
-/// The signed delta a transaction-generated snapshot contributes, or `None` when
-/// the snapshot is not tied to any transaction (a manual snapshot).
-async fn snapshot_delta(
-    conn: &Connection,
-    account_id: i32,
-    snapshot_id: i32,
-) -> Result<Option<f64>, String> {
-    let mut rows = conn
-        .query(
-            "SELECT type, amount, \
-             CASE WHEN generated_balance_to_id = ?1 THEN 1 ELSE 0 END AS to_side \
-             FROM txn WHERE generated_balance_id = ?1 OR generated_balance_to_id = ?1 LIMIT 1",
-            params![snapshot_id],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    match rows.next().await.map_err(|e| e.to_string())? {
-        Some(r) => {
-            let ty: String = r.get(0).map_err(|e| e.to_string())?;
-            let amount: f64 = r.get(1).map_err(|e| e.to_string())?;
-            let to_side = r.get::<i64>(2).map_err(|e| e.to_string())? != 0;
-            Ok(Some(side_delta(conn, account_id, &ty, amount, to_side).await?))
-        }
-        None => Ok(None),
-    }
-}
 
 /// Recompute every transaction-generated snapshot for `account_id` dated on or
 /// after `from_date`, walking chronologically and rebuilding each as
@@ -419,6 +393,11 @@ async fn snapshot_delta(
 /// Call this only from the single-transaction command paths. Bulk import feeds
 /// rows in ascending date order, so each new snapshot already lands at the end of
 /// the chain and re-projecting per row would be needless O(n^2) work.
+///
+/// When Turso sync is enabled, writes are forwarded over HTTP to the primary.
+/// This implementation collapses the previous ~3N round-trips (one SELECT + one
+/// UPDATE per snapshot) into 4 total: balance_before, chain load, is_liability,
+/// bulk txn fetch, and a single execute_batch for all UPDATEs.
 async fn reproject_account(
     conn: &Connection,
     account_id: i32,
@@ -444,24 +423,82 @@ async fn reproject_account(
         ));
     }
 
+    if chain.is_empty() {
+        return Ok(());
+    }
+
+    // Preload is_liability once; replaces the per-snapshot call that previously
+    // fired inside snapshot_delta() → side_delta() → is_liability().
+    let liability = is_liability(conn, account_id).await?;
+
+    // Load all txn delta data for this chain in one query — replaces the per-snapshot
+    // snapshot_delta() SELECT. The IN clause is safe: these are integer primary keys
+    // produced by the database itself.
+    let id_list: String = chain
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let txn_sql = format!(
+        "SELECT generated_balance_id, generated_balance_to_id, type, amount \
+         FROM txn \
+         WHERE generated_balance_id IN ({id_list}) OR generated_balance_to_id IN ({id_list})"
+    );
+    let mut txn_rows = conn
+        .query(&txn_sql, ())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Map: snapshot_id → signed delta for this account.
+    // A snapshot absent from this map is a manual anchor (resets running balance).
+    let mut delta_map: HashMap<i32, f64> = HashMap::new();
+    while let Some(r) = txn_rows.next().await.map_err(|e| e.to_string())? {
+        let gen_id: Option<i32> = r.get(0).map_err(|e| e.to_string())?;
+        let gen_to_id: Option<i32> = r.get(1).map_err(|e| e.to_string())?;
+        let ty: String = r.get(2).map_err(|e| e.to_string())?;
+        let amount: f64 = r.get(3).map_err(|e| e.to_string())?;
+
+        // to_side = false: this account is the source (or sole owner for non-transfers).
+        if let Some(id) = gen_id {
+            delta_map.insert(id, side_delta_pure(liability, &ty, amount, false));
+        }
+        // to_side = true: this account is the transfer destination.
+        if let Some(id) = gen_to_id {
+            delta_map.insert(id, side_delta_pure(liability, &ty, amount, true));
+        }
+    }
+
+    let mut updates: Vec<(f64, i32)> = Vec::new();
     for (id, current) in chain {
-        match snapshot_delta(conn, account_id, id).await? {
-            Some(delta) => {
+        match delta_map.get(&id) {
+            Some(&delta) => {
                 running += delta;
                 if (running - current).abs() > 1e-6 {
-                    conn.execute(
-                        "UPDATE account_balance SET balance = ?1 WHERE id = ?2",
-                        params![running, id],
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    updates.push((running, id));
                 }
             }
-            // Manual snapshot: an absolute anchor that resets the running balance.
+            // Manual snapshot: absolute anchor that resets the running balance.
             None => running = current,
         }
     }
-    Ok(())
+
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    // Single execute_batch for all UPDATEs — mirrors bulk_create_transactions_with_snapshots:
+    // one BEGIN/COMMIT = one HTTP request to the Turso primary instead of N round-trips.
+    let mut sql = String::with_capacity(updates.len() * 80 + 16);
+    sql.push_str("BEGIN;\n");
+    for (new_balance, snap_id) in &updates {
+        sql.push_str(&format!(
+            "UPDATE account_balance SET balance = {} WHERE id = {};\n",
+            new_balance, snap_id
+        ));
+    }
+    sql.push_str("COMMIT;\n");
+
+    conn.execute_batch(&sql).await.map(|_| ()).map_err(|e| e.to_string())
 }
 
 pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result<i32, String> {

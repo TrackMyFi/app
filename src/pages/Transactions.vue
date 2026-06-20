@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { DateTime } from 'luxon'
+import { useToast } from '@nuxt/ui/composables'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
@@ -16,6 +17,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
+const toast = useToast()
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
@@ -29,9 +31,20 @@ async function onSaved() { isModalOpen.value = false; await loadYearData() }
 const isImportOpen = ref(false)
 async function onImportDone() { isImportOpen.value = false; await loadYearData() }
 
+const removingId = ref<number | null>(null)
+
 async function removeRow(t: Transaction) {
   const ok = await confirm(`Delete "${t.description}"?`, { title: 'Delete transaction' })
-  if (ok) { await store.remove(t.id); await loadYearData() }
+  if (!ok) return
+  removingId.value = t.id
+  try {
+    await store.remove(t.id)
+    await loadYearData()
+  } catch (err) {
+    toast.add({ title: 'Failed to delete transaction', description: String(err), color: 'error' })
+  } finally {
+    removingId.value = null
+  }
 }
 
 // ─── Month navigation ──────────────────────────────────────────────────────────
@@ -336,7 +349,7 @@ onMounted(async () => {
         </template>
         <template #actions-cell="{ row }">
           <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
-          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(row.original)" />
+          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" :loading="removingId === row.original.id" :disabled="removingId !== null" @click="removeRow(row.original)" />
         </template>
       </UTable>
     </div>

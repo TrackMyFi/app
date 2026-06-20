@@ -13,6 +13,7 @@ const toast = useToast()
 
 const editingTarget = ref(false)
 const targetInput = ref<number | null>(null)
+const savingTarget = ref(false)
 
 const selectedDate = ref<DateTime>(DateTime.now().startOf('month'))
 
@@ -49,12 +50,18 @@ function cancelTargetEdit() {
 }
 
 async function saveTarget() {
-  if (targetInput.value !== null && targetInput.value >= 0) {
+  if (targetInput.value === null || targetInput.value < 0) return
+  savingTarget.value = true
+  try {
     await store.setTarget(targetInput.value)
     toast.add({ title: 'Budget target saved', color: 'success' })
+    editingTarget.value = false
+    targetInput.value = null
+  } catch (err) {
+    toast.add({ title: 'Failed to save target', description: String(err), color: 'error' })
+  } finally {
+    savingTarget.value = false
   }
-  editingTarget.value = false
-  targetInput.value = null
 }
 
 const detailTransactions = computed(() => {
@@ -161,7 +168,7 @@ onMounted(async () => {
                 @keyup.enter="saveTarget"
                 @keyup.escape="cancelTargetEdit"
               />
-              <UButton size="xs" @click="saveTarget">Save</UButton>
+              <UButton size="xs" :loading="savingTarget" :disabled="savingTarget" @click="saveTarget">Save</UButton>
             </div>
           </template>
           <template v-else>

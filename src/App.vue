@@ -39,6 +39,11 @@ onMounted(async () => {
 
 onUnmounted(() => unlistenRefresh?.())
 
+function isActive(to: string) {
+  if (to === '/') return route.path === '/'
+  return route.path.startsWith(to)
+}
+
 const links = [
   { label: 'Dashboard', to: '/', icon: 'i-ph-squares-four' },
   { label: 'Accounts', to: '/accounts', icon: 'i-ph-wallet' },
@@ -64,7 +69,12 @@ const links = [
           <RouterLink
             v-if="l.to"
             :to="l.to"
-            class="flex items-center gap-2 rounded px-3 py-2 hover:bg-elevated"
+            :class="[
+              'flex items-center gap-2 rounded px-3 py-2',
+              isActive(l.to)
+                ? 'bg-primary/10 text-primary font-medium'
+                : 'hover:bg-elevated',
+            ]"
           >
             <UIcon :name="l.icon" /> {{ l.label }}
           </RouterLink>

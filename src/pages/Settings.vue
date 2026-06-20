@@ -77,9 +77,18 @@ async function onSubmit() {
     hsaCoverage: form.hsaCoverage,
     onboardingCompleted: store.profile?.onboardingCompleted ?? false,
   }
-  await store.save(profile)
-  toast.add({ title: 'Profile updated', color: 'success' })
+  savingProfile.value = true
+  try {
+    await store.save(profile)
+    toast.add({ title: 'Profile updated', color: 'success' })
+  } catch (err) {
+    toast.add({ title: 'Failed to save profile', description: String(err), color: 'error' })
+  } finally {
+    savingProfile.value = false
+  }
 }
+
+const savingProfile = ref(false)
 
 const syncStore = useSyncStore()
 const syncUrl = ref('')
@@ -92,6 +101,8 @@ const showDeleteModal = ref(false)
 const categoryRules = ref<CategoryRule[]>([])
 const newRuleKeyword = ref('')
 const newRuleCategory = ref('discretionary')
+const savingRule = ref(false)
+const removingRuleId = ref<number | null>(null)
 
 const isSynced = computed(() => syncStore.status?.mode === 'synced')
 const lastSynced = computed(() => {
@@ -156,19 +167,33 @@ async function runSyncNow() {
 
 async function addCategoryRule() {
   if (!newRuleKeyword.value.trim()) return
-  await categoryRulesApi.createCategoryRule(
-    newRuleKeyword.value.trim().toLowerCase(),
-    newRuleCategory.value,
-    DateTime.now().toISO()!,
-  )
-  categoryRules.value = await categoryRulesApi.listCategoryRules()
-  newRuleKeyword.value = ''
-  newRuleCategory.value = 'discretionary'
+  savingRule.value = true
+  try {
+    await categoryRulesApi.createCategoryRule(
+      newRuleKeyword.value.trim().toLowerCase(),
+      newRuleCategory.value,
+      DateTime.now().toISO()!,
+    )
+    categoryRules.value = await categoryRulesApi.listCategoryRules()
+    newRuleKeyword.value = ''
+    newRuleCategory.value = 'discretionary'
+  } catch (err) {
+    toast.add({ title: 'Failed to add rule', description: String(err), color: 'error' })
+  } finally {
+    savingRule.value = false
+  }
 }
 
 async function removeCategoryRule(id: number) {
-  await categoryRulesApi.deleteCategoryRule(id)
-  categoryRules.value = await categoryRulesApi.listCategoryRules()
+  removingRuleId.value = id
+  try {
+    await categoryRulesApi.deleteCategoryRule(id)
+    categoryRules.value = await categoryRulesApi.listCategoryRules()
+  } catch (err) {
+    toast.add({ title: 'Failed to delete rule', description: String(err), color: 'error' })
+  } finally {
+    removingRuleId.value = null
+  }
 }
 
 const ruleColumns = [
@@ -229,7 +254,7 @@ const ruleColumns = [
             class="w-44"
           />
         </UFormField>
-        <UButton type="submit">Save</UButton>
+        <UButton type="submit" :loading="savingProfile" :disabled="savingProfile">Save</UButton>
       </UForm>
     </section>
 
@@ -322,7 +347,7 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
           <span class="font-mono text-xs">{{ row.original.keyword }}</span>
         </template>
         <template #actions-cell="{ row }">
-          <UButton size="xs" color="error" variant="ghost" @click="removeCategoryRule(row.original.id)">
+          <UButton size="xs" color="error" variant="ghost" :loading="removingRuleId === row.original.id" :disabled="removingRuleId !== null" @click="removeCategoryRule(row.original.id)">
             Remove
           </UButton>
         </template>
@@ -336,7 +361,7 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
           @keydown.enter="addCategoryRule"
         />
         <USelect v-model="newRuleCategory" :items="categoryItems" class="w-44" />
-        <UButton size="sm" variant="soft" :disabled="!newRuleKeyword.trim()" @click="addCategoryRule">
+        <UButton size="sm" variant="soft" :loading="savingRule" :disabled="!newRuleKeyword.trim() || savingRule" @click="addCategoryRule">
           Add rule
         </UButton>
       </div>

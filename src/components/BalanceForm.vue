@@ -13,16 +13,24 @@ const toast = useToast()
 
 const balance = ref<number>(0)
 const recordedAt = ref<string>(DateTime.now().toISODate()!)
+const saving = ref(false)
 
 async function onSubmit() {
-  await store.addBalanceSnapshot({
-    accountId: props.accountId,
-    balance: balance.value ?? 0,
-    recordedAt: recordedAt.value,
-  })
-  toast.add({ title: 'Balance recorded', color: 'success' })
-  balance.value = 0
-  recordedAt.value = DateTime.now().toISODate()!
+  saving.value = true
+  try {
+    await store.addBalanceSnapshot({
+      accountId: props.accountId,
+      balance: balance.value ?? 0,
+      recordedAt: recordedAt.value,
+    })
+    toast.add({ title: 'Balance recorded', color: 'success' })
+    balance.value = 0
+    recordedAt.value = DateTime.now().toISODate()!
+  } catch (err) {
+    toast.add({ title: 'Failed to record balance', description: String(err), color: 'error' })
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -34,6 +42,6 @@ async function onSubmit() {
     <UFormField label="Date">
       <DateInput v-model="recordedAt" />
     </UFormField>
-    <UButton type="submit" size="sm" class="mb-0.5">Add Snapshot</UButton>
+    <UButton type="submit" size="sm" class="mb-0.5" :loading="saving" :disabled="saving">Add Snapshot</UButton>
   </UForm>
 </template>

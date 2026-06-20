@@ -16,6 +16,7 @@ const emit = defineEmits<{ saved: []; cancel: [] }>()
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const saving = ref(false)
 
 const today = DateTime.now().toISODate()!
 
@@ -119,38 +120,45 @@ async function save() {
     return
   }
   const now = DateTime.now().toISO()!
-  if (props.editing) {
-    await store.update({
-      id: props.editing.id,
-      accountId: form.accountId,
-      transferAccountId: isTransfer.value ? form.transferAccountId : null,
-      amount: form.amount ?? 0,
-      description: form.description,
-      date: form.date,
-      type: form.type,
-      category: form.category,
-      isContribution: form.isContribution,
-      updateBalance: updateBalance.value,
-      updatedAt: now,
-    })
-    toast.add({ title: 'Transaction updated', color: 'success' })
-  } else {
-    await store.create({
-      accountId: form.accountId,
-      transferAccountId: isTransfer.value ? form.transferAccountId : null,
-      amount: form.amount ?? 0,
-      description: form.description,
-      date: form.date,
-      type: form.type,
-      category: form.category,
-      isContribution: form.isContribution,
-      importSource: 'manual',
-      updateBalance: updateBalance.value,
-      createdAt: now,
-    })
-    toast.add({ title: 'Transaction added', color: 'success' })
+  saving.value = true
+  try {
+    if (props.editing) {
+      await store.update({
+        id: props.editing.id,
+        accountId: form.accountId,
+        transferAccountId: isTransfer.value ? form.transferAccountId : null,
+        amount: form.amount ?? 0,
+        description: form.description,
+        date: form.date,
+        type: form.type,
+        category: form.category,
+        isContribution: form.isContribution,
+        updateBalance: updateBalance.value,
+        updatedAt: now,
+      })
+      toast.add({ title: 'Transaction updated', color: 'success' })
+    } else {
+      await store.create({
+        accountId: form.accountId,
+        transferAccountId: isTransfer.value ? form.transferAccountId : null,
+        amount: form.amount ?? 0,
+        description: form.description,
+        date: form.date,
+        type: form.type,
+        category: form.category,
+        isContribution: form.isContribution,
+        importSource: 'manual',
+        updateBalance: updateBalance.value,
+        createdAt: now,
+      })
+      toast.add({ title: 'Transaction added', color: 'success' })
+    }
+    emit('saved')
+  } catch (err) {
+    toast.add({ title: 'Failed to save transaction', description: String(err), color: 'error' })
+  } finally {
+    saving.value = false
   }
-  emit('saved')
 }
 </script>
 
@@ -196,7 +204,7 @@ async function save() {
 
     <div class="flex justify-end gap-2 pt-2">
       <UButton variant="ghost" color="neutral" type="button" @click="emit('cancel')">Cancel</UButton>
-      <UButton type="submit">{{ props.editing ? 'Save' : 'Add' }} Transaction</UButton>
+      <UButton type="submit" :loading="saving" :disabled="saving">{{ props.editing ? 'Save' : 'Add' }} Transaction</UButton>
     </div>
   </form>
 </template>

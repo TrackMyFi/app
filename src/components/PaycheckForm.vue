@@ -19,6 +19,7 @@ const emit = defineEmits<{ saved: [] }>()
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const saving = ref(false)
 const saveError = ref<string | null>(null)
 
 const knownEmployers = computed(() =>
@@ -184,6 +185,7 @@ function money(n: number): string {
 async function save() {
   saveError.value = null
   const now = DateTime.now().toISO()!
+  saving.value = true
   try {
     if (props.editing) {
       await store.update({
@@ -226,6 +228,9 @@ async function save() {
     emit('saved')
   } catch (err) {
     saveError.value = String(err)
+    toast.add({ title: 'Failed to save paycheck', description: String(err), color: 'error' })
+  } finally {
+    saving.value = false
   }
 }
 </script>
@@ -373,7 +378,7 @@ async function save() {
     <p v-if="saveError" class="text-sm text-error">{{ saveError }}</p>
 
     <div class="flex justify-end gap-2 pt-2">
-      <UButton type="submit">{{ props.editing ? 'Save' : props.copyFrom ? 'Copy paycheck' : 'Add paycheck' }}</UButton>
+      <UButton type="submit" :loading="saving" :disabled="saving">{{ props.editing ? 'Save' : props.copyFrom ? 'Copy paycheck' : 'Add paycheck' }}</UButton>
     </div>
 
   </form>

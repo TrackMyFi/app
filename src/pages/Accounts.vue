@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { DateTime } from 'luxon'
+import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType, isLiability, isEquity } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
@@ -11,6 +12,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 
 const store = useAccountsStore()
 const router = useRouter()
+const toast = useToast()
 
 onMounted(() => store.loadList())
 
@@ -92,22 +94,45 @@ function onAccountSaved() {
   isAccountModalOpen.value = false
 }
 
-// Archive / Unarchive
+// Archive / Unarchive / Delete
+const busyAccountId = ref<number | null>(null)
+
 async function archive(id: number) {
-  await store.archive(id)
+  busyAccountId.value = id
+  try {
+    await store.archive(id)
+  } catch (err) {
+    toast.add({ title: 'Failed to archive account', description: String(err), color: 'error' })
+  } finally {
+    busyAccountId.value = null
+  }
 }
 
 async function unarchive(id: number) {
-  await store.unarchive(id)
+  busyAccountId.value = id
+  try {
+    await store.unarchive(id)
+  } catch (err) {
+    toast.add({ title: 'Failed to restore account', description: String(err), color: 'error' })
+  } finally {
+    busyAccountId.value = null
+  }
 }
 
-// Delete (archived accounts only)
 async function remove(account: Account) {
   const ok = await confirm(
     `Permanently delete "${account.name}" and all of its balance snapshots? This cannot be undone.`,
     { title: 'Delete Account?', kind: 'warning' },
   )
-  if (ok) await store.remove(account.id)
+  if (!ok) return
+  busyAccountId.value = account.id
+  try {
+    await store.remove(account.id)
+  } catch (err) {
+    toast.add({ title: 'Failed to delete account', description: String(err), color: 'error' })
+  } finally {
+    busyAccountId.value = null
+  }
 }
 
 // Archived section toggle
@@ -186,7 +211,7 @@ function archivedMenuItems(account: Account) {
           </div>
           <div class="flex justify-end" @click.stop>
             <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
             </UDropdownMenu>
           </div>
         </div>
@@ -220,7 +245,7 @@ function archivedMenuItems(account: Account) {
           </div>
           <div class="flex justify-end" @click.stop>
             <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
             </UDropdownMenu>
           </div>
         </div>
@@ -254,7 +279,7 @@ function archivedMenuItems(account: Account) {
           </div>
           <div class="flex justify-end" @click.stop>
             <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
             </UDropdownMenu>
           </div>
         </div>
@@ -294,7 +319,7 @@ function archivedMenuItems(account: Account) {
           </div>
           <div class="flex justify-end">
             <UDropdownMenu :items="archivedMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" />
+              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
             </UDropdownMenu>
           </div>
         </div>

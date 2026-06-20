@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
@@ -13,6 +13,7 @@ const emit = defineEmits<{ saved: [] }>()
 const store = useAccountsStore()
 const toast = useToast()
 const isEdit = !!props.account
+const saving = ref(false)
 
 const form = reactive({
   name: props.account?.name ?? '',
@@ -43,14 +44,21 @@ async function onSubmit() {
     includeInFireCalculations: form.includeInFireCalculations,
     createdAt: form.createdAt,
   }
-  if (isEdit) {
-    await store.update(props.account!.id, payload)
-    toast.add({ title: 'Account updated', color: 'success' })
-  } else {
-    await store.create(payload)
-    toast.add({ title: 'Account created', color: 'success' })
+  saving.value = true
+  try {
+    if (isEdit) {
+      await store.update(props.account!.id, payload)
+      toast.add({ title: 'Account updated', color: 'success' })
+    } else {
+      await store.create(payload)
+      toast.add({ title: 'Account created', color: 'success' })
+    }
+    emit('saved')
+  } catch (err) {
+    toast.add({ title: 'Failed to save account', description: String(err), color: 'error' })
+  } finally {
+    saving.value = false
   }
-  emit('saved')
 }
 </script>
 
@@ -86,7 +94,7 @@ async function onSubmit() {
     </div>
     
     <div class="pt-4 flex justify-end items-center gap-3">
-      <UButton type="submit" :disabled="!form.name" block>
+      <UButton type="submit" :loading="saving" :disabled="!form.name || saving" block>
         {{ isEdit ? 'Save Changes' : 'Add Account' }}
       </UButton>
     </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useToast } from '@nuxt/ui/composables'
 import { usePaychecksStore } from '../stores/paychecks'
 import { labelForPayPeriod } from '../lib/paychecks/constants'
 import { useAccountsStore } from '../stores/accounts'
@@ -11,6 +12,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
+const toast = useToast()
 
 const isModalOpen = ref(false)
 const editing = ref<Paycheck | null>(null)
@@ -28,11 +30,21 @@ watch(isModalOpen, (open) => {
   }
 })
 
+const removingId = ref<number | null>(null)
+
 async function removeRow(p: Paycheck) {
   const ok = await confirm(`Delete paycheck from "${p.employer}" on ${p.payDate}?`, {
     title: 'Delete paycheck',
   })
-  if (ok) await store.remove(p.id)
+  if (!ok) return
+  removingId.value = p.id
+  try {
+    await store.remove(p.id)
+  } catch (err) {
+    toast.add({ title: 'Failed to delete paycheck', description: String(err), color: 'error' })
+  } finally {
+    removingId.value = null
+  }
 }
 
 const startDate = ref('')
@@ -117,7 +129,7 @@ onMounted(async () => {
         <template #actions-cell="{ row }">
           <UButton size="xs" variant="ghost" icon="i-ph-copy" @click="openCopy(row.original)" />
           <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
-          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" @click="removeRow(row.original)" />
+          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" :loading="removingId === row.original.id" :disabled="removingId !== null" @click="removeRow(row.original)" />
         </template>
       </UTable>
     </div>

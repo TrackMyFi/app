@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { DateTime } from 'luxon'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType } from '../lib/accountTypes'
 import * as api from '../lib/api/accounts'
@@ -20,6 +21,7 @@ import DateInput from '../components/DateInput.vue'
 const route = useRoute()
 const router = useRouter()
 const store = useAccountsStore()
+const toast = useToast()
 
 const accountId = computed(() => Number(route.params.id))
 const account = computed(() => store.accounts.find(a => a.id === accountId.value) ?? null)
@@ -131,6 +133,8 @@ const headerMenuItems = computed(() => [[
 const editingSnapshotId = ref<number | null>(null)
 const editBalance = ref<number>(0)
 const editDate = ref<string>('')
+const savingSnapshotId = ref<number | null>(null)
+const deletingSnapshotId = ref<number | null>(null)
 
 function startEdit(row: AccountBalance) {
   editingSnapshotId.value = row.id
@@ -143,13 +147,20 @@ function cancelEdit() {
 }
 
 async function saveEdit(row: AccountBalance) {
-  await api.updateBalance({ id: row.id, balance: editBalance.value, recordedAt: editDate.value })
-  const month = editDate.value.slice(0, 7)
-  const oldMonth = row.recordedAt.slice(0, 7)
-  await refreshSummaries()
-  await invalidateMonth(month)
-  if (oldMonth !== month) await invalidateMonth(oldMonth)
-  editingSnapshotId.value = null
+  savingSnapshotId.value = row.id
+  try {
+    await api.updateBalance({ id: row.id, balance: editBalance.value, recordedAt: editDate.value })
+    const month = editDate.value.slice(0, 7)
+    const oldMonth = row.recordedAt.slice(0, 7)
+    await refreshSummaries()
+    await invalidateMonth(month)
+    if (oldMonth !== month) await invalidateMonth(oldMonth)
+    editingSnapshotId.value = null
+  } catch (err) {
+    toast.add({ title: 'Failed to update snapshot', description: String(err), color: 'error' })
+  } finally {
+    savingSnapshotId.value = null
+  }
 }
 
 async function deleteSnapshot(row: AccountBalance) {
@@ -158,10 +169,17 @@ async function deleteSnapshot(row: AccountBalance) {
     { title: 'Delete Snapshot?', kind: 'warning' },
   )
   if (!ok) return
-  await api.deleteBalance(row.id)
-  const month = row.recordedAt.slice(0, 7)
-  await refreshSummaries()
-  await invalidateMonth(month)
+  deletingSnapshotId.value = row.id
+  try {
+    await api.deleteBalance(row.id)
+    const month = row.recordedAt.slice(0, 7)
+    await refreshSummaries()
+    await invalidateMonth(month)
+  } catch (err) {
+    toast.add({ title: 'Failed to delete snapshot', description: String(err), color: 'error' })
+  } finally {
+    deletingSnapshotId.value = null
+  }
 }
 
 // ─── Linked transaction modal ─────────────────────────────────────────────────
@@ -192,15 +210,23 @@ watch(txnModalOpen, open => {
 const addModalOpen = ref(false)
 const newBalance = ref<number>(0)
 const newDate = ref<string>(DateTime.now().toISODate()!)
+const addingSnapshot = ref(false)
 
 async function submitAddSnapshot() {
   const savedMonth = newDate.value.slice(0, 7)
-  await api.addBalance({ accountId: accountId.value, balance: newBalance.value, recordedAt: newDate.value })
-  addModalOpen.value = false
-  newBalance.value = 0
-  newDate.value = DateTime.now().toISODate()!
-  await refreshSummaries()
-  await invalidateMonth(savedMonth)
+  addingSnapshot.value = true
+  try {
+    await api.addBalance({ accountId: accountId.value, balance: newBalance.value, recordedAt: newDate.value })
+    addModalOpen.value = false
+    newBalance.value = 0
+    newDate.value = DateTime.now().toISODate()!
+    await refreshSummaries()
+    await invalidateMonth(savedMonth)
+  } catch (err) {
+    toast.add({ title: 'Failed to add snapshot', description: String(err), color: 'error' })
+  } finally {
+    addingSnapshot.value = false
+  }
 }
 
 watch(addModalOpen, open => {
@@ -221,6 +247,8 @@ function onAccountSaved() {
 
 // ─── Archive / Delete account ─────────────────────────────────────────────────
 
+const accountActionBusy = ref(false)
+
 async function archiveAccount() {
   if (!account.value) return
   const ok = await confirm(
@@ -228,8 +256,15 @@ async function archiveAccount() {
     { title: 'Archive Account?', kind: 'warning' },
   )
   if (!ok) return
-  await store.archive(account.value.id)
-  router.push({ name: 'accounts' })
+  accountActionBusy.value = true
+  try {
+    await store.archive(account.value.id)
+    router.push({ name: 'accounts' })
+  } catch (err) {
+    toast.add({ title: 'Failed to archive account', description: String(err), color: 'error' })
+  } finally {
+    accountActionBusy.value = false
+  }
 }
 
 async function deleteAccount() {
@@ -239,8 +274,15 @@ async function deleteAccount() {
     { title: 'Delete Account?', kind: 'warning' },
   )
   if (!ok) return
-  await store.remove(account.value.id)
-  router.push({ name: 'accounts' })
+  accountActionBusy.value = true
+  try {
+    await store.remove(account.value.id)
+    router.push({ name: 'accounts' })
+  } catch (err) {
+    toast.add({ title: 'Failed to delete account', description: String(err), color: 'error' })
+  } finally {
+    accountActionBusy.value = false
+  }
 }
 </script>
 
@@ -266,9 +308,9 @@ async function deleteAccount() {
         </p>
       </div>
       <div class="flex gap-2">
-        <UButton @click="editAccountModalOpen = true">Edit</UButton>
+        <UButton :disabled="accountActionBusy" @click="editAccountModalOpen = true">Edit</UButton>
         <UDropdownMenu :items="headerMenuItems">
-          <UButton variant="ghost" color="neutral" icon="i-ph-dots-three" aria-label="More options" />
+          <UButton variant="ghost" color="neutral" icon="i-ph-dots-three" aria-label="More options" :loading="accountActionBusy" :disabled="accountActionBusy" />
         </UDropdownMenu>
       </div>
     </div>
@@ -350,15 +392,15 @@ async function deleteAccount() {
               <div class="flex items-center justify-end gap-1">
                 <UButton v-if="row.linkedTransactionId != null" size="xs" variant="ghost" color="neutral" icon="i-ph-receipt" aria-label="View linked transaction" @click="openTxnModal(row)" />
                 <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" aria-label="Edit snapshot" @click="startEdit(row)" />
-                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" aria-label="Delete snapshot" @click="deleteSnapshot(row)" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" aria-label="Delete snapshot" :loading="deletingSnapshotId === row.id" :disabled="deletingSnapshotId !== null" @click="deleteSnapshot(row)" />
               </div>
             </template>
             <template v-else>
               <DateInput v-model="editDate" class="text-xs" />
               <CurrencyInput v-model="editBalance" class="text-sm mx-2" />
               <div class="flex items-center justify-end gap-1">
-                <UButton size="xs" @click="saveEdit(row)">Save</UButton>
-                <UButton size="xs" variant="ghost" color="neutral" @click="cancelEdit">Cancel</UButton>
+                <UButton size="xs" :loading="savingSnapshotId === row.id" :disabled="savingSnapshotId !== null" @click="saveEdit(row)">Save</UButton>
+                <UButton size="xs" variant="ghost" color="neutral" :disabled="savingSnapshotId !== null" @click="cancelEdit">Cancel</UButton>
               </div>
             </template>
           </div>
@@ -370,7 +412,7 @@ async function deleteAccount() {
     <div v-if="!account.isActive" class="border border-error/30 rounded-lg p-4">
       <h3 class="text-sm font-semibold text-error mb-1">Danger Zone</h3>
       <p class="text-xs text-muted mb-3">Permanently deletes this account and all of its balance snapshots. Cannot be undone.</p>
-      <UButton color="error" variant="outline" size="sm" @click="deleteAccount">Delete Account</UButton>
+      <UButton color="error" variant="outline" size="sm" :loading="accountActionBusy" :disabled="accountActionBusy" @click="deleteAccount">Delete Account</UButton>
     </div>
 
     <!-- Edit account modal -->
@@ -391,7 +433,7 @@ async function deleteAccount() {
             <DateInput v-model="newDate" class="w-full" />
           </UFormField>
           <div class="flex justify-end pt-2">
-            <UButton @click="submitAddSnapshot" block>Add Snapshot</UButton>
+            <UButton :loading="addingSnapshot" :disabled="addingSnapshot" @click="submitAddSnapshot" block>Add Snapshot</UButton>
           </div>
         </div>
       </template>
