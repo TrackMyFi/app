@@ -460,3 +460,103 @@ async fn bulk_create_with_snapshots_sequential_balances() {
     // 1 seed + 3 generated = 4 balance rows total.
     assert_eq!(balance_count(&conn).await, 4);
 }
+
+// Balance of the snapshot recorded exactly on `date` (latest id wins for ties).
+async fn balance_on(conn: &libsql::Connection, account_id: i32, date: &str) -> f64 {
+    let mut rows = conn
+        .query(
+            "SELECT balance FROM account_balance WHERE account_id = ?1 AND recorded_at = ?2 \
+             ORDER BY id DESC LIMIT 1",
+            libsql::params![account_id, date],
+        )
+        .await
+        .unwrap();
+    rows.next().await.unwrap().unwrap().get::<f64>(0).unwrap()
+}
+
+fn checking(name: &str) -> NewAccount {
+    NewAccount {
+        name: name.into(),
+        r#type: "checking".into(),
+        institution: None,
+        include_in_fire_calculations: false,
+        created_at: "2026-01-01".into(),
+    }
+}
+
+fn dated_txn(account_id: i32, amount: f64, ty: &str, date: &str) -> NewTransaction {
+    let mut t = new_txn(account_id, amount, ty);
+    t.date = date.into();
+    t.created_at = date.into();
+    t.update_balance = true;
+    t
+}
+
+// Inserting an out-of-order past transaction ripples its delta forward through
+// later transaction-tied snapshots, while a manual snapshot anchors the chain and
+// is left untouched.
+#[tokio::test]
+async fn inserting_past_transaction_propagates_to_later_linked_snapshots() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &checking("Checking")).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: acct, balance: 1000.0, recorded_at: "2026-06-01".into() }).await.unwrap();
+
+    // Two transaction-tied snapshots, in order: +100 on the 12th, +50 on the 15th.
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 100.0, "income", "2026-06-12")).await.unwrap();
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 50.0, "income", "2026-06-15")).await.unwrap();
+    assert_eq!(balance_on(&conn, acct, "2026-06-12").await, 1100.0);
+    assert_eq!(balance_on(&conn, acct, "2026-06-15").await, 1150.0);
+
+    // A manual snapshot on the 20th — must stay put as an anchor.
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: acct, balance: 9999.0, recorded_at: "2026-06-20".into() }).await.unwrap();
+
+    // Now go back and add a -40 expense on the 14th.
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 40.0, "expense", "2026-06-14")).await.unwrap();
+
+    assert_eq!(balance_on(&conn, acct, "2026-06-12").await, 1100.0); // before the insert: unchanged
+    assert_eq!(balance_on(&conn, acct, "2026-06-14").await, 1060.0); // 1100 - 40
+    assert_eq!(balance_on(&conn, acct, "2026-06-15").await, 1110.0); // 1150 shifted down by 40
+    assert_eq!(balance_on(&conn, acct, "2026-06-20").await, 9999.0); // manual anchor: untouched
+}
+
+// Deleting a past transaction removes its contribution from later linked snapshots.
+#[tokio::test]
+async fn deleting_past_transaction_propagates_to_later_linked_snapshots() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &checking("Checking")).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: acct, balance: 1000.0, recorded_at: "2026-06-01".into() }).await.unwrap();
+
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 100.0, "income", "2026-06-12")).await.unwrap();
+    let mid = transactions::create_transaction_synced(&conn, &dated_txn(acct, 40.0, "expense", "2026-06-14")).await.unwrap();
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 50.0, "income", "2026-06-15")).await.unwrap();
+    assert_eq!(balance_on(&conn, acct, "2026-06-15").await, 1110.0); // 1000 +100 -40 +50
+
+    transactions::delete_transaction_synced(&conn, mid).await.unwrap();
+    assert_eq!(balance_on(&conn, acct, "2026-06-15").await, 1150.0); // the -40 is gone: 1000 +100 +50
+}
+
+// Editing a past transaction's amount ripples the difference forward.
+#[tokio::test]
+async fn editing_past_transaction_amount_propagates_forward() {
+    let conn = setup().await;
+    let acct = accounts::create_account(&conn, &checking("Checking")).await.unwrap();
+    accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
+        account_id: acct, balance: 1000.0, recorded_at: "2026-06-01".into() }).await.unwrap();
+
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 100.0, "income", "2026-06-12")).await.unwrap();
+    let mid = transactions::create_transaction_synced(&conn, &dated_txn(acct, 40.0, "expense", "2026-06-14")).await.unwrap();
+    transactions::create_transaction_synced(&conn, &dated_txn(acct, 50.0, "income", "2026-06-15")).await.unwrap();
+
+    // Bump the 14th expense from 40 to 90 (50 more spent).
+    transactions::update_transaction_synced(&conn, &UpdateTransaction {
+        id: mid, account_id: acct, transfer_account_id: None, amount: 90.0,
+        description: "test".into(), date: "2026-06-14".into(), r#type: "expense".into(),
+        category: "uncategorized".into(), is_contribution: false,
+        update_balance: true, updated_at: "2026-06-16".into() }).await.unwrap();
+
+    assert_eq!(balance_on(&conn, acct, "2026-06-14").await, 1010.0); // 1100 - 90
+    assert_eq!(balance_on(&conn, acct, "2026-06-15").await, 1060.0); // 1010 + 50
+}

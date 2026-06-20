@@ -244,6 +244,35 @@ async fn delete_snapshot(conn: &Connection, id: i32) -> Result<(), String> {
     Ok(())
 }
 
+/// The signed amount a transaction adds to one account's running balance.
+///
+/// `to_side` is true when `account_id` is the *destination* of a transfer (the
+/// account referenced by `generated_balance_to_id`). A liability stores debt
+/// owed, so its balance moves opposite to an asset for the same money flow:
+/// money sent out raises an asset's loss but raises a liability's debt, and money
+/// received raises an asset but pays down (lowers) a liability's debt. Likewise a
+/// refund (income) pays down a liability while a purchase (expense) adds to it.
+async fn side_delta(
+    conn: &Connection,
+    account_id: i32,
+    ty: &str,
+    amount: f64,
+    to_side: bool,
+) -> Result<f64, String> {
+    let liability = is_liability(conn, account_id).await?;
+    let delta = if to_side {
+        // transfer destination: money in
+        if liability { -amount } else { amount }
+    } else if ty == "transfer" {
+        // transfer source: money out
+        if liability { amount } else { -amount }
+    } else {
+        let asset_delta = if ty == "income" { amount } else { -amount };
+        if liability { -asset_delta } else { asset_delta }
+    };
+    Ok(delta)
+}
+
 // Returns (generated_balance_id, generated_balance_to_id) for a materialized txn.
 async fn materialize_snapshots(
     conn: &Connection,
@@ -257,34 +286,14 @@ async fn materialize_snapshots(
         let to = transfer_account_id.ok_or("transfer requires transferAccountId")?;
         let src_base = base_balance(conn, account_id, date).await?;
         let dst_base = base_balance(conn, to, date).await?;
-        // A liability stores debt owed, so its balance moves opposite to an asset
-        // for the same money flow: the source sending money out raises an asset's
-        // balance loss but raises a liability's debt; the destination receiving
-        // money raises an asset but pays down (lowers) a liability's debt.
-        let src_new = if is_liability(conn, account_id).await? {
-            src_base + amount
-        } else {
-            src_base - amount
-        };
-        let dst_new = if is_liability(conn, to).await? {
-            dst_base - amount
-        } else {
-            dst_base + amount
-        };
+        let src_new = src_base + side_delta(conn, account_id, ty, amount, false).await?;
+        let dst_new = dst_base + side_delta(conn, to, ty, amount, true).await?;
         let gen = insert_snapshot(conn, account_id, src_new, date).await?;
         let gen_to = insert_snapshot(conn, to, dst_new, date).await?;
         Ok((Some(gen), Some(gen_to)))
     } else {
-        // Asset: income raises the balance, expense lowers it. A liability stores
-        // debt owed, so it inverts: a refund (income) pays down debt, a purchase
-        // (expense) adds to it.
-        let asset_delta = if ty == "income" { amount } else { -amount };
-        let delta = if is_liability(conn, account_id).await? {
-            -asset_delta
-        } else {
-            asset_delta
-        };
         let base = base_balance(conn, account_id, date).await?;
+        let delta = side_delta(conn, account_id, ty, amount, false).await?;
         let gen = insert_snapshot(conn, account_id, base + delta, date).await?;
         Ok((Some(gen), None))
     }
@@ -314,6 +323,105 @@ async fn clear_generated(conn: &Connection, ids: (Option<i32>, Option<i32>)) -> 
     }
     if let Some(id) = ids.1 {
         delete_snapshot(conn, id).await?;
+    }
+    Ok(())
+}
+
+/// Balance of the most recent snapshot strictly before `date` (any kind), or 0.0
+/// when none exists. Used as the starting point for a re-projection.
+async fn balance_before(conn: &Connection, account_id: i32, date: &str) -> Result<f64, String> {
+    let mut rows = conn
+        .query(
+            "SELECT balance FROM account_balance WHERE account_id = ?1 AND recorded_at < ?2 \
+             ORDER BY recorded_at DESC, id DESC LIMIT 1",
+            params![account_id, date],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(r) => r.get::<f64>(0).map_err(|e| e.to_string()),
+        None => Ok(0.0),
+    }
+}
+
+/// The signed delta a transaction-generated snapshot contributes, or `None` when
+/// the snapshot is not tied to any transaction (a manual snapshot).
+async fn snapshot_delta(
+    conn: &Connection,
+    account_id: i32,
+    snapshot_id: i32,
+) -> Result<Option<f64>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT type, amount, \
+             CASE WHEN generated_balance_to_id = ?1 THEN 1 ELSE 0 END AS to_side \
+             FROM txn WHERE generated_balance_id = ?1 OR generated_balance_to_id = ?1 LIMIT 1",
+            params![snapshot_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(r) => {
+            let ty: String = r.get(0).map_err(|e| e.to_string())?;
+            let amount: f64 = r.get(1).map_err(|e| e.to_string())?;
+            let to_side = r.get::<i64>(2).map_err(|e| e.to_string())? != 0;
+            Ok(Some(side_delta(conn, account_id, &ty, amount, to_side).await?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Recompute every transaction-generated snapshot for `account_id` dated on or
+/// after `from_date`, walking chronologically and rebuilding each as
+/// `running_balance + its transaction's delta`. Manual snapshots are left
+/// untouched and reset the running balance, so they anchor the chain: a delta
+/// introduced by an out-of-order transaction propagates forward through later
+/// generated snapshots but stops at the next manual snapshot.
+///
+/// Call this only from the single-transaction command paths. Bulk import feeds
+/// rows in ascending date order, so each new snapshot already lands at the end of
+/// the chain and re-projecting per row would be needless O(n^2) work.
+async fn reproject_account(
+    conn: &Connection,
+    account_id: i32,
+    from_date: &str,
+) -> Result<(), String> {
+    let mut running = balance_before(conn, account_id, from_date).await?;
+
+    // Collect the forward chain first; we can't run UPDATEs while a query's rows
+    // are still streaming on the same connection.
+    let mut rows = conn
+        .query(
+            "SELECT id, balance FROM account_balance WHERE account_id = ?1 AND recorded_at >= ?2 \
+             ORDER BY recorded_at ASC, id ASC",
+            params![account_id, from_date],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut chain: Vec<(i32, f64)> = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        chain.push((
+            r.get::<i32>(0).map_err(|e| e.to_string())?,
+            r.get::<f64>(1).map_err(|e| e.to_string())?,
+        ));
+    }
+
+    for (id, current) in chain {
+        match snapshot_delta(conn, account_id, id).await? {
+            Some(delta) => {
+                running += delta;
+                if (running - current).abs() > 1e-6 {
+                    conn.execute(
+                        "UPDATE account_balance SET balance = ?1 WHERE id = ?2",
+                        params![running, id],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            // Manual snapshot: an absolute anchor that resets the running balance.
+            None => running = current,
+        }
     }
     Ok(())
 }
@@ -486,13 +594,79 @@ pub async fn get_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<Transacti
     get_transaction(&conn, id).await
 }
 
+/// Re-project `from_date` forward for each distinct account in `accounts`, so an
+/// out-of-order change ripples through later transaction-tied snapshots.
+async fn reproject_accounts(
+    conn: &Connection,
+    accounts: &[Option<i32>],
+    from_date: &str,
+) -> Result<(), String> {
+    let mut seen: Vec<i32> = Vec::new();
+    for acc in accounts.iter().flatten() {
+        if !seen.contains(acc) {
+            seen.push(*acc);
+            reproject_account(conn, *acc, from_date).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Create a single transaction, then ripple its snapshot forward through any
+/// later transaction-tied snapshots (see [`reproject_account`]). This is the
+/// path used by the UI's add-transaction form — distinct from
+/// [`bulk_create_transactions_with_snapshots`], whose ascending-order rows never
+/// land out of sequence and so need no re-projection.
+pub async fn create_transaction_synced(
+    conn: &Connection,
+    t: &NewTransaction,
+) -> Result<i32, String> {
+    let id = create_transaction(conn, t).await?;
+    // Only a balance-updating transaction writes a snapshot worth rippling.
+    if t.update_balance {
+        reproject_accounts(conn, &[Some(t.account_id), t.transfer_account_id], &t.date).await?;
+    }
+    Ok(id)
+}
+
+/// Update a single transaction, then re-project both its old and new positions.
+/// An edit can move the date or switch accounts, so every account that the
+/// transaction touched before or after the change is rippled from whichever date
+/// comes first.
+pub async fn update_transaction_synced(
+    conn: &Connection,
+    t: &UpdateTransaction,
+) -> Result<(), String> {
+    let old = get_transaction(conn, t.id).await?;
+    update_transaction(conn, t).await?;
+    let from_date = old.date.as_str().min(t.date.as_str());
+    reproject_accounts(
+        conn,
+        &[
+            Some(old.account_id),
+            old.transfer_account_id,
+            Some(t.account_id),
+            t.transfer_account_id,
+        ],
+        from_date,
+    )
+    .await
+}
+
+/// Delete a single transaction, then re-project the accounts it touched so later
+/// snapshots drop the deleted transaction's contribution.
+pub async fn delete_transaction_synced(conn: &Connection, id: i32) -> Result<(), String> {
+    let old = get_transaction(conn, id).await?;
+    delete_transaction(conn, id).await?;
+    reproject_accounts(conn, &[Some(old.account_id), old.transfer_account_id], &old.date).await
+}
+
 #[tauri::command]
 pub async fn create_transaction_cmd(
     db: State<'_, Db>,
     transaction: NewTransaction,
 ) -> Result<i32, String> {
     let conn = db.conn().await?;
-    create_transaction(&conn, &transaction).await
+    create_transaction_synced(&conn, &transaction).await
 }
 
 #[tauri::command]
@@ -501,13 +675,13 @@ pub async fn update_transaction_cmd(
     transaction: UpdateTransaction,
 ) -> Result<(), String> {
     let conn = db.conn().await?;
-    update_transaction(&conn, &transaction).await
+    update_transaction_synced(&conn, &transaction).await
 }
 
 #[tauri::command]
 pub async fn delete_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
     let conn = db.conn().await?;
-    delete_transaction(&conn, id).await
+    delete_transaction_synced(&conn, id).await
 }
 
 #[tauri::command]
