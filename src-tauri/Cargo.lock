@@ -5414,7 +5414,7 @@ dependencies = [
 
 [[package]]
 name = "trackmyfi-app"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
