@@ -958,6 +958,18 @@ pub async fn bulk_create_transactions_with_snapshots_cmd(
     bulk_create_transactions_with_snapshots(&conn, &transactions).await
 }
 
+/// Walk every snapshot for `account_id` from the beginning of time, treating
+/// manual snapshots as absolute anchors and recomputing every transaction-bound
+/// snapshot as `running_balance + its_transaction_delta`.
+#[tauri::command]
+pub async fn rebuild_account_balances_cmd(
+    db: State<'_, Db>,
+    account_id: i32,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    reproject_account(&conn, account_id, "0001-01-01").await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

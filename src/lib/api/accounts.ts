@@ -30,3 +30,6 @@ export const listBalanceMonthSummaries = (accountId: number) =>
 
 export const listBalancesForMonth = (accountId: number, month: string) =>
   invoke<AccountBalance[]>('list_balances_for_month_cmd', { accountId, month })
+
+export const rebuildAccountBalances = (accountId: number) =>
+  invoke<void>('rebuild_account_balances_cmd', { accountId })

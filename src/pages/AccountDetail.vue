@@ -205,6 +205,33 @@ watch(txnModalOpen, open => {
   if (!open) txnData.value = null
 })
 
+// ─── Rebuild snapshots ────────────────────────────────────────────────────────
+
+const rebuildingSnapshots = ref(false)
+
+async function rebuildSnapshots() {
+  const ok = await confirm(
+    'Recalculate all transaction-linked snapshots using manual snapshots as anchors? Manual snapshots will not be changed.',
+    { title: 'Rebuild Snapshots?', kind: 'warning' },
+  )
+  if (!ok) return
+  rebuildingSnapshots.value = true
+  try {
+    await api.rebuildAccountBalances(accountId.value)
+    monthCache.value.clear()
+    await refreshSummaries()
+    if (openMonthValue.value) {
+      const rows = await api.listBalancesForMonth(accountId.value, openMonthValue.value)
+      monthCache.value.set(openMonthValue.value, rows)
+    }
+    toast.add({ title: 'Snapshots rebuilt', color: 'success' })
+  } catch (err) {
+    toast.add({ title: 'Failed to rebuild snapshots', description: String(err), color: 'error' })
+  } finally {
+    rebuildingSnapshots.value = false
+  }
+}
+
 // ─── Add snapshot modal ───────────────────────────────────────────────────────
 
 const addModalOpen = ref(false)
@@ -335,7 +362,10 @@ async function deleteAccount() {
     <!-- Accordion header -->
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-sm font-semibold">Balance Snapshots</h2>
-      <UButton size="sm" icon="i-ph-plus" @click="addModalOpen = true">Add Snapshot</UButton>
+      <div class="flex items-center gap-2">
+        <UButton size="sm" variant="ghost" color="neutral" icon="i-ph-arrow-clockwise" :loading="rebuildingSnapshots" :disabled="rebuildingSnapshots" @click="rebuildSnapshots">Rebuild</UButton>
+        <UButton size="sm" icon="i-ph-plus" @click="addModalOpen = true">Add Snapshot</UButton>
+      </div>
     </div>
 
     <!-- Month accordion -->
