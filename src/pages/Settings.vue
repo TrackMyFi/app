@@ -5,7 +5,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useSyncStore } from '../stores/sync'
-import { useUpdaterStore } from '../stores/updater'
+import { useUpdaterStore, CHECK_INTERVAL_MS } from '../stores/updater'
 import {
   saveSyncConfig,
   clearSyncConfig,
@@ -49,6 +49,16 @@ const form = reactive<FireProfileForm>({
 
 const updater = useUpdaterStore()
 const upToDate = ref(false)
+
+const lastCheckedText = computed(() => {
+  if (!updater.lastCheckedAt) return '—'
+  return DateTime.fromMillis(updater.lastCheckedAt).toLocaleString(DateTime.TIME_SIMPLE)
+})
+
+const nextCheckText = computed(() => {
+  if (!updater.lastCheckedAt) return '—'
+  return DateTime.fromMillis(updater.lastCheckedAt + CHECK_INTERVAL_MS).toLocaleString(DateTime.TIME_SIMPLE)
+})
 
 async function checkForUpdates() {
   upToDate.value = false
@@ -399,6 +409,10 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
           >
             Check for updates
           </UButton>
+        </div>
+        <div class="flex gap-6 text-xs text-muted pt-1">
+          <span>Last checked: {{ lastCheckedText }}</span>
+          <span>Next automatic check: {{ nextCheckText }}</span>
         </div>
       </div>
     </section>

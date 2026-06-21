@@ -23,7 +23,7 @@ const visible = computed(() => {
   >
     <div
       v-if="visible"
-      class="fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-default bg-default shadow-lg p-4 space-y-3"
+      class="rounded-lg border border-default bg-elevated p-3 space-y-2 overflow-hidden"
     >
       <!-- Update available -->
       <template v-if="updater.status === 'available'">

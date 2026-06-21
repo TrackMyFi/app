@@ -8,8 +8,8 @@ import {
   type Update,
 } from '../lib/api/updater'
 
-/** How often to re-check for updates while the app stays open (6 hours). */
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+/** How often to re-check for updates while the app stays open (1 hour). */
+export const CHECK_INTERVAL_MS = 1 * 60 * 60 * 1000
 
 export type UpdateStatus =
   | 'idle' // no update known
@@ -29,6 +29,8 @@ export const useUpdaterStore = defineStore('updater', () => {
   const progress = ref<number | null>(null)
   /** True once the user dismisses the popover for this particular version. */
   const dismissed = ref(false)
+  /** Epoch ms of the last completed check attempt (null until first check). */
+  const lastCheckedAt = ref<number | null>(null)
 
   let pending: Update | null = null
   let timer: ReturnType<typeof setInterval> | null = null
@@ -55,6 +57,7 @@ export const useUpdaterStore = defineStore('updater', () => {
     // A manual check always resurfaces the card (incl. the error "Try again").
     if (!silent) dismissed.value = false
     status.value = 'checking'
+    lastCheckedAt.value = Date.now()
     error.value = null
     try {
       const update = await checkForUpdate()
@@ -136,6 +139,7 @@ export const useUpdaterStore = defineStore('updater', () => {
     error,
     progress,
     dismissed,
+    lastCheckedAt,
     check,
     install,
     restart,

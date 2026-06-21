@@ -59,32 +59,35 @@ const links = [
 <template>
   <UApp>
     <div class="flex h-screen">
-      <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 space-y-1">
-        <div class="flex items-center gap-2 px-3 py-3 mb-2">
-          <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
-          <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
+      <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 flex flex-col">
+        <div class="space-y-1 flex-1">
+          <div class="flex items-center gap-2 px-3 py-3 mb-2">
+            <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
+            <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
+          </div>
+          <template v-for="l in links" :key="l.label">
+            <div v-if="l.label === 'Settings'" class="border-t border-default mx-2 my-1" />
+            <RouterLink
+              v-if="l.to"
+              :to="l.to"
+              :class="[
+                'flex items-center gap-2 rounded px-3 py-2',
+                isActive(l.to)
+                  ? 'bg-primary/10 text-primary font-medium'
+                  : 'hover:bg-elevated',
+              ]"
+            >
+              <UIcon :name="l.icon" /> {{ l.label }}
+            </RouterLink>
+            <span
+              v-else
+              class="flex items-center gap-2 rounded px-3 py-2 text-muted opacity-50 cursor-not-allowed"
+            >
+              <UIcon :name="l.icon" /> {{ l.label }}
+            </span>
+          </template>
         </div>
-        <template v-for="l in links" :key="l.label">
-          <div v-if="l.label === 'Settings'" class="border-t border-default mx-2 my-1" />
-          <RouterLink
-            v-if="l.to"
-            :to="l.to"
-            :class="[
-              'flex items-center gap-2 rounded px-3 py-2',
-              isActive(l.to)
-                ? 'bg-primary/10 text-primary font-medium'
-                : 'hover:bg-elevated',
-            ]"
-          >
-            <UIcon :name="l.icon" /> {{ l.label }}
-          </RouterLink>
-          <span
-            v-else
-            class="flex items-center gap-2 rounded px-3 py-2 text-muted opacity-50 cursor-not-allowed"
-          >
-            <UIcon :name="l.icon" /> {{ l.label }}
-          </span>
-        </template>
+        <UpdateNotifier />
       </nav>
       <main class="flex-1 overflow-auto">
         <RouterView v-slot="{ Component }">
@@ -92,6 +95,5 @@ const links = [
         </RouterView>
       </main>
     </div>
-    <UpdateNotifier />
   </UApp>
 </template>
