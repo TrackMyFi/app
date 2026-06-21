@@ -253,7 +253,7 @@ onMounted(async () => {
           </div>
           <div>
             <p class="text-base font-semibold tabular-nums text-info">{{ money(monthlyTotals.savings) }}</p>
-            <p class="text-xs text-muted mt-0.5">Savings</p>
+            <p class="text-xs text-muted mt-0.5">Contributions</p>
           </div>
           <div>
             <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net) }}</p>
@@ -280,7 +280,7 @@ onMounted(async () => {
           </div>
           <div>
             <p class="text-base font-semibold tabular-nums text-info">{{ money(annualTotals.savings) }}</p>
-            <p class="text-xs text-muted mt-0.5">Savings</p>
+            <p class="text-xs text-muted mt-0.5">Contributions</p>
           </div>
           <div>
             <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net) }}</p>
