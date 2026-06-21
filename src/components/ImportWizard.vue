@@ -94,6 +94,15 @@ const needsSeed = computed(() => generateSnapshots.value && priorSnapshot.value 
 
 const baseBalance = computed(() => priorSnapshot.value?.balance ?? seedBalance.value)
 
+// Rows that count toward the running balance: imported rows + balance-only (detected
+// duplicates that already exist in the DB and are already affecting the real balance).
+const includeInBalance = computed(() =>
+  allParsedRows.value.map((_, i) => {
+    const s = include.value[i]
+    return s === 'import' || s === 'balance-only'
+  }),
+)
+
 const runningBalances = computed(() =>
   // Balances are positive magnitudes; for a liability the projection inverts the
   // income/expense sign (a purchase raises debt, a refund lowers it) and a payment
@@ -102,7 +111,7 @@ const runningBalances = computed(() =>
   generateSnapshots.value
     ? projectRunningBalances(
         allParsedRows.value,
-        include.value,
+        includeInBalance.value,
         baseBalance.value,
         isLiabilityAccount.value,
       )
@@ -127,8 +136,8 @@ const dupes = computed(() =>
   parsed.value.map((_, i) => Boolean(exactDupes.value[i]) || Boolean(transferDupes.value[i])),
 )
 
-function dupeRowClass(row: { index: number }) {
-  return dupes.value[row.index] ? 'opacity-50' : ''
+function rowClass(row: { index: number }) {
+  return include.value[row.index] !== 'import' ? 'opacity-50' : ''
 }
 
 const canPreview = computed(() => {
@@ -166,7 +175,7 @@ function money(n: number): string {
 }
 
 const csvFile = ref<File | null>(null)
-const include = ref<boolean[]>([])
+const include = ref<('import' | 'balance-only' | 'skip')[]>([])
 const rowCategories = ref<string[]>([])
 const manuallyOverridden = ref<boolean[]>([])
 const newRuleKeyword = ref('')
@@ -255,9 +264,16 @@ async function deleteMapping(m: ImportMapping) {
 
 function goToPreview() {
   step.value = 3
-  include.value = parsed.value.map((_, i) => !dupes.value[i])
+  include.value = parsed.value.map((_, i) => (dupes.value[i] ? 'balance-only' : 'import'))
   rowCategories.value = parsed.value.map((p) => p.category)
   manuallyOverridden.value = parsed.value.map(() => false)
+}
+
+function toggleInclude(i: number) {
+  const s = include.value[i]
+  if (s === 'import') include.value[i] = 'balance-only'
+  else if (s === 'balance-only') include.value[i] = 'skip'
+  else include.value[i] = 'import'
 }
 
 watch(parsed, (newParsed) => {
@@ -340,7 +356,7 @@ async function confirmImport() {
 
   const selectedRows = parsed.value
     .map((p, i) => ({ p, i }))
-    .filter(({ i }) => include.value[i])
+    .filter(({ i }) => include.value[i] === 'import')
     .map(({ p, i }) => ({
       accountId: accountId.value!,
       transferAccountId: p.transferAccountId ?? null,
@@ -669,16 +685,20 @@ async function confirmImport() {
     <!-- Step 3: preview + dedup -->
     <div v-else class="space-y-3">
       <p class="text-sm text-muted">
-        {{ include.filter(Boolean).length }} of {{ parsed.length }} rows selected
-        ({{ dupes.filter(Boolean).length }} possible duplicates unchecked).
+        {{ include.filter(s => s === 'import').length }} of {{ parsed.length }} rows selected for import<template v-if="include.some(s => s === 'balance-only')"> · {{ include.filter(s => s === 'balance-only').length }} counted in balance only</template>.
       </p>
       <UTable
         :data="parsed"
         :columns="previewColumns"
-        :meta="{ class: { tr: dupeRowClass } }"
+        :meta="{ class: { tr: rowClass } }"
       >
         <template #include-cell="{ row }">
-          <UCheckbox v-model="include[row.index]" />
+          <UTooltip :text="include[row.index] === 'balance-only' ? 'Counted in balance, will not be imported (duplicate)' : undefined">
+            <UCheckbox
+              :model-value="include[row.index] === 'import' ? true : include[row.index] === 'balance-only' ? 'indeterminate' : false"
+              @update:model-value="toggleInclude(row.index)"
+            />
+          </UTooltip>
         </template>
         <template #description-cell="{ row }">
           <div class="flex items-center gap-1.5 min-w-0">
@@ -744,9 +764,9 @@ async function confirmImport() {
         <UButton variant="ghost" :disabled="importing" @click="step = 2">← Back to settings</UButton>
         <div class="flex items-center gap-3">
           <p v-if="importing" class="text-sm text-muted">
-            Saving {{ include.filter(Boolean).length }} transactions…
+            Saving {{ include.filter(s => s === 'import').length }} transactions…
           </p>
-          <UButton :disabled="!include.some(Boolean)" :loading="importing" @click="confirmImport">
+          <UButton :disabled="!include.some(s => s === 'import')" :loading="importing" @click="confirmImport">
             Import selected
           </UButton>
         </div>
