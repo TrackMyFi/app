@@ -65,6 +65,176 @@ pub trait TokenStore: Send + Sync {
 
 pub struct KeyringStore;
 
+// On macOS we talk to Security.framework directly so we can set SecAccessCreate(NULL),
+// which means any app can read the item without a per-binary ACL prompt. The
+// keyring crate's default ACL is tied to the calling binary's code hash, which
+// changes on every auto-update when the app is self-signed.
+//
+// Migration: the first get() after shipping this fix will prompt once (reading the
+// old item). We then delete the old entry and recreate it with the permissive ACL,
+// so every subsequent read — including after future updates — is prompt-free.
+#[cfg(target_os = "macos")]
+mod macos_keychain {
+    use core_foundation::{
+        base::TCFType,
+        boolean::CFBoolean,
+        data::CFData,
+        dictionary::CFMutableDictionary,
+        string::CFString,
+    };
+    use core_foundation_sys::{
+        base::{CFRelease, OSStatus},
+        data::CFDataRef,
+        string::CFStringRef,
+    };
+    use security_framework_sys::{
+        base::{OpaqueSecAccessRef, SecAccessRef},
+        item::{
+            kSecAttrAccount, kSecAttrLabel, kSecAttrService, kSecClass,
+            kSecClassGenericPassword, kSecMatchLimit, kSecReturnData, kSecValueData,
+        },
+        keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemDelete},
+    };
+    use std::ffi::c_void;
+    use std::ptr;
+
+    const ERR_NOT_FOUND: OSStatus = -25300; // errSecItemNotFound
+
+    // Security.framework constants/functions not yet exported by security_framework_sys.
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        static kSecMatchLimitOne: CFStringRef;
+        static kSecAttrAccess: CFStringRef;
+        fn SecAccessCreate(
+            descriptor: CFStringRef,
+            // NULL means "any application may access this item without prompting"
+            applicationList: *const c_void,
+            access: *mut SecAccessRef,
+        ) -> OSStatus;
+    }
+
+    // Cast a typed CF pointer to *const c_void for use as a CFDictionary key/value.
+    fn cv<T>(ptr: *const T) -> *const c_void {
+        ptr as *const c_void
+    }
+
+    pub fn get(service: &str, account: &str) -> Result<Option<String>, String> {
+        let svc = CFString::new(service);
+        let acct = CFString::new(account);
+        let cf_true = CFBoolean::true_value();
+
+        let mut q: CFMutableDictionary<*const c_void, *const c_void> =
+            CFMutableDictionary::from_CFType_pairs(&[]);
+        unsafe {
+            let limit_one = kSecMatchLimitOne;
+            q.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
+            q.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
+            q.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
+            q.add(&cv(kSecReturnData), &cv(cf_true.as_concrete_TypeRef()));
+            q.add(&cv(kSecMatchLimit), &cv(limit_one));
+        }
+
+        let mut raw: *const c_void = ptr::null();
+        match unsafe { SecItemCopyMatching(q.as_concrete_TypeRef(), &mut raw) } {
+            0 => {
+                // SecItemCopyMatching creates the CFData; wrap_under_create_rule takes ownership
+                // (calls CFRelease when the Rust wrapper drops).
+                let data = unsafe { CFData::wrap_under_create_rule(raw as CFDataRef) };
+                String::from_utf8(data.bytes().to_vec())
+                    .map(Some)
+                    .map_err(|e| e.to_string())
+            }
+            ERR_NOT_FOUND => Ok(None),
+            code => Err(format!("keychain read failed ({code})")),
+        }
+    }
+
+    pub fn set(service: &str, account: &str, password: &str) -> Result<(), String> {
+        // Remove any existing entry first — it may have the old per-binary ACL.
+        let _ = delete(service, account);
+
+        // Create a permissive SecAccess: NULL applicationList = any app, no prompt.
+        let svc_desc = CFString::new(service);
+        let mut access: SecAccessRef = ptr::null_mut();
+        let acc_status = unsafe {
+            SecAccessCreate(svc_desc.as_concrete_TypeRef(), ptr::null(), &mut access)
+        };
+        if acc_status != 0 {
+            return Err(format!("SecAccessCreate failed ({acc_status})"));
+        }
+
+        let svc = CFString::new(service);
+        let acct = CFString::new(account);
+        let data = CFData::from_buffer(password.as_bytes());
+
+        let mut attrs: CFMutableDictionary<*const c_void, *const c_void> =
+            CFMutableDictionary::from_CFType_pairs(&[]);
+
+        let status = unsafe {
+            let acc_key = kSecAttrAccess;
+            attrs.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
+            attrs.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
+            attrs.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
+            attrs.add(&cv(kSecAttrLabel), &cv(svc.as_concrete_TypeRef()));
+            attrs.add(&cv(kSecValueData), &cv(data.as_concrete_TypeRef()));
+            // kSecAttrAccess links the permissive SecAccess to this item.
+            attrs.add(&cv(acc_key), &(access as *const OpaqueSecAccessRef as *const c_void));
+
+            let s = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
+            // attrs retains the SecAccess; release our create-rule reference.
+            CFRelease(access as *const OpaqueSecAccessRef as *const c_void);
+            s
+        };
+        // `attrs` and `data` drop here, releasing their CF references.
+
+        if status != 0 {
+            Err(format!("keychain write failed ({status})"))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn delete(service: &str, account: &str) -> Result<(), String> {
+        let svc = CFString::new(service);
+        let acct = CFString::new(account);
+
+        let mut q: CFMutableDictionary<*const c_void, *const c_void> =
+            CFMutableDictionary::from_CFType_pairs(&[]);
+        unsafe {
+            q.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
+            q.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
+            q.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
+        }
+
+        match unsafe { SecItemDelete(q.as_concrete_TypeRef()) } {
+            0 | ERR_NOT_FOUND => Ok(()),
+            code => Err(format!("keychain delete failed ({code})")),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl TokenStore for KeyringStore {
+    fn get(&self) -> Result<Option<String>, String> {
+        match macos_keychain::get(KEYCHAIN_SERVICE, KEYCHAIN_USER)? {
+            Some(token) => {
+                // Migrate: delete the old item (which may have a restrictive per-binary ACL)
+                // and recreate it with the permissive ACL. After this, future reads never prompt.
+                let _ = macos_keychain::set(KEYCHAIN_SERVICE, KEYCHAIN_USER, &token);
+                Ok(Some(token))
+            }
+            None => Ok(None),
+        }
+    }
+    fn set(&self, token: &str) -> Result<(), String> {
+        macos_keychain::set(KEYCHAIN_SERVICE, KEYCHAIN_USER, token)
+    }
+    fn delete(&self) -> Result<(), String> {
+        macos_keychain::delete(KEYCHAIN_SERVICE, KEYCHAIN_USER)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 impl TokenStore for KeyringStore {
     fn get(&self) -> Result<Option<String>, String> {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;

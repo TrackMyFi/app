@@ -2382,8 +2382,6 @@ dependencies = [
  "dbus-secret-service",
  "log",
  "secret-service",
- "security-framework 2.11.1",
- "security-framework 3.7.0",
  "windows-sys 0.60.2",
  "zeroize",
 ]
@@ -5418,8 +5416,11 @@ dependencies = [
 name = "trackmyfi-app"
 version = "0.2.3"
 dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
  "keyring",
  "libsql",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "tauri",

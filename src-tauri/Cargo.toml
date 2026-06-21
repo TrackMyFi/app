@@ -33,10 +33,15 @@ tokio = { version = "1", features = ["sync", "time"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
-# keyring needs an explicit per-platform native backend; with no backend feature
-# it silently falls back to an in-memory mock store (token never persists).
+# On macOS we bypass the keyring crate and call Security.framework directly so
+# we can create items with SecAccessCreate(NULL), which lets any app read the
+# item without a per-binary ACL prompt. This survives app updates: "Always Allow"
+# with the keyring crate's default ACL is tied to the calling binary's code hash,
+# which changes on every update when using a self-signed certificate.
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
+security-framework-sys = "2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
