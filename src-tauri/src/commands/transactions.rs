@@ -43,13 +43,16 @@ pub struct UpdateTransaction {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionFilter {
-    pub account_id: Option<i32>,
-    #[serde(rename = "type")]
-    pub r#type: Option<String>,
-    pub category: Option<String>,
+    #[serde(default)]
+    pub account_ids: Vec<i32>,
+    #[serde(default)]
+    pub types: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    pub search: Option<String>,
+    #[serde(default)]
+    pub search_terms: Vec<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -92,18 +95,21 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
 // Build the WHERE clause + positional params from a filter.
 fn build_where(f: &TransactionFilter, params: &mut Vec<Value>) -> String {
     let mut clauses: Vec<String> = Vec::new();
-    if let Some(a) = f.account_id {
-        clauses.push("(account_id = ? OR transfer_account_id = ?)".into());
-        params.push(Value::Integer(a as i64));
-        params.push(Value::Integer(a as i64));
+    if !f.account_ids.is_empty() {
+        let ph = (0..f.account_ids.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+        clauses.push(format!("(account_id IN ({ph}) OR transfer_account_id IN ({ph}))"));
+        for &id in &f.account_ids { params.push(Value::Integer(id as i64)); }
+        for &id in &f.account_ids { params.push(Value::Integer(id as i64)); }
     }
-    if let Some(t) = &f.r#type {
-        clauses.push("type = ?".into());
-        params.push(Value::Text(t.clone()));
+    if !f.types.is_empty() {
+        let ph = (0..f.types.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+        clauses.push(format!("type IN ({ph})"));
+        for t in &f.types { params.push(Value::Text(t.clone())); }
     }
-    if let Some(c) = &f.category {
-        clauses.push("category = ?".into());
-        params.push(Value::Text(c.clone()));
+    if !f.categories.is_empty() {
+        let ph = (0..f.categories.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+        clauses.push(format!("category IN ({ph})"));
+        for c in &f.categories { params.push(Value::Text(c.clone())); }
     }
     if let Some(s) = &f.start_date {
         clauses.push("date >= ?".into());
@@ -113,9 +119,10 @@ fn build_where(f: &TransactionFilter, params: &mut Vec<Value>) -> String {
         clauses.push("date <= ?".into());
         params.push(Value::Text(e.clone()));
     }
-    if let Some(q) = &f.search {
-        clauses.push("description LIKE ?".into());
-        params.push(Value::Text(format!("%{}%", q)));
+    if !f.search_terms.is_empty() {
+        let sub = f.search_terms.iter().map(|_| "description LIKE ?").collect::<Vec<_>>().join(" OR ");
+        clauses.push(format!("({sub})"));
+        for term in &f.search_terms { params.push(Value::Text(format!("%{term}%"))); }
     }
     if clauses.is_empty() {
         String::new()

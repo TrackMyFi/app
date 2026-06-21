@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
 import { DateTime } from 'luxon'
 import { useToast } from '@nuxt/ui/composables'
 import { useTransactionsStore } from '../stores/transactions'
@@ -26,10 +26,10 @@ const editing = ref<Transaction | null>(null)
 
 function openAdd() { editing.value = null; isModalOpen.value = true }
 function openEdit(t: Transaction) { editing.value = t; isModalOpen.value = true }
-async function onSaved() { isModalOpen.value = false; await loadYearData() }
+async function onSaved() { isModalOpen.value = false; await applyFilters() }
 
 const isImportOpen = ref(false)
-async function onImportDone() { isImportOpen.value = false; await loadYearData() }
+async function onImportDone() { isImportOpen.value = false; await applyFilters() }
 
 const removingId = ref<number | null>(null)
 
@@ -39,7 +39,7 @@ async function removeRow(t: Transaction) {
   removingId.value = t.id
   try {
     await store.remove(t.id)
-    await loadYearData()
+    await applyFilters()
   } catch (err) {
     toast.add({ title: 'Failed to delete transaction', description: String(err), color: 'error' })
   } finally {
@@ -57,59 +57,91 @@ const monthEnd = computed(() => selectedDate.value.endOf('month').toISODate()!)
 
 function onMonthChange(dt: DateTime) {
   selectedDate.value = dt
-  applyMonthFilter()
+  applyFilters()
+}
+
+// ─── Date scope ────────────────────────────────────────────────────────────────
+
+type Scope = 'month' | 'year' | 'all'
+const scope = ref<Scope>('month')
+
+function setScope(s: Scope) {
+  scope.value = s
+  applyFilters()
 }
 
 // ─── Chart mode ────────────────────────────────────────────────────────────────
 
-const chartMode = ref<'monthly' | 'annual'>('monthly')
+const chartMode = ref<'breakdown' | 'cumulative'>('breakdown')
 
-const chartTitle = computed(() =>
-  chartMode.value === 'monthly'
-    ? `Expense Breakdown — ${monthLabel.value}`
-    : `Income vs. Expense — ${yearLabel.value}`
-)
+const chartTitle = computed(() => {
+  if (chartMode.value === 'breakdown') {
+    const label = scope.value === 'month' ? monthLabel.value
+      : scope.value === 'year' ? yearLabel.value
+      : 'All Time'
+    return `Expense Breakdown — ${label}`
+  }
+  return scope.value === 'all' ? 'Cumulative Net — All Time' : `Cumulative Net — ${yearLabel.value}`
+})
 
 // ─── Secondary filters ─────────────────────────────────────────────────────────
 
-const accountId = ref<number | undefined>(undefined)
-const type = ref<string | undefined>(undefined)
-const category = ref<string | undefined>(undefined)
-const search = ref('')
-
-async function applyFilters() { await applyMonthFilter() }
+const accountIds = ref<number[]>([])
+const types = ref<string[]>([])
+const categories = ref<string[]>([])
+const searchTerms = ref<string[]>([])
 
 async function clearFilters() {
-  accountId.value = undefined
-  type.value = undefined
-  category.value = undefined
-  search.value = ''
-  await applyMonthFilter()
+  accountIds.value = []
+  types.value = []
+  categories.value = []
+  searchTerms.value = []
+  await applyFilters()
 }
 
 // ─── Data loading ──────────────────────────────────────────────────────────────
 
 const yearTransactions = ref<Transaction[]>([])
+const allTimeTransactions = ref<Transaction[]>([])
 
-async function applyMonthFilter() {
+async function applyFilters() {
+  let startDate: string | null = null
+  let endDate: string | null = null
+
+  if (scope.value === 'month') {
+    startDate = monthStart.value
+    endDate = monthEnd.value
+  } else if (scope.value === 'year') {
+    startDate = selectedDate.value.startOf('year').toISODate()!
+    endDate = selectedDate.value.endOf('year').toISODate()!
+  }
+
   await store.setFilter({
-    accountId: accountId.value ?? null,
-    type: type.value ?? null,
-    category: category.value ?? null,
-    search: search.value || null,
-    startDate: monthStart.value,
-    endDate: monthEnd.value,
-    limit: null,
+    accountIds: accountIds.value,
+    types: types.value,
+    categories: categories.value,
+    searchTerms: searchTerms.value,
+    startDate,
+    endDate,
   })
+
+  // Always load year data — needed for annual stats card, cumulative chart
+  // (month scope), and monthly breakdown when scope !== 'month'.
   await loadYearData()
+
+  if (scope.value === 'all') {
+    await loadAllTimeData()
+  } else {
+    allTimeTransactions.value = []
+  }
 }
 
 async function loadYearData() {
   const result = await api.listTransactions({
-    accountId: accountId.value ?? null,
-    type: type.value ?? null,
-    category: category.value ?? null,
-    search: search.value || null,
+    accountIds: accountIds.value,
+    types: types.value,
+    categories: categories.value,
+    searchTerms: searchTerms.value,
     startDate: selectedDate.value.startOf('year').toISODate()!,
     endDate: selectedDate.value.endOf('year').toISODate()!,
     limit: null,
@@ -117,9 +149,45 @@ async function loadYearData() {
   yearTransactions.value = result.rows
 }
 
+async function loadAllTimeData() {
+  const result = await api.listTransactions({
+    accountIds: accountIds.value,
+    types: types.value,
+    categories: categories.value,
+    searchTerms: searchTerms.value,
+    limit: null,
+  })
+  allTimeTransactions.value = result.rows
+}
+
+// ─── Infinite scroll ───────────────────────────────────────────────────────────
+
+const sentinel = ref<HTMLElement | null>(null)
+
+const observer = new IntersectionObserver(
+  (entries) => { if (entries[0].isIntersecting) store.loadMore() },
+  { rootMargin: '200px' }
+)
+
+watchEffect(() => {
+  observer.disconnect()
+  if (sentinel.value) observer.observe(sentinel.value)
+})
+
+onUnmounted(() => observer.disconnect())
+
 // ─── Totals ────────────────────────────────────────────────────────────────────
 
-const monthlyTotals = computed(() => cashFlowTotals(store.page.rows, accountsStore.accounts))
+// When scope !== 'month', derive monthly transactions from the full year data
+// (already loaded) so there's no extra IPC call.
+const monthlyTransactions = computed(() => {
+  if (scope.value === 'month') return store.page.rows
+  const start = monthStart.value
+  const end = monthEnd.value
+  return yearTransactions.value.filter((t) => t.date >= start && t.date <= end)
+})
+
+const monthlyTotals = computed(() => cashFlowTotals(monthlyTransactions.value, accountsStore.accounts))
 const annualTotals = computed(() => cashFlowTotals(yearTransactions.value, accountsStore.accounts))
 
 function formatSavingsRate(totals: { income: number; expense: number; savings: number; net: number }): string {
@@ -130,9 +198,29 @@ function formatSavingsRate(totals: { income: number; expense: number; savings: n
 const monthlySavingsRate = computed(() => formatSavingsRate(monthlyTotals.value))
 const annualSavingsRate = computed(() => formatSavingsRate(annualTotals.value))
 
+// ─── Chart data (scope-aware, never paginated) ────────────────────────────────
+
+// Expense breakdown uses scope-appropriate full data set.
+const breakdownTransactions = computed(() => {
+  if (scope.value === 'month') return monthlyTransactions.value
+  if (scope.value === 'year') return yearTransactions.value
+  return allTimeTransactions.value
+})
+
+// Cumulative chart always uses at least the full year; all-time when scope='all'.
+const cumulativeTransactions = computed(() =>
+  scope.value === 'all' ? allTimeTransactions.value : yearTransactions.value
+)
+
 // ─── Table ─────────────────────────────────────────────────────────────────────
 
 const rows = computed(() => store.page.rows)
+
+const tableScopeLabel = computed(() => {
+  if (scope.value === 'month') return monthLabel.value
+  if (scope.value === 'year') return yearLabel.value
+  return 'All time'
+})
 
 const columns = [
   { accessorKey: 'date', header: 'Date' },
@@ -160,8 +248,6 @@ const DIRECTION_COLOR: Record<FlowDirection, string> = {
   neutral: 'text-muted',
 }
 
-// Transfers always use the ⇄ glyph; colour encodes the asset/liability direction.
-// Plain income/expense use a horizontal arrow: right = money in, left = money out.
 function flowIcon(t: Transaction): string {
   const { direction, isTransfer } = classifyFlow(t, accountsStore.accounts)
   if (isTransfer) return 'i-ph-arrows-left-right'
@@ -182,7 +268,7 @@ function directionLabel(t: Transaction): string {
 
 onMounted(async () => {
   await accountsStore.load()
-  await applyMonthFilter()
+  await applyFilters()
 })
 </script>
 
@@ -200,47 +286,74 @@ onMounted(async () => {
     <!-- Chart card -->
     <div class="border border-default rounded-lg p-4">
       <div class="flex items-center justify-between mb-4">
-        <MonthPicker :model-value="selectedDate" @update:model-value="onMonthChange" />
+        <div class="flex items-center gap-3">
+          <MonthPicker
+            v-if="scope !== 'all'"
+            :model-value="selectedDate"
+            :mode="scope === 'year' ? 'year' : 'month'"
+            @update:model-value="onMonthChange"
+          />
+          <div class="flex gap-1">
+            <UButton
+              size="xs"
+              :variant="scope === 'month' ? 'subtle' : 'ghost'"
+              :color="scope === 'month' ? 'primary' : 'neutral'"
+              @click="setScope('month')"
+            >Month</UButton>
+            <UButton
+              size="xs"
+              :variant="scope === 'year' ? 'subtle' : 'ghost'"
+              :color="scope === 'year' ? 'primary' : 'neutral'"
+              @click="setScope('year')"
+            >Year</UButton>
+            <UButton
+              size="xs"
+              :variant="scope === 'all' ? 'subtle' : 'ghost'"
+              :color="scope === 'all' ? 'primary' : 'neutral'"
+              @click="setScope('all')"
+            >All time</UButton>
+          </div>
+        </div>
         <div class="flex gap-1">
           <UButton
             size="xs"
-            :variant="chartMode === 'monthly' ? 'subtle' : 'ghost'"
-            :color="chartMode === 'monthly' ? 'primary' : 'neutral'"
-            @click="chartMode = 'monthly'"
-          >Monthly</UButton>
+            :variant="chartMode === 'breakdown' ? 'subtle' : 'ghost'"
+            :color="chartMode === 'breakdown' ? 'primary' : 'neutral'"
+            @click="chartMode = 'breakdown'"
+          >Expense Breakdown</UButton>
           <UButton
             size="xs"
-            :variant="chartMode === 'annual' ? 'subtle' : 'ghost'"
-            :color="chartMode === 'annual' ? 'primary' : 'neutral'"
-            @click="chartMode = 'annual'"
-          >Annual</UButton>
+            :variant="chartMode === 'cumulative' ? 'subtle' : 'ghost'"
+            :color="chartMode === 'cumulative' ? 'primary' : 'neutral'"
+            @click="chartMode = 'cumulative'"
+          >Cumulative Chart</UButton>
         </div>
       </div>
       <p class="text-sm text-muted mb-3">{{ chartTitle }}</p>
-      <template v-if="chartMode === 'monthly'">
+      <template v-if="chartMode === 'breakdown'">
         <TransactionMonthlyBreakdown
-          v-if="store.page.rows.length > 0"
-          :transactions="store.page.rows"
+          v-if="breakdownTransactions.length > 0"
+          :transactions="breakdownTransactions"
           :accounts="accountsStore.accounts"
         />
         <p v-else class="text-sm text-muted text-center py-8">No transactions for this period</p>
       </template>
       <template v-else>
         <TransactionChart
-          v-if="yearTransactions.length > 0"
-          :transactions="yearTransactions"
+          v-if="cumulativeTransactions.length > 0"
+          :transactions="cumulativeTransactions"
           :accounts="accountsStore.accounts"
         />
-        <p v-else class="text-sm text-muted text-center py-8">No transactions for this year</p>
+        <p v-else class="text-sm text-muted text-center py-8">No transactions for this period</p>
       </template>
     </div>
 
     <!-- Stats row -->
-    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-      <div class="border border-default rounded-lg p-4">
+    <div class="grid grid-cols-1 gap-4" :class="scope === 'month' ? 'xl:grid-cols-2' : 'xl:grid-cols-1'">
+      <div v-if="scope === 'month'" class="border border-default rounded-lg p-4">
         <div class="flex items-center justify-between mb-3">
           <p class="text-sm font-medium text-heading">{{ monthLabel }}</p>
-          <span class="text-xs text-muted">{{ store.page.totalCount }} transactions</span>
+          <span class="text-xs text-muted">{{ monthlyTransactions.length }} transactions</span>
         </div>
         <div class="grid grid-cols-5 gap-3">
           <div>
@@ -296,31 +409,40 @@ onMounted(async () => {
 
     <!-- Secondary filters -->
     <div class="flex flex-wrap gap-2 items-end">
-      <USelect
-        v-model="accountId"
+      <USelectMenu
+        v-model="accountIds"
         :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
+        multiple
         placeholder="All accounts"
         class="w-44"
       />
-      <USelect
-        v-model="type"
+      <USelectMenu
+        v-model="types"
         :items="transactionTypeItems"
+        multiple
         placeholder="All types"
         class="w-36"
       />
-      <USelect
-        v-model="category"
+      <USelectMenu
+        v-model="categories"
         :items="categoryItems"
+        multiple
         placeholder="All categories"
         class="w-40"
       />
-      <UInput v-model="search" placeholder="Search description" class="w-52" />
+      <UInputTags v-model="searchTerms" placeholder="Search terms" class="flex-1 min-w-0" />
       <UButton @click="applyFilters">Apply</UButton>
       <UButton variant="ghost" @click="clearFilters">Clear</UButton>
     </div>
 
     <!-- Table -->
     <div class="border border-default rounded-lg overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-2 border-b border-default">
+        <p class="text-xs text-muted">{{ tableScopeLabel }}</p>
+        <p class="text-xs text-muted">
+          {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions
+        </p>
+      </div>
       <UTable :data="rows" :columns="columns" empty="No transactions yet.">
         <template #description-cell="{ row }">
           <span class="block max-w-[300px] truncate" :title="row.original.description">{{ row.original.description }}</span>
@@ -352,6 +474,10 @@ onMounted(async () => {
           <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" :loading="removingId === row.original.id" :disabled="removingId !== null" @click="removeRow(row.original)" />
         </template>
       </UTable>
+      <div ref="sentinel" class="h-1" />
+      <div v-if="store.loading && store.page.rows.length > 0" class="flex justify-center py-3">
+        <UIcon name="i-ph-spinner" class="size-5 text-muted animate-spin" />
+      </div>
     </div>
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">

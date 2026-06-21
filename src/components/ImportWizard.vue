@@ -294,7 +294,7 @@ watch(accountId, async (newId) => {
   // The backend filter is `(account_id = ? OR transfer_account_id = ?)`, so this
   // returns both this account's own rows (for exact dedup) and transfers whose
   // other side is this account (for transfer-counterpart dedup).
-  const page = await listTransactions({ accountId: newId, limit: 1_000_000 })
+  const page = await listTransactions({ accountIds: [newId], limit: 1_000_000 })
   existingRefs.value = page.rows.map((r) => ({
     accountId: r.accountId,
     date: r.date,

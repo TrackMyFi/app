@@ -5,6 +5,7 @@ import { CalendarDate, type DateValue } from '@internationalized/date'
 
 const props = defineProps<{
   modelValue: DateTime
+  mode?: 'month' | 'year'
 }>()
 
 const emit = defineEmits<{
@@ -13,7 +14,11 @@ const emit = defineEmits<{
 
 const isOpen = ref(false)
 
-const monthLabel = computed(() => props.modelValue.toFormat('MMMM yyyy'))
+const label = computed(() =>
+  props.mode === 'year'
+    ? props.modelValue.toFormat('yyyy')
+    : props.modelValue.toFormat('MMMM yyyy')
+)
 
 const calValue = computed<DateValue>({
   get() {
@@ -25,28 +30,34 @@ const calValue = computed<DateValue>({
   },
 })
 
-function prevMonth() {
-  emit('update:modelValue', props.modelValue.minus({ months: 1 }).startOf('month'))
+function prev() {
+  const dt = props.mode === 'year'
+    ? props.modelValue.minus({ years: 1 })
+    : props.modelValue.minus({ months: 1 })
+  emit('update:modelValue', dt.startOf('month'))
 }
 
-function nextMonth() {
-  emit('update:modelValue', props.modelValue.plus({ months: 1 }).startOf('month'))
+function next() {
+  const dt = props.mode === 'year'
+    ? props.modelValue.plus({ years: 1 })
+    : props.modelValue.plus({ months: 1 })
+  emit('update:modelValue', dt.startOf('month'))
 }
 </script>
 
 <template>
   <div class="flex items-center gap-1">
-    <UButton variant="ghost" color="neutral" icon="i-ph-caret-left" @click="prevMonth" />
+    <UButton variant="ghost" color="neutral" icon="i-ph-caret-left" @click="prev" />
     <UPopover v-model:open="isOpen">
       <UButton variant="ghost" color="neutral">
-        {{ monthLabel }}
+        {{ label }}
       </UButton>
       <template #content>
         <div class="p-2">
-          <UCalendar v-model="calValue" type="month" />
+          <UCalendar v-model="calValue" :type="mode === 'year' ? 'year' : 'month'" />
         </div>
       </template>
     </UPopover>
-    <UButton variant="ghost" color="neutral" icon="i-ph-caret-right" @click="nextMonth" />
+    <UButton variant="ghost" color="neutral" icon="i-ph-caret-right" @click="next" />
   </div>
 </template>

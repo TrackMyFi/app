@@ -3,12 +3,12 @@ import type { TransactionPage } from '../types/TransactionPage'
 import type { Transaction } from '../types/Transaction'
 
 export interface TransactionFilter {
-  accountId?: number | null
-  type?: string | null
-  category?: string | null
+  accountIds?: number[]
+  types?: string[]
+  categories?: string[]
   startDate?: string | null
   endDate?: string | null
-  search?: string | null
+  searchTerms?: string[]
   limit?: number | null
   offset?: number | null
 }
