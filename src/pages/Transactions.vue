@@ -412,6 +412,7 @@ onMounted(async () => {
       <USelectMenu
         v-model="accountIds"
         :items="accountsStore.accounts.map((a) => ({ label: a.name, value: a.id }))"
+        value-key="value"
         multiple
         placeholder="All accounts"
         class="w-44"
@@ -419,6 +420,7 @@ onMounted(async () => {
       <USelectMenu
         v-model="types"
         :items="transactionTypeItems"
+        value-key="value"
         multiple
         placeholder="All types"
         class="w-36"
@@ -426,6 +428,7 @@ onMounted(async () => {
       <USelectMenu
         v-model="categories"
         :items="categoryItems"
+        value-key="value"
         multiple
         placeholder="All categories"
         class="w-40"
