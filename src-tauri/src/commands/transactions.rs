@@ -168,7 +168,9 @@ pub async fn list_transactions(
     // page rows
     let mut row_params: Vec<Value> = Vec::new();
     let where_sql = build_where(f, &mut row_params);
-    let limit = f.limit.unwrap_or(200);
+    // SQLite treats LIMIT -1 as "no limit"; use that when the caller passes null
+    // so annual queries (which set limit: null) aren't silently capped at 200 rows.
+    let limit = f.limit.unwrap_or(-1);
     let offset = f.offset.unwrap_or(0);
     row_params.push(Value::Integer(limit));
     row_params.push(Value::Integer(offset));
