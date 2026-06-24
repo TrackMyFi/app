@@ -20,6 +20,8 @@ import CurrencyInput from '../components/CurrencyInput.vue'
 import PercentInput from '../components/PercentInput.vue'
 import DateInput from '../components/DateInput.vue'
 import { categoryItems, labelForCategory } from '../lib/transactions/constants'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 interface FireProfileForm {
   dateOfBirth: string | null
@@ -35,6 +37,7 @@ interface FireProfileForm {
 
 const store = useFireProfileStore()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 const form = reactive<FireProfileForm>({
   dateOfBirth: null,
   targetRetirementAge: 0,
@@ -67,12 +70,12 @@ async function checkForUpdates() {
   if (updater.status === 'idle') upToDate.value = true
 }
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await store.load()
   if (store.profile) Object.assign(form, store.profile)
   categoryRules.value = await categoryRulesApi.listCategoryRules()
   await updater.loadVersion()
-})
+}))
 
 async function onSubmit() {
   const profile: FireProfile = {
@@ -215,6 +218,8 @@ const ruleColumns = [
 
 <template>
   <div class="p-6 max-w-3xl space-y-8">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <section class="space-y-4">
       <h1 class="text-2xl font-bold">FIRE Profile</h1>
       <UForm :state="form" @submit="onSubmit" class="space-y-4">

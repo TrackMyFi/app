@@ -12,16 +12,19 @@ import {
 } from '../lib/fire'
 import ForecastChart from '../components/ForecastChart.vue'
 import { CHART_COLORS } from '../lib/forecastColors'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
 const contrib = useContributionsStore()
+const { error, run, retry } = usePageData()
 
 const open = ref(false)
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
-})
+}))
 
 const inputs = computed(() => activeFireInputs(acc.accounts, acc.allBalances))
 const investable = computed(() => investableNetWorth(inputs.value.accounts, inputs.value.balances))
@@ -91,6 +94,8 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
 
 <template>
   <div class="p-6 space-y-6">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Forecast</h1>
       <UButton v-if="fp.profile" icon="i-ph-sliders-horizontal" color="neutral" variant="outline" @click="open = true">

@@ -61,7 +61,16 @@ pub struct Db {
 
 impl Db {
     pub async fn conn(&self) -> Result<Connection, String> {
-        self.db.connect().map_err(|e| e.to_string())
+        let conn = self.db.connect().map_err(|e| e.to_string())?;
+        // Wait (up to 5s) for a contended write lock instead of immediately
+        // failing with "database is locked". At startup the background sync
+        // catch-up pulls the cloud and runs migrations — writes to the same
+        // replica file the UI is concurrently reading. Without a busy timeout
+        // those reads intermittently error and leave a page blank; with it they
+        // simply wait out the brief writer and succeed.
+        conn.busy_timeout(std::time::Duration::from_millis(5000))
+            .map_err(|e| e.to_string())?;
+        Ok(conn)
     }
     pub fn is_synced(&self) -> bool {
         self.mode == DbMode::Synced

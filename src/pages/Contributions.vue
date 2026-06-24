@@ -6,10 +6,13 @@ import { useAccountsStore } from '../stores/accounts'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { buildContributionRows, type ContributionRow } from '../lib/contributions/index'
 import { resolveYearLimits } from '../lib/contributions/irsLimits'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const store = useContributionsStore()
 const accountsStore = useAccountsStore()
 const fp = useFireProfileStore()
+const { error, run, retry } = usePageData()
 
 const selectedYear = ref<number>(DateTime.now().year)
 
@@ -104,15 +107,17 @@ async function onYearChange(year: unknown) {
   await store.load(y)
 }
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await Promise.all([accountsStore.load(), fp.load(), store.loadYears()])
   selectedYear.value = DateTime.now().year
   await store.load(selectedYear.value)
-})
+}))
 </script>
 
 <template>
   <div class="p-6 space-y-6">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold">Contributions</h1>
       <USelect

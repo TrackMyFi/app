@@ -362,6 +362,59 @@ pub struct SyncShared {
     pub lock: AsyncMutex<()>,
 }
 
+/// Rendezvous that guarantees the post-catch-up `data-refreshed` event is emitted
+/// only AFTER both (a) the background catch-up has finished pulling + migrating and
+/// (b) the frontend has attached its `data-refreshed` listener.
+///
+/// Tauri events are not buffered: one emitted before `listen()` has registered is
+/// lost forever. The catch-up is spawned the instant the DB opens, so in a release
+/// build it can easily finish before the webview's listener exists — which silently
+/// dropped the refresh and left the UI showing stale/empty last-synced data until
+/// the user navigated away and back. This gate closes that race: whichever of the
+/// two conditions completes second triggers the (single) emit.
+#[derive(Default)]
+struct RefreshGateState {
+    frontend_ready: bool,
+    catch_up_done: bool,
+    emitted: bool,
+}
+
+pub struct RefreshGate {
+    inner: StdMutex<RefreshGateState>,
+}
+
+impl RefreshGate {
+    pub fn new() -> Self {
+        Self { inner: StdMutex::new(RefreshGateState::default()) }
+    }
+}
+
+/// Update one side of the gate, then emit `data-refreshed` exactly once if both
+/// sides are now satisfied.
+fn update_refresh_gate(app: &AppHandle, set: impl FnOnce(&mut RefreshGateState)) {
+    let gate = app.state::<RefreshGate>();
+    let should_emit = {
+        let mut s = gate.inner.lock().unwrap();
+        set(&mut s);
+        if s.frontend_ready && s.catch_up_done && !s.emitted {
+            s.emitted = true;
+            true
+        } else {
+            false
+        }
+    };
+    if should_emit {
+        let _ = app.emit("data-refreshed", ());
+    }
+}
+
+/// Frontend handshake: called once the webview has registered its `data-refreshed`
+/// listener, so the backend knows the refresh emit can no longer be missed.
+#[tauri::command]
+pub fn frontend_ready(app: AppHandle) {
+    update_refresh_gate(&app, |s| s.frontend_ready = true);
+}
+
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -433,7 +486,9 @@ pub async fn initial_catch_up(app: &AppHandle) -> Result<(), String> {
     let pull = do_sync(app).await;
     let conn = db.conn().await?;
     crate::migrations::run(&conn).await?;
-    let _ = app.emit("data-refreshed", ());
+    // Don't emit directly — the frontend listener may not be attached yet. Mark
+    // this side of the gate; the emit fires once the frontend is also ready.
+    update_refresh_gate(app, |s| s.catch_up_done = true);
     pull
 }
 

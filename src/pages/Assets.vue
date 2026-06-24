@@ -17,10 +17,13 @@ import {
 import AssetEventForm from '../components/AssetEventForm.vue'
 import DateInput from '../components/DateInput.vue'
 import type { AssetEvent } from '../lib/types/AssetEvent'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const store = useAssetEventsStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 
 const isModalOpen = ref(false)
 const editing = ref<AssetEvent | null>(null)
@@ -110,18 +113,20 @@ function fmtDate(iso: string): string {
   return DateTime.fromISO(iso).toLocaleString(DateTime.DATE_MED)
 }
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await accountsStore.loadList()
   await store.load()
   kindFilter.value = store.filter.kind ?? 'all'
   startDate.value = store.filter.startDate ?? ''
   endDate.value = store.filter.endDate ?? ''
   search.value = store.filter.search ?? ''
-})
+}))
 </script>
 
 <template>
   <div class="p-6 space-y-4">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-semibold">Assets</h1>

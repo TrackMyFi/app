@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useRouter, useRoute } from 'vue-router'
+import { frontendReady } from './lib/api/sync'
 import { useSyncStore } from './stores/sync'
 import { useFireProfileStore } from './stores/fireProfile'
 import { useUpdaterStore } from './stores/updater'
@@ -27,6 +28,10 @@ onMounted(async () => {
   unlistenRefresh = await listen('data-refreshed', () => {
     refreshNonce.value++
   })
+  // Listener is now attached — signal the backend it can safely emit the
+  // post-catch-up refresh. Without this, the backend could emit before listen()
+  // resolved and the refresh would be lost (stale UI until manual navigation).
+  frontendReady().catch(() => {})
   try {
     await fireProfileStore.load()
   } catch {

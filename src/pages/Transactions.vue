@@ -14,10 +14,13 @@ import TransactionMonthlyBreakdown from '../components/TransactionMonthlyBreakdo
 import MonthPicker from '../components/MonthPicker.vue'
 import type { Transaction } from '../lib/types/Transaction'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
@@ -266,14 +269,16 @@ function directionLabel(t: Transaction): string {
   return 'Transfer'
 }
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await accountsStore.load()
   await applyFilters()
-})
+}))
 </script>
 
 <template>
   <div class="p-6 space-y-4">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <!-- Header -->
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Transactions</h1>

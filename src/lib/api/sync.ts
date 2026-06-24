@@ -13,5 +13,9 @@ export const syncNow = () => invoke<void>('sync_now')
 
 export const restartApp = () => invoke<void>('restart_app')
 
+// Tell the backend the `data-refreshed` listener is attached, so the post-startup
+// catch-up refresh can be emitted without racing the listener registration.
+export const frontendReady = () => invoke<void>('frontend_ready')
+
 export const onSyncStatus = (cb: (s: SyncStatus) => void): Promise<UnlistenFn> =>
   listen<SyncStatus>('sync-status', (e) => cb(e.payload))

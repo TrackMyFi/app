@@ -22,21 +22,24 @@ import AssetEventForm from '../components/AssetEventForm.vue'
 import StatCard from '../components/StatCard.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import DateInput from '../components/DateInput.vue'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAccountsStore()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 
 const accountId = computed(() => Number(route.params.id))
 const account = computed(() => store.accounts.find(a => a.id === accountId.value) ?? null)
 
 // Load accounts if store is empty (direct navigation)
-onMounted(async () => {
+onMounted(() => run(async () => {
   if (store.accounts.length === 0) await store.loadList()
   await refreshSummaries()
   await loadAssetEvents()
-})
+}))
 
 // ─── Upkeep & improvements (real estate only) ────────────────────────────────
 
@@ -360,7 +363,8 @@ async function deleteAccount() {
 </script>
 
 <template>
-  <div v-if="account" class="p-6">
+  <PageError v-if="error" :message="error" @retry="retry" class="m-6" />
+  <div v-else-if="account" class="p-6">
     <!-- Back link -->
     <RouterLink
       :to="{ name: 'accounts' }"

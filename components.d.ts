@@ -23,6 +23,7 @@ declare module 'vue' {
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']
     MonthPicker: typeof import('./src/components/MonthPicker.vue')['default']
     NetWorthChart: typeof import('./src/components/NetWorthChart.vue')['default']
+    PageError: typeof import('./src/components/PageError.vue')['default']
     PaycheckForm: typeof import('./src/components/PaycheckForm.vue')['default']
     PercentInput: typeof import('./src/components/PercentInput.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

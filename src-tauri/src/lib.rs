@@ -38,6 +38,7 @@ pub fn run() {
                 status: std::sync::Mutex::new(initial),
                 lock: tokio::sync::Mutex::new(()),
             });
+            app.manage(sync::RefreshGate::new());
 
             // Background sync (only meaningful in synced mode; the calls no-op otherwise).
             let handle = app.handle().clone();
@@ -116,6 +117,7 @@ pub fn run() {
             sync::save_sync_config,
             sync::clear_sync_config,
             sync::restart_app,
+            sync::frontend_ready,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

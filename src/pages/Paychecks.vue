@@ -9,10 +9,13 @@ import PaycheckForm from '../components/PaycheckForm.vue'
 import DateInput from '../components/DateInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 
 const isModalOpen = ref(false)
 const editing = ref<Paycheck | null>(null)
@@ -83,17 +86,19 @@ function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await accountsStore.load() // pre-populates store for PaycheckForm account dropdowns
   await store.load()
   startDate.value = store.filter.startDate ?? ''
   endDate.value = store.filter.endDate ?? ''
   employerSearch.value = store.filter.employer ?? ''
-})
+}))
 </script>
 
 <template>
   <div class="p-6 space-y-4">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Paychecks</h1>
       <UButton icon="i-ph-plus" @click="openAdd">Add paycheck</UButton>

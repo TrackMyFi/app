@@ -4,12 +4,15 @@ import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useBudgetStore } from '../stores/budget'
 import { useAccountsStore } from '../stores/accounts'
+import { usePageData } from '../composables/usePageData'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import MonthPicker from '../components/MonthPicker.vue'
+import PageError from '../components/PageError.vue'
 
 const store = useBudgetStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
+const { loading, error, run, retry } = usePageData()
 
 const editingTarget = ref(false)
 const targetInput = ref<number | null>(null)
@@ -32,7 +35,7 @@ function accountName(id: number): string {
 
 async function onMonthChange(dt: DateTime) {
   selectedDate.value = dt
-  await store.load(dt.year, dt.month)
+  await run(() => store.load(dt.year, dt.month))
 }
 
 function setActiveSection(section: 'income' | 'savings' | 'fixed' | 'discretionary') {
@@ -110,14 +113,14 @@ const sectionColumns = [
   { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
 ]
 
-onMounted(async () => {
+onMounted(() => run(async () => {
   await Promise.all([accountsStore.load(), store.loadMonths()])
   if (store.months.length > 0) {
     const m = store.months[0]
     selectedDate.value = DateTime.local(m.year, m.month, 1).startOf('month')
     await store.load(m.year, m.month)
   }
-})
+}))
 </script>
 
 <template>
@@ -128,8 +131,11 @@ onMounted(async () => {
       <MonthPicker :model-value="selectedDate" @update:model-value="onMonthChange" />
     </div>
 
+    <!-- Load failure -->
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <!-- Empty state: no months at all -->
-    <p v-if="!store.months.length" class="text-muted text-sm">
+    <p v-else-if="!store.months.length && !loading" class="text-muted text-sm">
       No transaction data yet.
     </p>
 
@@ -260,5 +266,11 @@ onMounted(async () => {
         </UTable>
       </div>
     </template>
+
+    <!-- Months known but summary not ready yet (loading) -->
+    <div v-else class="flex items-center gap-2 text-muted text-sm py-10 justify-center">
+      <UIcon name="i-ph-circle-notch" class="size-4 animate-spin" />
+      Loading…
+    </div>
   </div>
 </template>

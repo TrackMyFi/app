@@ -9,12 +9,15 @@ import AccountForm from '../components/AccountForm.vue'
 import StatCard from '../components/StatCard.vue'
 import type { Account } from '../lib/types/Account'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const store = useAccountsStore()
 const router = useRouter()
 const toast = useToast()
+const { error, run, retry } = usePageData()
 
-onMounted(() => store.loadList())
+onMounted(() => run(() => store.loadList()))
 
 const fmt = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
@@ -156,6 +159,7 @@ function archivedMenuItems(account: Account) {
 
 <template>
   <div class="p-6">
+    <PageError v-if="error" :message="error" @retry="retry" class="mb-4" />
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Accounts</h1>

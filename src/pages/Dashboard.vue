@@ -11,13 +11,16 @@ import {
 import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
+import PageError from '../components/PageError.vue'
+import { usePageData } from '../composables/usePageData'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
 const contrib = useContributionsStore()
-onMounted(async () => {
+const { error, run, retry } = usePageData()
+onMounted(() => run(async () => {
   await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
-})
+}))
 
 // Exclude archived (inactive) accounts and their balances from all metrics.
 const inputs = computed(() => activeFireInputs(acc.accounts, acc.allBalances))
@@ -53,6 +56,8 @@ const yearsToFI = computed(() => {
 
 <template>
   <div class="p-6 space-y-6">
+    <PageError v-if="error" :message="error" @retry="retry" />
+
     <!-- Contextual header -->
     <div>
       <h1 class="text-2xl font-bold text-balance">
