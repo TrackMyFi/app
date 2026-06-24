@@ -11,7 +11,7 @@ import DateInput from './DateInput.vue'
 import type { Transaction } from '../lib/types/Transaction'
 
 const props = defineProps<{ editing: Transaction | null }>()
-const emit = defineEmits<{ saved: []; cancel: [] }>()
+const emit = defineEmits<{ saved: [close: boolean]; cancel: [] }>()
 
 const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
@@ -19,6 +19,40 @@ const toast = useToast()
 const saving = ref(false)
 
 const today = DateTime.now().toISODate()!
+
+// ─── Save modes (split button) ───────────────────────────────────────────────
+// 'close'  — save and dismiss the modal (default)
+// 'add'    — save, reset to a blank form, keep the modal open for the next entry
+// 'keep'   — save, keep the current values, keep the modal open
+type SaveMode = 'close' | 'add' | 'keep'
+
+const saveModeOptions: { value: SaveMode; label: string }[] = [
+  { value: 'close', label: 'Save Transaction' },
+  { value: 'add', label: 'Save & Add Another' },
+  { value: 'keep', label: 'Save, Keep Values, & Add Another' },
+]
+
+const SAVE_MODE_KEY = 'trackmyfi.transactionSaveMode'
+function loadSaveMode(): SaveMode {
+  const v = localStorage.getItem(SAVE_MODE_KEY)
+  return v === 'add' || v === 'keep' ? v : 'close'
+}
+const saveMode = ref<SaveMode>(loadSaveMode())
+watch(saveMode, (m) => localStorage.setItem(SAVE_MODE_KEY, m))
+
+const saveModeLabel = computed(
+  () => saveModeOptions.find((o) => o.value === saveMode.value)?.label ?? 'Save Transaction',
+)
+const saveMenuItems = computed(() => [
+  saveModeOptions.map((o) => ({
+    label: o.label,
+    icon: saveMode.value === o.value ? 'i-ph-check' : undefined,
+    onSelect: () => {
+      saveMode.value = o.value
+      save(o.value)
+    },
+  })),
+])
 
 const form = reactive({
   accountId: undefined as number | undefined,
@@ -30,6 +64,17 @@ const form = reactive({
   category: 'uncategorized',
   isContribution: false,
 })
+
+function resetForm() {
+  form.accountId = undefined
+  form.transferAccountId = null
+  form.amount = 0
+  form.description = ''
+  form.date = today
+  form.type = 'expense'
+  form.category = 'uncategorized'
+  form.isContribution = false
+}
 
 watch(
   () => props.editing,
@@ -44,14 +89,7 @@ watch(
       form.category = e.category
       form.isContribution = e.isContribution
     } else {
-      form.accountId = undefined
-      form.transferAccountId = null
-      form.amount = 0
-      form.description = ''
-      form.date = today
-      form.type = 'expense'
-      form.category = 'uncategorized'
-      form.isContribution = false
+      resetForm()
     }
   },
   { immediate: true },
@@ -109,7 +147,9 @@ function accountName(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
 }
 
-async function save() {
+async function save(mode: SaveMode = 'close') {
+  // Editing always saves and closes; the "add another" modes only apply to new entries.
+  if (props.editing) mode = 'close'
   if (form.accountId == null) return
   if (!form.amount || form.amount <= 0) {
     toast.add({ title: 'Amount must be greater than zero', color: 'error' })
@@ -152,8 +192,11 @@ async function save() {
         createdAt: now,
       })
       toast.add({ title: 'Transaction added', color: 'success' })
+      // 'add' starts fresh; 'keep' leaves the entered values in place for the next entry.
+      if (mode === 'add') resetForm()
     }
-    emit('saved')
+    // Close the modal only for plain saves; the "add another" modes keep it open.
+    emit('saved', mode === 'close')
   } catch (err) {
     toast.add({ title: 'Failed to save transaction', description: String(err), color: 'error' })
   } finally {
@@ -163,7 +206,7 @@ async function save() {
 </script>
 
 <template>
-  <form class="space-y-4" @submit.prevent="save">
+  <form class="space-y-4" @submit.prevent="save(saveMode)">
     <UFormField label="Type">
       <USelect v-model="form.type" :items="transactionTypeItems" class="w-full" />
     </UFormField>
@@ -204,7 +247,19 @@ async function save() {
 
     <div class="flex justify-end gap-2 pt-2">
       <UButton variant="ghost" color="neutral" type="button" @click="emit('cancel')">Cancel</UButton>
-      <UButton type="submit" :loading="saving" :disabled="saving">{{ props.editing ? 'Save' : 'Add' }} Transaction</UButton>
+      <UButton v-if="props.editing" type="submit" :loading="saving" :disabled="saving">Save Transaction</UButton>
+      <UFieldGroup v-else>
+        <UButton type="submit" :loading="saving" :disabled="saving">{{ saveModeLabel }}</UButton>
+        <UDropdownMenu :items="saveMenuItems" :content="{ align: 'end' }">
+          <UButton
+            type="button"
+            color="primary"
+            icon="i-ph-caret-down"
+            aria-label="More save options"
+            :disabled="saving"
+          />
+        </UDropdownMenu>
+      </UFieldGroup>
     </div>
   </form>
 </template>

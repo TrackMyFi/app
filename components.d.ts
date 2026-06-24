@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AccountBalanceChart: typeof import('./src/components/AccountBalanceChart.vue')['default']
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
+    AssetEventForm: typeof import('./src/components/AssetEventForm.vue')['default']
     BalanceForm: typeof import('./src/components/BalanceForm.vue')['default']
     ComboboxInput: typeof import('./src/components/ComboboxInput.vue')['default']
     CurrencyInput: typeof import('./src/components/CurrencyInput.vue')['default']
@@ -41,6 +42,7 @@ declare module 'vue' {
     UCheckbox: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Checkbox.vue')['default']
     UContextMenu: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/ContextMenu.vue')['default']
     UDropdownMenu: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/DropdownMenu.vue')['default']
+    UFieldGroup: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/FieldGroup.vue')['default']
     UFileUpload: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/FileUpload.vue')['default']
     UForm: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Form.vue')['default']
     UFormField: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/FormField.vue')['default']
@@ -59,6 +61,7 @@ declare module 'vue' {
     USlider: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Slider.vue')['default']
     USwitch: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Switch.vue')['default']
     UTable: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Table.vue')['default']
+    UTextarea: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Textarea.vue')['default']
     UTooltip: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Tooltip.vue')['default']
   }
 }

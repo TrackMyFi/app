@@ -8,12 +8,17 @@ import { useAccountsStore } from '../stores/accounts'
 import { labelForAccountType } from '../lib/accountTypes'
 import * as api from '../lib/api/accounts'
 import { getTransaction } from '../lib/api/transactions'
+import { listAssetEvents, deleteAssetEvent } from '../lib/api/assetEvents'
+import { costBasisAdded, upkeepCost } from '../lib/assets/rollups'
+import { labelForAssetEventKind, colorForAssetEventKind } from '../lib/assets/constants'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import type { BalanceMonthSummary } from '../lib/types/BalanceMonthSummary'
 import type { Transaction } from '../lib/types/Transaction'
+import type { AssetEvent } from '../lib/types/AssetEvent'
 import AccountBalanceChart from '../components/AccountBalanceChart.vue'
 import type { ChartPoint } from '../components/AccountBalanceChart.vue'
 import AccountForm from '../components/AccountForm.vue'
+import AssetEventForm from '../components/AssetEventForm.vue'
 import StatCard from '../components/StatCard.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import DateInput from '../components/DateInput.vue'
@@ -30,7 +35,48 @@ const account = computed(() => store.accounts.find(a => a.id === accountId.value
 onMounted(async () => {
   if (store.accounts.length === 0) await store.loadList()
   await refreshSummaries()
+  await loadAssetEvents()
 })
+
+// ─── Upkeep & improvements (real estate only) ────────────────────────────────
+
+const isRealEstate = computed(() => account.value?.type === 'real_estate')
+const assetEvents = ref<AssetEvent[]>([])
+const assetEventModalOpen = ref(false)
+const editingAssetEvent = ref<AssetEvent | null>(null)
+const deletingAssetEventId = ref<number | null>(null)
+
+async function loadAssetEvents() {
+  if (!isRealEstate.value) { assetEvents.value = []; return }
+  assetEvents.value = await listAssetEvents({ accountId: accountId.value })
+}
+
+const basisAdded = computed(() => costBasisAdded(assetEvents.value))
+const lifetimeUpkeep = computed(() => upkeepCost(assetEvents.value))
+
+function openAddAssetEvent() { editingAssetEvent.value = null; assetEventModalOpen.value = true }
+function openEditAssetEvent(e: AssetEvent) { editingAssetEvent.value = e; assetEventModalOpen.value = true }
+
+async function onAssetEventSaved() {
+  assetEventModalOpen.value = false
+  await loadAssetEvents()
+}
+
+watch(assetEventModalOpen, open => { if (!open) editingAssetEvent.value = null })
+
+async function removeAssetEvent(e: AssetEvent) {
+  const ok = await confirm(`Delete "${e.description}" on ${e.date}?`, { title: 'Delete asset event', kind: 'warning' })
+  if (!ok) return
+  deletingAssetEventId.value = e.id
+  try {
+    await deleteAssetEvent(e.id)
+    await loadAssetEvents()
+  } catch (err) {
+    toast.add({ title: 'Failed to delete event', description: String(err), color: 'error' })
+  } finally {
+    deletingAssetEventId.value = null
+  }
+}
 
 // ─── Month summaries ────────────────────────────────────────────────────────
 
@@ -438,6 +484,50 @@ async function deleteAccount() {
       </UAccordion>
     </div>
 
+    <!-- Upkeep & improvements (real estate) -->
+    <div v-if="isRealEstate" class="mb-8">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold">Upkeep &amp; Improvements</h2>
+        <UButton size="sm" icon="i-ph-plus" @click="openAddAssetEvent">Add Event</UButton>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="border border-default rounded-lg p-3">
+          <p class="text-xs uppercase tracking-wide text-muted">Improvements (added to basis)</p>
+          <p class="text-lg font-semibold font-mono mt-1 text-success">{{ fmtMoney(basisAdded) }}</p>
+        </div>
+        <div class="border border-default rounded-lg p-3">
+          <p class="text-xs uppercase tracking-wide text-muted">Lifetime upkeep</p>
+          <p class="text-lg font-semibold font-mono mt-1">{{ fmtMoney(lifetimeUpkeep) }}</p>
+        </div>
+      </div>
+
+      <div v-if="assetEvents.length === 0" class="border border-default rounded-lg px-4 py-8 text-center text-sm text-muted">
+        No upkeep or improvements logged yet.
+      </div>
+      <div v-else class="border border-default rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <tbody>
+            <tr v-for="e in assetEvents" :key="e.id" class="not-first:border-t border-default">
+              <td class="px-4 py-2 whitespace-nowrap text-muted">{{ fmtDate(e.date) }}</td>
+              <td class="px-4 py-2">
+                <UBadge :color="colorForAssetEventKind(e.kind)" variant="subtle" size="xs">{{ labelForAssetEventKind(e.kind) }}</UBadge>
+              </td>
+              <td class="px-4 py-2">
+                <span>{{ e.description }}</span>
+                <span v-if="e.vendor" class="text-muted"> · {{ e.vendor }}</span>
+              </td>
+              <td class="px-4 py-2 text-right font-mono">{{ fmtMoney(e.cost) }}</td>
+              <td class="px-4 py-2 text-right whitespace-nowrap">
+                <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" aria-label="Edit event" @click="openEditAssetEvent(e)" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" aria-label="Delete event" :loading="deletingAssetEventId === e.id" :disabled="deletingAssetEventId !== null" @click="removeAssetEvent(e)" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Danger zone -->
     <div v-if="!account.isActive" class="border border-error/30 rounded-lg p-4">
       <h3 class="text-sm font-semibold text-error mb-1">Danger Zone</h3>
@@ -466,6 +556,13 @@ async function deleteAccount() {
             <UButton :loading="addingSnapshot" :disabled="addingSnapshot" @click="submitAddSnapshot" block>Add Snapshot</UButton>
           </div>
         </div>
+      </template>
+    </UModal>
+
+    <!-- Asset event modal -->
+    <UModal v-model:open="assetEventModalOpen" :title="editingAssetEvent ? 'Edit asset event' : 'Add asset event'" class="sm:w-[560px] max-w-full">
+      <template #body>
+        <AssetEventForm :editing="editingAssetEvent" :preset-account-id="accountId" @saved="onAssetEventSaved" />
       </template>
     </UModal>
 

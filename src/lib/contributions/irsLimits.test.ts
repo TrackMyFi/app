@@ -13,7 +13,7 @@ describe('resolveYearLimits', () => {
 
   it('falls back to most recent known year for a future year, flagged estimated', () => {
     const { limits, estimated, estimatedFrom } = resolveYearLimits(2099)
-    expect(limits.k401).toBe(23500) // 2026 values (latest known)
+    expect(limits.k401).toBe(24500) // 2026 values (latest known)
     expect(estimated).toBe(true)
     expect(estimatedFrom).toBe(2026)
   })

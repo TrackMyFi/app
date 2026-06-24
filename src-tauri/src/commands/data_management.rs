@@ -191,6 +191,13 @@ pub async fn delete_data(
             conn.execute(
                 "DELETE FROM budget_month \
                  WHERE year * 100 + month >= CAST(strftime('%Y%m', date('now', ?1)) AS INTEGER)",
+                params![mod_str.clone()],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+            conn.execute(
+                "DELETE FROM asset_event WHERE date >= date('now', ?1)",
                 params![mod_str],
             )
             .await
@@ -201,6 +208,7 @@ pub async fn delete_data(
             conn.execute("DELETE FROM paycheck", ()).await.map_err(|e| e.to_string())?;
             conn.execute("DELETE FROM account_balance", ()).await.map_err(|e| e.to_string())?;
             conn.execute("DELETE FROM budget_month", ()).await.map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM asset_event", ()).await.map_err(|e| e.to_string())?;
         }
     }
 

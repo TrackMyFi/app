@@ -5,6 +5,7 @@ const routes = [
   { path: '/', name: 'dashboard', component: () => import('./pages/Dashboard.vue') },
   { path: '/accounts', name: 'accounts', component: () => import('./pages/Accounts.vue') },
   { path: '/accounts/:id', name: 'account-detail', component: () => import('./pages/AccountDetail.vue') },
+  { path: '/assets', name: 'assets', component: () => import('./pages/Assets.vue') },
   { path: '/transactions', name: 'transactions', component: () => import('./pages/Transactions.vue') },
   { path: '/paychecks', name: 'paychecks', component: () => import('./pages/Paychecks.vue') },
   { path: '/contributions', name: 'contributions', component: () => import('./pages/Contributions.vue') },

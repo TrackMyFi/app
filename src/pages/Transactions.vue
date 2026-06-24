@@ -26,7 +26,7 @@ const editing = ref<Transaction | null>(null)
 
 function openAdd() { editing.value = null; isModalOpen.value = true }
 function openEdit(t: Transaction) { editing.value = t; isModalOpen.value = true }
-async function onSaved() { isModalOpen.value = false; await applyFilters() }
+async function onSaved(close = true) { if (close) isModalOpen.value = false; await applyFilters() }
 
 const isImportOpen = ref(false)
 async function onImportDone() { isImportOpen.value = false; await applyFilters() }

@@ -125,6 +125,25 @@ pub struct EmployerMatchItem {
 #[derive(Serialize, Deserialize, TS, Clone)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
+pub struct AssetEvent {
+    pub id: i32,
+    pub account_id: Option<i32>,
+    pub asset_label: Option<String>,
+    pub date: String,
+    pub description: String,
+    pub kind: String,
+    pub cost: f64,
+    pub asset_value: Option<f64>,
+    pub vendor: Option<String>,
+    pub notes: Option<String>,
+    pub linked_transaction_id: Option<i32>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
 pub struct Paycheck {
     pub id: i32,
     pub pay_date: String,

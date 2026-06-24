@@ -47,6 +47,7 @@ function isActive(to: string) {
 const links = [
   { label: 'Dashboard', to: '/', icon: 'i-ph-squares-four' },
   { label: 'Accounts', to: '/accounts', icon: 'i-ph-wallet' },
+  { label: 'Assets', to: '/assets', icon: 'i-ph-wrench' },
   { label: 'Transactions', to: '/transactions', icon: 'i-ph-receipt' },
   { label: 'Paychecks', to: '/paychecks', icon: 'i-ph-money' },
   { label: 'Contributions', to: '/contributions', icon: 'i-ph-piggy-bank' },

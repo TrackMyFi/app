@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod asset_events;
 pub mod budget;
 pub mod category_rules;
 pub mod contributions;
