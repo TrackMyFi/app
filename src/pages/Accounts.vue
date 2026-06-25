@@ -1,33 +1,37 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { DateTime } from 'luxon'
 import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
-import { labelForAccountType, isLiability, isEquity } from '../lib/accountTypes'
+import { isLiability, isEquity } from '../lib/accountTypes'
 import AccountForm from '../components/AccountForm.vue'
+import AccountsTable from '../components/AccountsTable.vue'
 import StatCard from '../components/StatCard.vue'
 import type { Account } from '../lib/types/Account'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
+import { useReveal } from '../composables/useReveal'
 
 const store = useAccountsStore()
 const router = useRouter()
 const toast = useToast()
 const { error, run, retry } = usePageData()
 
-onMounted(() => run(() => store.loadList()))
+// The summary figures tick up into place the moment balances land — net worth
+// is a life target, not a readout, so it should feel like it arrives.
+const { progress: reveal, play: playReveal } = useReveal()
+
+onMounted(() => run(async () => {
+  await store.loadList()
+  playReveal()
+}))
 
 const fmt = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 
 const latestBalanceMap = computed(() =>
   new Map(store.latestBalances.map(b => [b.accountId, b.balance]))
-)
-
-const latestDateMap = computed(() =>
-  new Map(store.latestBalances.map(b => [b.accountId, b.recordedAt]))
 )
 
 const activeAccounts = computed(() => store.accounts.filter(a => a.isActive))
@@ -53,25 +57,6 @@ const nonFireTotal = computed(() =>
 const equityTotal = computed(() =>
   equityAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
 )
-
-function latestBalance(accountId: number) {
-  const b = latestBalanceMap.value.get(accountId)
-  return b != null ? b.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '—'
-}
-
-function formatBalanceDate(accountId: number) {
-  const d = latestDateMap.value.get(accountId)
-  if (!d) return null
-  const dt = DateTime.fromISO(d)
-  const now = DateTime.now()
-  return dt.year === now.year ? dt.toFormat('MMM d') : dt.toFormat('MMM d, yyyy')
-}
-
-function isStaleBalance(accountId: number) {
-  const d = latestDateMap.value.get(accountId)
-  if (!d) return false
-  return DateTime.now().diff(DateTime.fromISO(d), 'days').days > 30
-}
 
 function navigate(account: Account) {
   router.push({ name: 'account-detail', params: { id: account.id } })
@@ -167,167 +152,92 @@ function archivedMenuItems(account: Account) {
     </div>
 
     <!-- Stats -->
-    <div :class="['grid gap-4 mb-8', equityAccounts.length > 0 ? 'grid-cols-4' : 'grid-cols-3']">
-      <StatCard label="Net Worth" :value="fmt(netWorth)" />
-      <StatCard label="FIRE Accounts" :value="fmt(fireTotal)" />
-      <StatCard label="Non-FIRE Accounts" :value="fmt(nonFireTotal)" />
-      <StatCard v-if="equityAccounts.length > 0" label="Equity" :value="fmt(equityTotal)" />
+    <div :class="['grid gap-4 mb-8', equityAccounts.length > 0 ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3']">
+      <div class="tmfi-rise">
+        <StatCard label="Net Worth" :value="fmt(netWorth * reveal)" hero />
+      </div>
+      <div class="tmfi-rise" :style="{ animationDelay: '55ms' }">
+        <StatCard label="FIRE Accounts" :value="fmt(fireTotal * reveal)" />
+      </div>
+      <div class="tmfi-rise" :style="{ animationDelay: '110ms' }">
+        <StatCard label="Non-FIRE Accounts" :value="fmt(nonFireTotal * reveal)" />
+      </div>
+      <div v-if="equityAccounts.length > 0" class="tmfi-rise" :style="{ animationDelay: '165ms' }">
+        <StatCard label="Equity" :value="fmt(equityTotal * reveal)" />
+      </div>
     </div>
 
     <!-- Empty state: no accounts at all -->
-    <div v-if="store.accounts.length === 0" class="border border-dashed border-default rounded-lg p-8 text-center mb-8">
+    <div v-if="store.accounts.length === 0" class="tmfi-rise border border-dashed border-default rounded-lg p-8 text-center mb-8" :style="{ animationDelay: '210ms' }">
       <UIcon name="i-ph-wallet" class="w-8 h-8 text-muted mx-auto mb-3" />
       <p class="text-sm font-medium mb-1">No accounts yet</p>
       <p class="text-sm text-muted">Add your first account above to start tracking your FIRE progress.</p>
     </div>
 
     <!-- Empty state: all accounts archived -->
-    <div v-else-if="activeAccounts.length === 0" class="border border-dashed border-default rounded-lg p-8 text-center mb-8">
+    <div v-else-if="activeAccounts.length === 0" class="tmfi-rise border border-dashed border-default rounded-lg p-8 text-center mb-8" :style="{ animationDelay: '210ms' }">
       <UIcon name="i-ph-archive" class="w-8 h-8 text-muted mx-auto mb-3" />
       <p class="text-sm font-medium mb-1">All accounts are archived</p>
       <p class="text-sm text-muted">Restore an account from the list below to see it here.</p>
     </div>
 
     <!-- FIRE Accounts -->
-    <div v-if="fireAccounts.length > 0" class="mb-8">
-      <p class="text-xs text-muted font-medium mb-2">FIRE Accounts</p>
-      <div class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
-          <span />
-        </div>
-        <div
-          v-for="account in fireAccounts"
-          :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
-          @click="navigate(account)"
-        >
-          <div>
-            <p class="text-sm font-medium">{{ account.name }}</p>
-            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
-          </div>
-          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
-          <div class="text-right">
-            <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
-            <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
-          </div>
-          <div class="flex justify-end" @click.stop>
-            <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
-            </UDropdownMenu>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AccountsTable
+      v-if="fireAccounts.length > 0"
+      class="tmfi-rise block mb-8"
+      :style="{ animationDelay: '210ms' }"
+      title="FIRE Accounts"
+      :accounts="fireAccounts"
+      interactive
+      :busy-id="busyAccountId"
+      :menu-items="activeMenuItems"
+      @select="navigate"
+    />
 
     <!-- Non-FIRE Accounts -->
-    <div v-if="nonFireAccounts.length > 0" class="mb-8">
-      <p class="text-xs text-muted font-medium mb-2">Non-FIRE Accounts</p>
-      <div class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
-          <span />
-        </div>
-        <div
-          v-for="account in nonFireAccounts"
-          :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
-          @click="navigate(account)"
-        >
-          <div>
-            <p class="text-sm font-medium">{{ account.name }}</p>
-            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
-          </div>
-          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
-          <div class="text-right">
-            <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
-            <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
-          </div>
-          <div class="flex justify-end" @click.stop>
-            <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
-            </UDropdownMenu>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AccountsTable
+      v-if="nonFireAccounts.length > 0"
+      class="tmfi-rise block mb-8"
+      :style="{ animationDelay: '260ms' }"
+      title="Non-FIRE Accounts"
+      :accounts="nonFireAccounts"
+      interactive
+      :busy-id="busyAccountId"
+      :menu-items="activeMenuItems"
+      @select="navigate"
+    />
 
     <!-- Equity -->
-    <div v-if="equityAccounts.length > 0" class="mb-8">
-      <p class="text-xs text-muted font-medium mb-2">Equity</p>
-      <div class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
-          <span />
-        </div>
-        <div
-          v-for="account in equityAccounts"
-          :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0 cursor-pointer hover:bg-elevated/50 transition-colors"
-          @click="navigate(account)"
-        >
-          <div>
-            <p class="text-sm font-medium">{{ account.name }}</p>
-            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
-          </div>
-          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
-          <div class="text-right">
-            <p class="text-sm font-semibold font-mono">{{ latestBalance(account.id) }}</p>
-            <p v-if="formatBalanceDate(account.id)" :class="['text-xs', isStaleBalance(account.id) ? 'text-warning' : 'text-muted']">{{ formatBalanceDate(account.id) }}</p>
-          </div>
-          <div class="flex justify-end" @click.stop>
-            <UDropdownMenu :items="activeMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
-            </UDropdownMenu>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AccountsTable
+      v-if="equityAccounts.length > 0"
+      class="tmfi-rise block mb-8"
+      :style="{ animationDelay: '310ms' }"
+      title="Equity"
+      :accounts="equityAccounts"
+      interactive
+      :busy-id="busyAccountId"
+      :menu-items="activeMenuItems"
+      @select="navigate"
+    />
 
     <!-- Archived -->
     <div v-if="archivedAccounts.length > 0">
       <button
-        class="flex items-center gap-1.5 text-xs text-muted font-medium mb-2"
+        class="flex items-center gap-1.5 text-xs text-muted font-medium mb-2 rounded hover:text-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         :aria-expanded="showArchived"
         @click="showArchived = !showArchived"
       >
         <UIcon :name="showArchived ? 'i-ph-caret-down' : 'i-ph-caret-right'" class="w-3.5 h-3.5" />
         <span>Archived ({{ archivedAccounts.length }})</span>
       </button>
-      <div v-if="showArchived" class="border border-default rounded-lg overflow-hidden">
-        <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
-          <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
-          <span />
-        </div>
-        <div
-          v-for="account in archivedAccounts"
-          :key="account.id"
-          class="grid grid-cols-[1fr_160px_140px_36px] items-center px-4 py-3 border-b border-default last:border-b-0"
-        >
-          <div>
-            <p class="text-sm font-medium text-muted">{{ account.name }}</p>
-            <p v-if="account.institution" class="text-xs text-muted">{{ account.institution }}</p>
-          </div>
-          <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
-          <div class="text-right">
-            <p class="text-sm text-muted font-mono">{{ latestBalance(account.id) }}</p>
-            <p v-if="formatBalanceDate(account.id)" class="text-xs text-muted">{{ formatBalanceDate(account.id) }}</p>
-          </div>
-          <div class="flex justify-end">
-            <UDropdownMenu :items="archivedMenuItems(account)">
-              <UButton size="xs" variant="ghost" icon="i-ph-dots-three" color="neutral" aria-label="Account options" :loading="busyAccountId === account.id" :disabled="busyAccountId !== null" />
-            </UDropdownMenu>
-          </div>
-        </div>
-      </div>
+      <AccountsTable
+        v-if="showArchived"
+        title="Archived"
+        class="[&>p]:sr-only"
+        :accounts="archivedAccounts"
+        :busy-id="busyAccountId"
+        :menu-items="archivedMenuItems"
+      />
     </div>
 
     <!-- Add / Edit account modal -->

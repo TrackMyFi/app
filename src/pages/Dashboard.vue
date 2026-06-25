@@ -10,16 +10,24 @@ import {
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
+import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
+import { useReveal } from '../composables/useReveal'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
 const contrib = useContributionsStore()
 const { error, run, retry } = usePageData()
+
+// Drives the count-up reveal: the journey % and metrics tick into place once
+// data lands, so the numbers feel earned rather than simply appearing.
+const { progress: reveal, play: playReveal } = useReveal()
+
 onMounted(() => run(async () => {
   await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
+  playReveal()
 }))
 
 // Exclude archived (inactive) accounts and their balances from all metrics.
@@ -61,8 +69,7 @@ const yearsToFI = computed(() => {
     <!-- Contextual header -->
     <div>
       <h1 class="text-2xl font-bold text-balance">
-        <template v-if="fiDate">Net worth: {{ fmt(netWorth) }} · FI in {{ yearsToFI }} year{{ yearsToFI === 1 ? '' : 's' }}</template>
-        <template v-else-if="netWorth > 0">Net worth: {{ fmt(netWorth) }}</template>
+        <template v-if="netWorth > 0">Net worth: {{ fmt(netWorth) }}</template>
         <template v-else>Your FIRE journey starts here</template>
       </h1>
       <p v-if="!fiDate && netWorth > 0" class="text-sm text-muted mt-1">
@@ -70,20 +77,19 @@ const yearsToFI = computed(() => {
       </p>
     </div>
 
-    <!-- Hero metrics -->
-    <div class="grid grid-cols-2 gap-4">
-      <StatCard
-        label="FI Progress"
-        :value="`${progress.toFixed(1)}%`"
-        :hero="true"
-        :color="progress > 0 ? 'success' : undefined"
-      />
-      <StatCard label="Projected FI Date" :value="fiDate ? fiDate.toFormat('LLL yyyy') : '—'" :hero="true" />
-    </div>
+    <!-- The journey: the long game made tangible -->
+    <FiProgressCard
+      :progress="progress"
+      :reveal="reveal"
+      :investable-label="fmt(investable)"
+      :goal-label="fmt(fireNum)"
+      :fi-date-label="fiDate ? fiDate.toFormat('LLL yyyy') : undefined"
+      :years-to-fi="yearsToFI"
+    />
 
     <!-- Supporting metrics or first-run setup prompt -->
     <template v-if="acc.accounts.length === 0">
-      <div class="rounded-lg border border-default bg-muted p-6 flex flex-col gap-4">
+      <div class="tmfi-rise rounded-lg border border-default bg-muted p-6 flex flex-col gap-4">
         <UIcon name="i-ph-chart-line-up" class="w-6 h-6 text-success" />
         <div>
           <p class="text-sm font-semibold">Add accounts to unlock your metrics</p>
@@ -98,19 +104,27 @@ const yearsToFI = computed(() => {
     </template>
     <template v-else>
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="FIRE Number" :value="fmt(fireNum)" />
-        <StatCard label="Current Net Worth" :value="fmt(netWorth)" />
-        <StatCard label="Investable Net Worth" :value="fmt(investable)" />
-        <StatCard
-          label="Savings Rate"
-          :value="`${(rate * 100).toFixed(1)}%`"
-          :hint="contribution.estimated ? 'Estimated — under 12 months of contribution history' : undefined"
-        />
+        <div class="tmfi-rise" :style="{ animationDelay: '40ms' }">
+          <StatCard label="FIRE Number" :value="fmt(fireNum * reveal)" />
+        </div>
+        <div class="tmfi-rise" :style="{ animationDelay: '95ms' }">
+          <StatCard label="Current Net Worth" :value="fmt(netWorth * reveal)" />
+        </div>
+        <div class="tmfi-rise" :style="{ animationDelay: '150ms' }">
+          <StatCard label="Investable Net Worth" :value="fmt(investable * reveal)" />
+        </div>
+        <div class="tmfi-rise" :style="{ animationDelay: '205ms' }">
+          <StatCard
+            label="Savings Rate"
+            :value="`${(rate * 100 * reveal).toFixed(1)}%`"
+            :hint="contribution.estimated ? 'Estimated — under 12 months of contribution history' : undefined"
+          />
+        </div>
       </div>
     </template>
 
     <!-- Net worth chart -->
-    <div class="border border-default rounded-lg p-4">
+    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '260ms' }">
       <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
       <NetWorthChart :points="series" />
     </div>

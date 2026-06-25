@@ -954,7 +954,9 @@ pub async fn bulk_create_transactions_cmd(
     db: State<'_, Db>,
     transactions: Vec<NewTransaction>,
 ) -> Result<i64, String> {
-    let conn = db.conn().await?;
+    // Dedicated connection: this path opens a multi-statement transaction, which
+    // must stay isolated from concurrent readers on the shared connection.
+    let conn = db.fresh_conn().await?;
     bulk_create_transactions(&conn, &transactions).await
 }
 

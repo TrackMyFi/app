@@ -57,20 +57,46 @@ pub fn decide_db_source(
 pub struct Db {
     pub db: Database,
     pub mode: DbMode,
+    /// One shared connection handed out (as cheap `Arc` clones) to every command.
+    ///
+    /// Opening a fresh connection per invoke meant a page firing several reads via
+    /// `Promise.all` opened a swarm of simultaneous connections to the WAL file.
+    /// Overlapping the background `sync()` writer, that swarm blew past the
+    /// `busy_timeout` and surfaced as "database is locked". libSQL serialises
+    /// operations on a single connection internally, so funnelling all queries
+    /// through one connection makes a page's concurrent reads queue onto one
+    /// reader instead — leaving the clean WAL model of one reader + the sync
+    /// writer, which the busy timeout absorbs.
+    conn: Connection,
 }
 
 impl Db {
-    pub async fn conn(&self) -> Result<Connection, String> {
-        let conn = self.db.connect().map_err(|e| e.to_string())?;
-        // Wait (up to 5s) for a contended write lock instead of immediately
-        // failing with "database is locked". At startup the background sync
-        // catch-up pulls the cloud and runs migrations — writes to the same
-        // replica file the UI is concurrently reading. Without a busy timeout
-        // those reads intermittently error and leave a page blank; with it they
-        // simply wait out the brief writer and succeed.
+    /// Build the shared connection and apply the busy timeout once.
+    ///
+    /// Wait (up to 5s) for a contended write lock instead of immediately failing
+    /// with "database is locked". At startup the background sync catch-up pulls
+    /// the cloud and runs migrations — writes to the same replica file the UI is
+    /// concurrently reading. Without a busy timeout those reads intermittently
+    /// error and leave a page blank; with it they simply wait out the brief
+    /// writer and succeed.
+    fn open_conn(db: &Database) -> Result<Connection, String> {
+        let conn = db.connect().map_err(|e| e.to_string())?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))
             .map_err(|e| e.to_string())?;
         Ok(conn)
+    }
+
+    pub async fn conn(&self) -> Result<Connection, String> {
+        Ok(self.conn.clone())
+    }
+
+    /// A dedicated connection, isolated from the shared one. Use only for a
+    /// command that runs a multi-statement `conn.transaction()` (BEGIN…COMMIT
+    /// across awaits) — on the shared connection a concurrent reader could
+    /// interleave a statement into the open transaction. Reads and single-call
+    /// writes should use `conn()`.
+    pub async fn fresh_conn(&self) -> Result<Connection, String> {
+        Self::open_conn(&self.db)
     }
     pub fn is_synced(&self) -> bool {
         self.mode == DbMode::Synced
@@ -131,16 +157,18 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
         }
     };
 
+    // The single connection every command shares (see `Db::conn`).
+    let conn = Db::open_conn(&db)?;
+
     // Local modes have no network pull, so migrate inline now — it's fast and
     // purely local. Synced mode defers migrations to the background catch-up
     // (after the first pull) so startup never waits on the network, and so a
     // migration already applied on another device is pulled before this device
     // would try to re-apply it. See `sync::initial_catch_up`.
     if mode == DbMode::Local {
-        let conn = db.connect().map_err(|e| e.to_string())?;
         crate::migrations::run(&conn).await?;
     }
-    Ok(Db { db, mode })
+    Ok(Db { db, mode, conn })
 }
 
 #[cfg(test)]
