@@ -6,6 +6,7 @@ import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
 import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
+import { useReveal } from '../composables/useReveal'
 import * as api from '../lib/api/transactions'
 import TransactionForm from '../components/TransactionForm.vue'
 import ImportWizard from '../components/ImportWizard.vue'
@@ -21,6 +22,18 @@ const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
 const { error, run, retry } = usePageData()
+
+// ─── Figures tick into place ────────────────────────────────────────────────
+// A deliberate check-in deserves to feel alive: when a scope's data lands the
+// stat figures and savings rate count up from zero into their final values,
+// so progress reads as something that happened, not a number that was always
+// there. `revealKey` re-keys the savings-rate sheen so it replays per reveal.
+const { progress: reveal, play: playReveal } = useReveal(600)
+const revealKey = ref(0)
+function runReveal() {
+  revealKey.value++
+  playReveal()
+}
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
@@ -137,6 +150,8 @@ async function applyFilters() {
   } else {
     allTimeTransactions.value = []
   }
+
+  runReveal() // figures tick up once the scope's data has settled
 }
 
 async function loadYearData() {
@@ -193,13 +208,25 @@ const monthlyTransactions = computed(() => {
 const monthlyTotals = computed(() => cashFlowTotals(monthlyTransactions.value, accountsStore.accounts))
 const annualTotals = computed(() => cashFlowTotals(yearTransactions.value, accountsStore.accounts))
 
-function formatSavingsRate(totals: { income: number; expense: number; savings: number; net: number }): string {
-  const rate = savingsRate(totals)
-  return rate == null ? '—' : (rate * 100).toFixed(1) + '%'
-}
+// The savings rate is the number a FIRE check-in is really about. Crossing 50%
+// — the canonical "halfway to your time" rate — is a genuine milestone, so a
+// strong month earns the emerald voice of progress and a single sheen across
+// the figure. Below that it stays the calm informational blue.
+const STRONG_RATE = 0.5
 
-const monthlySavingsRate = computed(() => formatSavingsRate(monthlyTotals.value))
-const annualSavingsRate = computed(() => formatSavingsRate(annualTotals.value))
+const monthlyRate = computed(() => savingsRate(monthlyTotals.value))
+const annualRate = computed(() => savingsRate(annualTotals.value))
+
+function fmtRate(rate: number | null): string {
+  return rate == null ? '—' : (rate * 100 * reveal.value).toFixed(1) + '%'
+}
+function rateColor(rate: number | null, savings: number): string {
+  if (rate != null && rate >= STRONG_RATE) return 'text-primary'
+  return savings > 0 ? 'text-info' : 'text-muted'
+}
+function isStrongRate(rate: number | null): boolean {
+  return rate != null && rate >= STRONG_RATE
+}
 
 // ─── Chart data (scope-aware, never paginated) ────────────────────────────────
 
@@ -341,7 +368,10 @@ onMounted(() => run(async () => {
           :transactions="breakdownTransactions"
           :accounts="accountsStore.accounts"
         />
-        <p v-else class="text-sm text-muted text-center py-8">No transactions for this period</p>
+        <div v-else class="flex flex-col items-center gap-2 py-10 text-center">
+          <UIcon name="i-ph-chart-line-up" class="size-7 text-dimmed" />
+          <p class="text-sm text-muted">Nothing to chart for this period yet.</p>
+        </div>
       </template>
       <template v-else>
         <TransactionChart
@@ -349,7 +379,10 @@ onMounted(() => run(async () => {
           :transactions="cumulativeTransactions"
           :accounts="accountsStore.accounts"
         />
-        <p v-else class="text-sm text-muted text-center py-8">No transactions for this period</p>
+        <div v-else class="flex flex-col items-center gap-2 py-10 text-center">
+          <UIcon name="i-ph-chart-line-up" class="size-7 text-dimmed" />
+          <p class="text-sm text-muted">Nothing to chart for this period yet.</p>
+        </div>
       </template>
     </div>
 
@@ -362,23 +395,26 @@ onMounted(() => run(async () => {
         </div>
         <div class="grid grid-cols-5 gap-3">
           <div>
-            <p class="text-base font-semibold tabular-nums text-success">{{ money(monthlyTotals.income) }}</p>
+            <p class="text-base font-semibold tabular-nums text-success">{{ money(monthlyTotals.income * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Income</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums text-error">{{ money(monthlyTotals.expense) }}</p>
+            <p class="text-base font-semibold tabular-nums text-error">{{ money(monthlyTotals.expense * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Expense</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums text-info">{{ money(monthlyTotals.savings) }}</p>
+            <p class="text-base font-semibold tabular-nums text-info">{{ money(monthlyTotals.savings * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Contributions</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net) }}</p>
+            <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Net</p>
           </div>
           <div class="border-l border-default pl-3">
-            <p class="text-xl font-bold tabular-nums" :class="monthlyTotals.savings > 0 ? 'text-info' : 'text-muted'">{{ monthlySavingsRate }}</p>
+            <div class="relative inline-block overflow-hidden">
+              <p class="text-xl font-bold tabular-nums" :class="rateColor(monthlyRate, monthlyTotals.savings)">{{ fmtRate(monthlyRate) }}</p>
+              <span v-if="isStrongRate(monthlyRate)" :key="`m-${revealKey}`" class="tmfi-sheen" />
+            </div>
             <p class="text-xs text-muted mt-0.5">Savings Rate</p>
           </div>
         </div>
@@ -389,23 +425,26 @@ onMounted(() => run(async () => {
         </div>
         <div class="grid grid-cols-5 gap-3">
           <div>
-            <p class="text-base font-semibold tabular-nums text-success">{{ money(annualTotals.income) }}</p>
+            <p class="text-base font-semibold tabular-nums text-success">{{ money(annualTotals.income * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Income</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums text-error">{{ money(annualTotals.expense) }}</p>
+            <p class="text-base font-semibold tabular-nums text-error">{{ money(annualTotals.expense * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Expense</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums text-info">{{ money(annualTotals.savings) }}</p>
+            <p class="text-base font-semibold tabular-nums text-info">{{ money(annualTotals.savings * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Contributions</p>
           </div>
           <div>
-            <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net) }}</p>
+            <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net * reveal) }}</p>
             <p class="text-xs text-muted mt-0.5">Net</p>
           </div>
           <div class="border-l border-default pl-3">
-            <p class="text-xl font-bold tabular-nums" :class="annualTotals.savings > 0 ? 'text-info' : 'text-muted'">{{ annualSavingsRate }}</p>
+            <div class="relative inline-block overflow-hidden">
+              <p class="text-xl font-bold tabular-nums" :class="rateColor(annualRate, annualTotals.savings)">{{ fmtRate(annualRate) }}</p>
+              <span v-if="isStrongRate(annualRate)" :key="`a-${revealKey}`" class="tmfi-sheen" />
+            </div>
             <p class="text-xs text-muted mt-0.5">Savings Rate</p>
           </div>
         </div>
@@ -451,7 +490,22 @@ onMounted(() => run(async () => {
           {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions
         </p>
       </div>
-      <UTable :data="rows" :columns="columns" empty="No transactions yet.">
+      <UTable :data="rows" :columns="columns">
+        <template #empty>
+          <div class="flex flex-col items-center gap-3 py-12 text-center">
+            <UIcon name="i-ph-receipt" class="size-8 text-dimmed" />
+            <div>
+              <p class="text-sm font-medium text-heading">
+                {{ scope === 'all' ? 'No transactions yet' : `Nothing recorded for ${tableScopeLabel}` }}
+              </p>
+              <p class="text-xs text-muted mt-1">Add one by hand or import a CSV — your numbers start here.</p>
+            </div>
+            <div class="flex gap-2">
+              <UButton size="xs" variant="subtle" icon="i-ph-upload" @click="isImportOpen = true">Import CSV</UButton>
+              <UButton size="xs" icon="i-ph-plus" @click="openAdd">Add transaction</UButton>
+            </div>
+          </div>
+        </template>
         <template #description-cell="{ row }">
           <span class="block max-w-[300px] truncate" :title="row.original.description">{{ row.original.description }}</span>
         </template>

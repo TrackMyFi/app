@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { DateTime } from 'luxon'
 import { confirm } from '@tauri-apps/plugin-dialog'
@@ -11,6 +11,8 @@ import { getTransaction } from '../lib/api/transactions'
 import { listAssetEvents, deleteAssetEvent } from '../lib/api/assetEvents'
 import { costBasisAdded, upkeepCost } from '../lib/assets/rollups'
 import { labelForAssetEventKind, colorForAssetEventKind } from '../lib/assets/constants'
+import { crossedMilestone } from '../lib/balances/milestones'
+import { useCountUp } from '../composables/useCountUp'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import type { BalanceMonthSummary } from '../lib/types/BalanceMonthSummary'
 import type { Transaction } from '../lib/types/Transaction'
@@ -176,6 +178,58 @@ const currentBalanceAsOf = computed(() => monthSummaries.value[0] ? fmtMonthLabe
 const headerMenuItems = computed(() => [[
   { label: 'Archive', icon: 'i-ph-archive', onSelect: archiveAccount },
 ]])
+
+// ─── Headline balance: count-up + milestone celebration ───────────────────────
+// The current balance is the number this page exists for. When it grows after
+// an edit it rolls up to land with weight; when it crosses a major milestone
+// ($10k, $100k, the first million…) a single emerald burst marks the moment.
+
+const { value: displayBalance, set: setBalance, animateTo: animateBalance } = useCountUp(0)
+const fmtMilestone = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+
+const milestoneCelebrating = ref(false)
+const moteKey = ref(0)
+let milestoneTimer: ReturnType<typeof setTimeout> | undefined
+const MOTE_COUNT = 7
+
+function moteStyle(i: number) {
+  const spread = 44 // % of the card width the motes fan across
+  const left = 50 - spread / 2 + (spread * (i - 1)) / (MOTE_COUNT - 1)
+  return { left: `${left}%`, animationDelay: `${(i * 53) % 240}ms` }
+}
+
+function celebrateMilestone(amount: number) {
+  toast.add({
+    title: `${fmtMilestone(amount)} milestone`,
+    description: `${account.value?.name ?? 'This account'} just crossed ${fmtMilestone(amount)}.`,
+    color: 'success',
+    icon: 'i-ph-confetti',
+  })
+  moteKey.value++
+  milestoneCelebrating.value = true
+  clearTimeout(milestoneTimer)
+  milestoneTimer = setTimeout(() => { milestoneCelebrating.value = false }, 1700)
+}
+
+let balanceInitialized = false
+watch(currentBalance, (next, prev) => {
+  if (next == null) return
+  if (!balanceInitialized) {
+    balanceInitialized = true
+    setBalance(next) // first paint settles quietly — no page-load theatrics
+    return
+  }
+  if (prev != null && next > prev) {
+    animateBalance(next)
+    const milestone = crossedMilestone(prev, next)
+    if (milestone != null) celebrateMilestone(milestone)
+  } else {
+    setBalance(next) // corrections and drops update without fanfare
+  }
+})
+
+onUnmounted(() => clearTimeout(milestoneTimer))
 
 // ─── Inline snapshot editing ─────────────────────────────────────────────────
 
@@ -393,13 +447,21 @@ async function deleteAccount() {
     </div>
 
     <!-- Current balance stat -->
-    <StatCard
-      v-if="currentBalance !== null"
-      label="Current Balance"
-      :value="fmtMoney(currentBalance)"
-      :hint="`as of ${currentBalanceAsOf}`"
-      class="mb-6"
-    />
+    <div v-if="currentBalance !== null" class="relative mb-6">
+      <StatCard
+        label="Current Balance"
+        :value="fmtMoney(displayBalance)"
+        :hint="`as of ${currentBalanceAsOf}`"
+      />
+      <div
+        v-if="milestoneCelebrating"
+        :key="moteKey"
+        class="pointer-events-none absolute inset-0 overflow-hidden"
+        aria-hidden="true"
+      >
+        <span v-for="i in MOTE_COUNT" :key="i" class="tmfi-mote" :style="moteStyle(i)" />
+      </div>
+    </div>
 
     <!-- Chart -->
     <div class="border border-default rounded-lg p-4 mb-6">
@@ -454,9 +516,10 @@ async function deleteAccount() {
         </template>
         <template #body="{ item }">
           <div
-            v-for="row in cachedRows(item.value)"
+            v-for="(row, i) in cachedRows(item.value)"
             :key="row.id"
-            class="grid items-center py-1.5 not-first:border-t border-default"
+            class="grid items-center py-1.5 not-first:border-t border-default tmfi-rise"
+            :style="{ animationDelay: `${Math.min(i * 28, 196)}ms` }"
             :class="editingSnapshotId === row.id ? 'grid-cols-[75px_1fr_100px]' : 'grid-cols-[75px_1fr_auto_100px]'"
           >
             <template v-if="editingSnapshotId !== row.id">

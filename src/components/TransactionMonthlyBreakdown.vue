@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { CATEGORY_LABELS } from '../lib/transactions/constants'
 import { classifyFlow } from '../lib/transactions/flow'
+import { useReveal } from '../composables/useReveal'
 import type { Transaction } from '../lib/types/Transaction'
 import type { Account } from '../lib/types/Account'
 
@@ -9,6 +10,12 @@ const props = defineProps<{
   transactions: Transaction[]
   accounts: Account[]
 }>()
+
+// Bars sweep out from zero when the period's data lands, so the breakdown reads
+// as the period filling in rather than snapping into existence.
+const { progress: reveal, play } = useReveal(650)
+onMounted(play)
+watch(() => props.transactions, play)
 
 const CATEGORY_ORDER = ['savings', 'fixed', 'discretionary', 'uncategorized'] as const
 
@@ -58,9 +65,9 @@ function money(n: number) {
     <div class="flex items-center gap-3">
       <span class="w-28 text-xs text-muted shrink-0">Income</span>
       <div class="flex-1 h-4 bg-muted/20 rounded-full overflow-hidden">
-        <div class="h-full bg-success/60 rounded-full" style="width:100%" />
+        <div class="h-full bg-success/60 rounded-full" :style="{ width: 100 * reveal + '%' }" />
       </div>
-      <span class="w-24 text-right text-sm font-semibold tabular-nums text-success">{{ money(totals.income) }}</span>
+      <span class="w-24 text-right text-sm font-semibold tabular-nums text-success">{{ money(totals.income * reveal) }}</span>
       <span class="w-8 text-right text-xs text-muted">100%</span>
     </div>
 
@@ -71,13 +78,13 @@ function money(n: number) {
       <span class="w-28 text-xs text-muted shrink-0">{{ row.label }}</span>
       <div class="flex-1 h-4 bg-muted/20 rounded-full overflow-hidden">
         <div
-          class="h-full rounded-full transition-all"
+          class="h-full rounded-full"
           :class="CATEGORY_BAR_COLOR[row.key] ?? 'bg-gray-400'"
-          :style="{ width: Math.min(row.pct, 100) + '%' }"
+          :style="{ width: Math.min(row.pct, 100) * reveal + '%' }"
         />
       </div>
-      <span class="w-24 text-right text-sm tabular-nums">{{ money(row.amount) }}</span>
-      <span class="w-8 text-right text-xs text-muted">{{ row.pct.toFixed(0) }}%</span>
+      <span class="w-24 text-right text-sm tabular-nums">{{ money(row.amount * reveal) }}</span>
+      <span class="w-8 text-right text-xs text-muted">{{ (row.pct * reveal).toFixed(0) }}%</span>
     </div>
   </div>
 </template>

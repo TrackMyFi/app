@@ -39,12 +39,23 @@ const visible = computed(() => {
             </p>
           </div>
         </div>
-        <div class="flex justify-end gap-2">
-          <UButton size="xs" variant="ghost" color="neutral" @click="updater.dismiss()">
-            Later
+        <div class="space-y-1.5">
+          <UButton
+            size="xs"
+            icon="i-ph-download-simple"
+            block
+            @click="updater.install()"
+          >
+            Download &amp; install
           </UButton>
-          <UButton size="xs" icon="i-ph-download-simple" @click="updater.install()">
-            Download & install
+          <UButton
+            size="xs"
+            variant="ghost"
+            color="neutral"
+            block
+            @click="updater.dismiss()"
+          >
+            Later
           </UButton>
         </div>
       </template>
@@ -70,11 +81,9 @@ const visible = computed(() => {
             <p class="text-xs text-muted">Restart to finish updating.</p>
           </div>
         </div>
-        <div class="flex justify-end">
-          <UButton size="xs" icon="i-ph-arrow-clockwise" @click="updater.restart()">
-            Restart now
-          </UButton>
-        </div>
+        <UButton size="xs" icon="i-ph-arrow-clockwise" block @click="updater.restart()">
+          Restart now
+        </UButton>
       </template>
 
       <!-- Error -->
@@ -86,12 +95,18 @@ const visible = computed(() => {
             <p class="text-xs text-muted break-words">{{ updater.error }}</p>
           </div>
         </div>
-        <div class="flex justify-end gap-2">
-          <UButton size="xs" variant="ghost" color="neutral" @click="updater.dismiss()">
-            Dismiss
-          </UButton>
-          <UButton size="xs" icon="i-ph-arrow-clockwise" @click="updater.check()">
+        <div class="space-y-1.5">
+          <UButton size="xs" icon="i-ph-arrow-clockwise" block @click="updater.check()">
             Try again
+          </UButton>
+          <UButton
+            size="xs"
+            variant="ghost"
+            color="neutral"
+            block
+            @click="updater.dismiss()"
+          >
+            Dismiss
           </UButton>
         </div>
       </template>
