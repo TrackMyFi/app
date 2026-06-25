@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useAccountsStore } from '../stores/accounts'
@@ -14,6 +14,7 @@ import ForecastChart from '../components/ForecastChart.vue'
 import { CHART_COLORS } from '../lib/forecastColors'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
+import { useReveal } from '../composables/useReveal'
 
 const fp = useFireProfileStore()
 const acc = useAccountsStore()
@@ -72,6 +73,83 @@ const forecasts = computed<VariantForecast[]>(() =>
 
 const regular = computed(() => forecasts.value.find(f => f.variant === 'regular') ?? null)
 
+// ── Baseline (no what-if overrides) ───────────────────────────────────────
+// The forecast as it stands today, used to measure how far a scenario moves the
+// FI date. Mirrors `forecastInputs` but ignores every override.
+const baselineInputs = computed<ForecastInputs | null>(() => {
+  if (!fp.profile) return null
+  return {
+    currentAge: fp.currentAge,
+    targetRetirementAge: fp.profile.targetRetirementAge,
+    annualExpensesTarget: fp.profile.annualExpensesTarget,
+    leanFireAnnualExpenses: fp.profile.leanFireAnnualExpenses,
+    fatFireAnnualExpenses: fp.profile.fatFireAnnualExpenses,
+    expectedReturnRate: fp.profile.expectedReturnRate,
+    inflationRate: fp.profile.inflationRate,
+    investable: investable.value,
+    monthlyContribution: baseline.value.monthly,
+  }
+})
+const baselineRegular = computed(() =>
+  baselineInputs.value ? buildForecast(baselineInputs.value).find(f => f.variant === 'regular') ?? null : null)
+
+// ── What-if shift ─────────────────────────────────────────────────────────
+// How a live scenario moves the FI date versus baseline — the page's feedback
+// loop. "Sooner" is the motivating case (earn it emerald); "later" stays quiet.
+type FiShift =
+  | { kind: 'sooner' | 'later'; months: number }
+  | { kind: 'reachable' | 'unreachable' }
+
+const fiShift = computed<FiShift | null>(() => {
+  if (!isScenario.value) return null
+  const base = baselineRegular.value, scen = regular.value
+  if (!base || !scen) return null
+  const b = base.yearsToFi, s = scen.yearsToFi
+  if (b === null && s === null) return null
+  if (b === null) return { kind: 'reachable' }
+  if (s === null) return { kind: 'unreachable' }
+  const months = Math.round((b - s) * 12)
+  if (months === 0) return null
+  return { kind: months > 0 ? 'sooner' : 'later', months: Math.abs(months) }
+})
+
+function fmtDuration(months: number): string {
+  const y = Math.floor(months / 12), m = months % 12
+  if (y && m) return `${y} yr ${m} mo`
+  if (y) return `${y} yr`
+  return `${m} mo`
+}
+
+const shiftText = computed(() => {
+  const s = fiShift.value
+  if (!s) return ''
+  if (s.kind === 'sooner') return `${fmtDuration(s.months)} sooner`
+  if (s.kind === 'later') return `${fmtDuration(s.months)} later`
+  if (s.kind === 'reachable') return 'Now within reach'
+  return 'Out of reach'
+})
+const shiftClass = computed(() => {
+  const s = fiShift.value
+  if (!s) return ''
+  if (s.kind === 'sooner' || s.kind === 'reachable') return 'bg-success/10 text-success'
+  if (s.kind === 'unreachable') return 'bg-warning/10 text-warning'
+  return 'bg-elevated text-muted'
+})
+const shiftIcon = computed(() => {
+  const s = fiShift.value
+  if (!s) return ''
+  if (s.kind === 'sooner') return 'i-ph-fast-forward-fill'
+  if (s.kind === 'reachable') return 'i-ph-check-circle-fill'
+  if (s.kind === 'unreachable') return 'i-ph-warning-fill'
+  return 'i-ph-hourglass-medium'
+})
+
+// The headline lands once: years-away and target count up while the date rises
+// in. After the first reveal, scenario edits flow through instantly.
+const { progress: reveal, play } = useReveal()
+let revealed = false
+watch(regular, r => { if (r && !revealed) { revealed = true; play() } }, { immediate: true })
+
 const chartPoints = computed(() => {
   const fi = forecastInputs.value
   const reg = regular.value
@@ -121,19 +199,35 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
       <div v-if="regular" class="border border-default rounded-lg overflow-hidden">
         <div class="px-4 pt-4 pb-4 border-b border-default">
           <div class="text-xs font-semibold uppercase tracking-wider text-muted mb-1">{{ labels.regular }} date</div>
-          <div class="text-3xl font-bold font-mono text-heading leading-none">
+          <div class="text-3xl font-bold font-mono text-heading leading-none tmfi-rise">
             {{ regular.fiDate ? regular.fiDate.toFormat('LLL yyyy') : '—' }}
           </div>
-          <div class="flex gap-4 mt-2 text-sm text-muted">
-            <span v-if="regular.yearsToFi !== null" class="font-mono">{{ regular.yearsToFi.toFixed(1) }}y away</span>
-            <span class="font-mono">{{ fmt(regular.fireNumber) }} target</span>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-sm text-muted">
+            <span v-if="regular.yearsToFi !== null" class="font-mono">{{ (regular.yearsToFi * reveal).toFixed(1) }}y away</span>
+            <span class="font-mono">{{ fmt(regular.fireNumber * reveal) }} target</span>
+            <Transition name="tmfi-fade">
+              <span
+                v-if="fiShift"
+                :key="shiftText"
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                :class="shiftClass"
+              >
+                <span :class="shiftIcon" class="size-3.5" />
+                {{ shiftText }}
+              </span>
+            </Transition>
           </div>
         </div>
         <div class="p-4 pt-3">
-          <ForecastChart :points="chartPoints" :fire-number="regular.fireNumber" :coast-number="regular.coastNumber" />
+          <ForecastChart
+            :points="chartPoints"
+            :fire-number="regular.fireNumber"
+            :coast-number="regular.coastNumber"
+            :crossing="regular.fiDate ? { date: regular.fiDate.toISODate()!, value: regular.fireNumber } : null"
+          />
           <div class="flex gap-4 text-xs text-muted mt-2">
             <span>
-              <span class="inline-block w-3 border-t-2 align-middle" :style="{ borderColor: CHART_COLORS.portfolio }" />
+              <span class="inline-block w-3 h-2 rounded-xs align-middle" :style="{ backgroundColor: CHART_COLORS.portfolio, opacity: 0.85 }" />
               Investable
             </span>
             <span>
@@ -150,7 +244,13 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
 
       <!-- Variant cards -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <UCard v-for="v in forecasts" :key="v.variant" :class="v.variant === 'regular' ? 'ring-1 ring-primary' : ''">
+        <UCard
+          v-for="(v, i) in forecasts"
+          :key="v.variant"
+          class="tmfi-rise"
+          :style="{ animationDelay: `${i * 70}ms` }"
+          :class="v.variant === 'regular' ? 'ring-1 ring-primary' : ''"
+        >
           <div class="text-xs font-semibold text-muted uppercase tracking-wider">{{ labels[v.variant] }}</div>
           <div class="text-2xl font-bold font-mono mt-1">{{ fmt(v.fireNumber) }}</div>
           <dl class="mt-3 space-y-1 text-sm">

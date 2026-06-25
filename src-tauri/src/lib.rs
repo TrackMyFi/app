@@ -4,7 +4,7 @@ pub mod migrations;
 pub mod models;
 pub mod sync;
 
-use tauri::{Manager, RunEvent};
+use tauri::{LogicalSize, Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,11 +18,56 @@ pub fn run() {
     {
         builder = builder
             .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_process::init());
+            .plugin(tauri_plugin_process::init())
+            // Remember the window's size & position across launches. We only
+            // persist SIZE | POSITION (not maximized/fullscreen) so reopening
+            // restores exactly what the user last left, never a surprise
+            // fullscreen state.
+            .plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(
+                        tauri_plugin_window_state::StateFlags::SIZE
+                            | tauri_plugin_window_state::StateFlags::POSITION,
+                    )
+                    .build(),
+            );
     }
 
     builder
         .setup(|app| {
+            // First-launch window sizing. The window-state plugin restores the
+            // user's last size & position on every subsequent launch, but on a
+            // fresh install (no saved state yet) we pick sensible defaults:
+            // fill the screen on laptops/small displays, but cap the size on
+            // large external displays (e.g. a 27" 5K) so the app doesn't sprawl.
+            #[cfg(desktop)]
+            {
+                const MAX_W: f64 = 1760.0;
+                const MAX_H: f64 = 1120.0;
+                let has_saved_state = app
+                    .path()
+                    .app_config_dir()
+                    .map(|dir| dir.join(".window-state.json").exists())
+                    .unwrap_or(false);
+                if !has_saved_state {
+                    if let Some(win) = app.get_webview_window("main") {
+                        if let Ok(Some(monitor)) = win.current_monitor() {
+                            let scale = monitor.scale_factor();
+                            let mon = monitor.size().to_logical::<f64>(scale);
+                            if mon.width <= MAX_W && mon.height <= MAX_H {
+                                // Laptop / small display: fill the available space.
+                                let _ = win.maximize();
+                            } else {
+                                // Large external display: open at a comfortable,
+                                // capped size, centered.
+                                let _ = win.set_size(LogicalSize::new(MAX_W, MAX_H));
+                                let _ = win.center();
+                            }
+                        }
+                    }
+                }
+            }
+
             let handle = app.handle().clone();
             let db = tauri::async_runtime::block_on(db::init(&handle))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e))?;

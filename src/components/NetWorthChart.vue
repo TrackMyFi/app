@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { VisXYContainer, VisLine, VisAxis, VisCrosshair, VisTooltip } from '@unovis/vue'
+import { computed } from 'vue'
+import { VisXYContainer, VisLine, VisArea, VisAxis, VisCrosshair, VisTooltip } from '@unovis/vue'
 import type { NetWorthPoint } from '../lib/fire/netWorthSeries'
 import { DateTime } from 'luxon'
+import ZeroGradientDefs from './ZeroGradientDefs.vue'
+import { useZeroThresholdGradient } from '../composables/useZeroThresholdGradient'
 
 const props = defineProps<{ points: NetWorthPoint[] }>()
 
 type D = { t: number; v: number }
 
-const data = (): D[] => props.points.map(p => ({ t: DateTime.fromISO(p.date).toMillis(), v: p.netWorth }))
+// Memoized so the crosshair's per-mousemove re-render doesn't re-parse every date.
+const data = computed<D[]>(() => props.points.map(p => ({ t: DateTime.fromISO(p.date).toMillis(), v: p.netWorth })))
+
+const { paint, defs, pointColor } = useZeroThresholdGradient(() => data.value.map(d => d.v))
 const x = (d: D) => d.t
 const y = (d: D) => d.v
 const tickFormatX = (t: number | Date) =>
@@ -31,11 +37,13 @@ const crosshairTemplate = (d: D) => {
 
 <template>
   <template v-if="points.length > 0">
-    <VisXYContainer :data="data()" :height="280">
-      <VisLine :x="x" :y="y" />
+    <ZeroGradientDefs v-bind="defs" />
+    <VisXYContainer :data="data" :height="280">
+      <VisArea :x="x" :y="y" :color="paint" :baseline="0" :opacity="0.1" />
+      <VisLine :x="x" :y="y" :color="paint" :line-width="2" />
       <VisAxis type="x" :tick-format="tickFormatX" />
       <VisAxis type="y" :tick-format="tickFormatY" />
-      <VisCrosshair :x="x" :y="y" :template="crosshairTemplate" />
+      <VisCrosshair :x="x" :y="y" :color="(d: D) => pointColor(d.v)" :template="crosshairTemplate" />
       <VisTooltip />
     </VisXYContainer>
   </template>

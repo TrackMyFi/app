@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["sync", "time"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-window-state = "2"
 
 # On macOS we bypass the keyring crate and call Security.framework directly so
 # we can create items with SecAccessCreate(NULL), which lets any app read the

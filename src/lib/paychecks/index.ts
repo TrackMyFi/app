@@ -50,3 +50,43 @@ export function paycheckTotals(paychecks: Paycheck[]): {
   }
   return { totalGross, totalNet, count: paychecks.length }
 }
+
+const cents = (n: number) => Math.round(n * 100) / 100
+
+export interface PaycheckBreakdown {
+  totalGross: number
+  totalNet: number
+  /** Sum of the five withheld tax fields across every paycheck. */
+  totalTaxes: number
+  /** Sum of every line-item deduction (401k, health, etc.). */
+  totalDeductions: number
+  /** Everything not paid out as net pay: gross − net. Drives the take-home bar. */
+  totalWithheld: number
+  /** Share of gross that actually reached the bank, 0–1. 0 when there's no gross. */
+  takeHomeRate: number
+  count: number
+}
+
+/**
+ * Breaks aggregate paychecks into the take-home story: of every gross dollar,
+ * how much landed in your account (net) versus what was withheld, with the
+ * withheld portion itemized into taxes and deductions. Accumulates in cents to
+ * avoid floating-point drift, matching `paycheckTotals`.
+ */
+export function paycheckBreakdown(paychecks: Paycheck[]): PaycheckBreakdown {
+  let totalGross = 0
+  let totalNet = 0
+  let totalTaxes = 0
+  let totalDeductions = 0
+  for (const p of paychecks) {
+    totalGross = cents(totalGross + p.grossAmount)
+    totalNet = cents(totalNet + p.netAmount)
+    totalTaxes = cents(
+      totalTaxes + p.federalTax + p.stateTax + p.localTax + p.socialSecurityTax + p.medicareTax,
+    )
+    for (const d of p.deductions) totalDeductions = cents(totalDeductions + d.amount)
+  }
+  const totalWithheld = cents(Math.max(totalGross - totalNet, 0))
+  const takeHomeRate = totalGross > 0 ? totalNet / totalGross : 0
+  return { totalGross, totalNet, totalTaxes, totalDeductions, totalWithheld, takeHomeRate, count: paychecks.length }
+}

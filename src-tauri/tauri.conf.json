@@ -12,10 +12,13 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "TrackMyFI",
-        "width": 800,
-        "height": 600,
-        "maximized": true
+        "width": 1760,
+        "height": 1120,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true
       }
     ],
     "security": {

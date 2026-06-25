@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { VisXYContainer, VisLine, VisAxis, VisTooltip, VisCrosshair } from '@unovis/vue'
+import { computed } from 'vue'
+import { VisXYContainer, VisLine, VisArea, VisAxis, VisTooltip, VisCrosshair } from '@unovis/vue'
 import { DateTime } from 'luxon'
 import { classifyFlow } from '../lib/transactions/flow'
 import type { Transaction } from '../lib/types/Transaction'
 import type { Account } from '../lib/types/Account'
+import ZeroGradientDefs from './ZeroGradientDefs.vue'
+import { useZeroThresholdGradient } from '../composables/useZeroThresholdGradient'
 
 const props = defineProps<{
   transactions: Transaction[]
@@ -71,25 +73,18 @@ const lineCrosshairTemplate = (d: LinePoint) => {
   </div>`
 }
 
-// Read semantic colors from the design system at mount time for Unovis SVG compatibility
-const primaryColor = ref('#10b981')
-
-onMounted(() => {
-  const el = document.createElement('span')
-  document.body.appendChild(el)
-  el.className = 'text-primary'
-  const s = getComputedStyle(el).color
-  if (s) primaryColor.value = s
-  document.body.removeChild(el)
-})
+// Emerald above $0, red below — switching crisply at the zero line.
+const { paint, defs, pointColor } = useZeroThresholdGradient(() => lineData.value.map(d => d.v))
 </script>
 
 <template>
+  <ZeroGradientDefs v-bind="defs" />
   <VisXYContainer :data="lineData" :height="220">
-    <VisLine :x="xLine" :y="yLine" :color="primaryColor" />
+    <VisArea :x="xLine" :y="yLine" :color="paint" :baseline="0" :opacity="0.1" />
+    <VisLine :x="xLine" :y="yLine" :color="paint" :line-width="2" />
     <VisAxis type="x" :tick-format="tickFormatX" />
     <VisAxis type="y" :tick-format="tickFormatY" />
-    <VisCrosshair :x="xLine" :y="yLine" :template="lineCrosshairTemplate" />
+    <VisCrosshair :x="xLine" :y="yLine" :color="(d: LinePoint) => pointColor(d.v)" :template="lineCrosshairTemplate" />
     <VisTooltip />
   </VisXYContainer>
 </template>

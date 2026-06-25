@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { VisXYContainer, VisLine, VisAxis, VisCrosshair, VisTooltip } from '@unovis/vue'
+import { computed } from 'vue'
+import { VisXYContainer, VisLine, VisArea, VisAxis, VisCrosshair, VisTooltip } from '@unovis/vue'
 import { DateTime } from 'luxon'
+import ZeroGradientDefs from './ZeroGradientDefs.vue'
+import { useZeroThresholdGradient } from '../composables/useZeroThresholdGradient'
 
 export type ChartPoint = { date: string; balance: number }
 
@@ -8,7 +11,10 @@ const props = defineProps<{ points: ChartPoint[]; mode: 'monthly' | 'intramonth'
 
 type D = { t: number; v: number }
 
-const data = (): D[] => props.points.map(p => ({ t: DateTime.fromISO(p.date).toMillis(), v: p.balance }))
+// Memoized so the crosshair's per-mousemove re-render doesn't re-parse every date.
+const data = computed<D[]>(() => props.points.map(p => ({ t: DateTime.fromISO(p.date).toMillis(), v: p.balance })))
+
+const { paint, defs, pointColor } = useZeroThresholdGradient(() => data.value.map(d => d.v))
 const x = (d: D) => d.t
 const y = (d: D) => d.v
 
@@ -32,11 +38,13 @@ const crosshairTemplate = (d: D) => {
 </script>
 
 <template>
-  <VisXYContainer :data="data()" :height="200">
-    <VisLine :x="x" :y="y" color="var(--ui-primary)" />
+  <ZeroGradientDefs v-bind="defs" />
+  <VisXYContainer :data="data" :height="200">
+    <VisArea :x="x" :y="y" :color="paint" :baseline="0" :opacity="0.1" />
+    <VisLine :x="x" :y="y" :color="paint" :line-width="2" />
     <VisAxis type="x" :tick-format="tickFormatX" />
     <VisAxis type="y" />
-    <VisCrosshair :x="x" :y="y" :template="crosshairTemplate" />
+    <VisCrosshair :x="x" :y="y" :color="(d: D) => pointColor(d.v)" :template="crosshairTemplate" />
     <VisTooltip />
   </VisXYContainer>
 </template>

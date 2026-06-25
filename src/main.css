@@ -62,9 +62,21 @@
   pointer-events: none;
 }
 
+/* Vue <Transition name="tmfi-fade">: a quiet lift-fade for a value that swaps
+   in place — e.g. the Forecast what-if shift chip updating as sliders move. */
+.tmfi-fade-enter-active,
+.tmfi-fade-leave-active {
+  transition: opacity 200ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tmfi-fade-enter-from { opacity: 0; transform: translateY(3px); }
+.tmfi-fade-leave-to { opacity: 0; transform: translateY(-3px); }
+.tmfi-fade-leave-active { position: absolute; }
+
 @media (prefers-reduced-motion: reduce) {
   .tmfi-rise { animation: none; opacity: 1; transform: none; }
   .tmfi-check path { animation: none; stroke-dashoffset: 0; }
   .tmfi-sheen { display: none; }
   .tmfi-mote { display: none; }
+  .tmfi-fade-enter-active,
+  .tmfi-fade-leave-active { transition: none; }
 }

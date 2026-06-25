@@ -5,6 +5,7 @@ import { DateTime } from 'luxon'
 import { useBudgetStore } from '../stores/budget'
 import { useAccountsStore } from '../stores/accounts'
 import { usePageData } from '../composables/usePageData'
+import { useReveal } from '../composables/useReveal'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import MonthPicker from '../components/MonthPicker.vue'
 import PageError from '../components/PageError.vue'
@@ -13,6 +14,11 @@ const store = useBudgetStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
 const { loading, error, run, retry } = usePageData()
+
+// Drives the count-up reveal: the whole equation ticks into place from zero
+// whenever a month's data lands, so the budget feels like it computes in front
+// of you rather than just appearing.
+const { progress: reveal, play: playReveal } = useReveal()
 
 const editingTarget = ref(false)
 const targetInput = ref<number | null>(null)
@@ -36,6 +42,7 @@ function accountName(id: number): string {
 async function onMonthChange(dt: DateTime) {
   selectedDate.value = dt
   await run(() => store.load(dt.year, dt.month))
+  playReveal()
 }
 
 function setActiveSection(section: 'income' | 'savings' | 'fixed' | 'discretionary') {
@@ -98,6 +105,36 @@ const discretionaryRemaining = computed(() => {
   return store.summary.freeMoneyRemaining
 })
 
+// "Paid yourself first": you've met or beaten your own savings target this
+// month. Tied to the real figures (not the animated reveal) so the milestone
+// doesn't flicker on while the number counts up. Guards against a 0 target
+// reading as "met" the moment any saving happens.
+const savingsMet = computed(
+  () =>
+    !!store.summary &&
+    !!store.target &&
+    store.target.savingsTarget > 0 &&
+    store.summary.savings.total >= store.target.savingsTarget,
+)
+
+// Free Money is the result of the equation — the room you have to spend this
+// month. The envelope gauge turns the abstract "$X remaining" into something
+// you can feel filling up: discretionary spending eats into the envelope, and
+// the headroom that's left glows emerald until you cross the line.
+const freeMoney = computed(() => store.summary?.freeMoney ?? 0)
+const discretionarySpent = computed(() => store.summary?.discretionary.total ?? 0)
+const hasEnvelope = computed(() => freeMoney.value > 0)
+const overBudget = computed(() => discretionaryRemaining.value < 0)
+const showEnvelope = computed(() => hasEnvelope.value || discretionarySpent.value > 0)
+
+const spentRatio = computed(() => {
+  if (!hasEnvelope.value) return discretionarySpent.value > 0 ? 1 : 0
+  return Math.min(discretionarySpent.value / freeMoney.value, 1)
+})
+
+// Bar grows from zero on reveal, in lockstep with the counting figures.
+const envelopeBarWidth = computed(() => `${spentRatio.value * 100 * reveal.value}%`)
+
 const incomeColumns = [
   { accessorKey: 'date', header: 'Date' },
   { accessorKey: 'description', header: 'Description' },
@@ -119,6 +156,7 @@ onMounted(() => run(async () => {
     const m = store.months[0]
     selectedDate.value = DateTime.local(m.year, m.month, 1).startOf('month')
     await store.load(m.year, m.month)
+    playReveal()
   }
 }))
 </script>
@@ -142,7 +180,7 @@ onMounted(() => run(async () => {
     <!-- Formula row + detail panel -->
     <template v-else-if="store.summary">
       <!-- Formula columns -->
-      <div class="flex border border-default rounded-lg">
+      <div class="tmfi-rise flex border border-default rounded-lg">
         <!-- Income -->
         <button
           class="relative flex flex-col gap-1 p-4 text-left hover:bg-elevated/60 transition-colors flex-1 min-w-0 rounded-l-lg border-r border-default"
@@ -150,8 +188,8 @@ onMounted(() => run(async () => {
           @click="setActiveSection('income')"
         >
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Income</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.grossIncome) }}</span>
-          <span class="text-xs text-muted">Net: {{ money(store.summary.netIncome) }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.grossIncome * reveal) }}</span>
+          <span class="text-xs text-muted">Net: {{ money(store.summary.netIncome * reveal) }}</span>
           <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">−</span>
         </button>
 
@@ -161,8 +199,26 @@ onMounted(() => run(async () => {
           :class="store.activeSection === 'savings' ? 'bg-elevated' : ''"
           @click="setActiveSection('savings')"
         >
-          <span class="text-xs font-semibold uppercase tracking-wide text-muted">Savings</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.savings.total) }}</span>
+          <span class="flex items-center justify-between gap-2">
+            <span class="text-xs font-semibold uppercase tracking-wide" :class="savingsMet ? 'text-primary' : 'text-muted'">Savings</span>
+            <!-- Paid yourself first: target met or beaten this month -->
+            <span
+              v-if="savingsMet"
+              class="inline-flex items-center gap-1 text-[0.65rem] font-bold uppercase tracking-wider text-primary shrink-0"
+            >
+              <svg class="tmfi-check w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M5 13l4 4L19 7"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              Met
+            </span>
+          </span>
+          <span class="text-xl font-bold tabular-nums" :class="savingsMet ? 'text-primary' : ''">{{ money(store.summary.savings.total * reveal) }}</span>
 
           <!-- Inline target edit -->
           <template v-if="editingTarget">
@@ -178,8 +234,8 @@ onMounted(() => run(async () => {
             </div>
           </template>
           <template v-else>
-            <span class="text-xs flex items-center gap-1 text-muted">
-              {{ savingsSubLabel }}
+            <span class="text-xs flex items-center gap-1" :class="savingsMet ? 'text-primary' : 'text-muted'">
+              {{ savingsMet ? 'target met' : savingsSubLabel }}
               <button
                 class="ml-1 opacity-50 hover:opacity-100 transition-opacity"
                 title="Edit savings target"
@@ -195,7 +251,7 @@ onMounted(() => run(async () => {
         <!-- Taxes (non-clickable) -->
         <div class="relative flex flex-col gap-1 p-4 flex-1 min-w-0 border-r border-default">
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Taxes</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.taxes) }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.taxes * reveal) }}</span>
           <span class="text-xs text-muted">withheld</span>
           <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 size-6 rounded-full border border-default flex items-center justify-center text-xs text-muted select-none pointer-events-none" style="background: var(--ui-bg)">−</span>
         </div>
@@ -207,7 +263,7 @@ onMounted(() => run(async () => {
           @click="setActiveSection('fixed')"
         >
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Fixed</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.fixed.total) }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.fixed.total * reveal) }}</span>
           <span class="text-xs text-muted">
             {{ store.summary.fixed.transactions.length }} transaction{{ store.summary.fixed.transactions.length === 1 ? '' : 's' }}
           </span>
@@ -217,7 +273,7 @@ onMounted(() => run(async () => {
         <!-- Free Money (non-clickable, green bg) -->
         <div class="flex flex-col gap-1 p-4 border-r border-default bg-success/10 flex-1 min-w-0">
           <span class="text-xs font-semibold uppercase tracking-wide text-success">Free Money</span>
-          <span class="text-xl font-bold tabular-nums text-success">{{ money(store.summary.freeMoney) }}</span>
+          <span class="text-xl font-bold tabular-nums text-success">{{ money(store.summary.freeMoney * reveal) }}</span>
           <span class="text-xs text-success/70">&nbsp;</span>
         </div>
 
@@ -228,42 +284,90 @@ onMounted(() => run(async () => {
           @click="setActiveSection('discretionary')"
         >
           <span class="text-xs font-semibold uppercase tracking-wide text-muted">Discretionary</span>
-          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.discretionary.total) }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ money(store.summary.discretionary.total * reveal) }}</span>
           <span
             class="text-xs font-medium"
             :class="discretionaryRemaining >= 0 ? 'text-success' : 'text-error'"
           >
-            {{ money(discretionaryRemaining) }} remaining
+            {{ money(discretionaryRemaining * reveal) }} remaining
           </span>
         </button>
       </div>
 
+      <!-- Free-money envelope: how much room is left to spend this month.
+           The gauge fills with discretionary spending; the headroom that
+           remains glows emerald until the line is crossed. -->
+      <div v-if="showEnvelope" class="tmfi-rise" :style="{ animationDelay: '70ms' }">
+        <div class="flex items-baseline justify-between gap-3 mb-2">
+          <span class="text-xs font-semibold uppercase tracking-wide text-muted">Free Money Spent</span>
+          <span v-if="overBudget" class="text-xs font-semibold font-mono tabular-nums text-error">
+            {{ money(Math.abs(discretionaryRemaining) * reveal) }} over
+          </span>
+          <span v-else class="text-xs font-semibold font-mono tabular-nums text-success">
+            {{ money(discretionaryRemaining * reveal) }} left
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          :aria-valuenow="Math.round(spentRatio * 100)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-label="`Free money spent: ${money(discretionarySpent)} of ${money(freeMoney)}`"
+          class="relative h-2.5 rounded-full bg-elevated overflow-hidden"
+        >
+          <div
+            class="relative h-full rounded-full transition-[width] duration-500 ease-out"
+            :class="overBudget ? 'bg-error' : 'bg-success'"
+            :style="{ width: envelopeBarWidth }"
+          />
+        </div>
+        <div class="mt-2 text-xs text-muted">
+          <span class="font-mono tabular-nums font-medium text-default">{{ money(discretionarySpent * reveal) }}</span>
+          spent of
+          <span class="font-mono tabular-nums font-medium text-default">{{ money(freeMoney * reveal) }}</span>
+          <template v-if="hasEnvelope"> free money this month</template>
+          <template v-else> — no free money this month</template>
+        </div>
+      </div>
+
       <!-- Detail panel -->
-      <div class="border border-default rounded-lg overflow-hidden">
+      <div class="tmfi-rise border border-default rounded-lg overflow-hidden" :style="{ animationDelay: '120ms' }">
         <div class="bg-elevated px-4 py-2 border-b border-default">
           <span v-if="store.activeSection === 'income'" class="text-sm font-medium uppercase tracking-wide">
             INCOME — {{ store.summary.income.transactions.length }} transaction{{ store.summary.income.transactions.length === 1 ? '' : 's' }}
           </span>
           <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
         </div>
-        <!-- Income table: Gross + Net columns -->
-        <UTable v-if="store.activeSection === 'income'" :data="detailTransactions" :columns="incomeColumns" :empty="emptyMessage">
-          <template #account-cell="{ row }">
-            <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
-          </template>
-          <template #gross-cell="{ row }">
-            {{ money(row.original.paycheckId != null ? (store.paycheckGrossMap[row.original.paycheckId] ?? row.original.amount) : row.original.amount) }}
-          </template>
-          <template #net-cell="{ row }">{{ money(row.original.amount) }}</template>
-        </UTable>
+        <!-- Crossfade as the active section changes — the panel content swaps,
+             so a quick fade conveys "this is now a different breakdown". -->
+        <Transition
+          enter-active-class="transition-opacity duration-150 ease-out"
+          enter-from-class="opacity-0"
+          leave-active-class="transition-opacity duration-100 ease-in"
+          leave-to-class="opacity-0"
+          mode="out-in"
+        >
+          <div :key="store.activeSection ?? 'none'">
+            <!-- Income table: Gross + Net columns -->
+            <UTable v-if="store.activeSection === 'income'" :data="detailTransactions" :columns="incomeColumns" :empty="emptyMessage">
+              <template #account-cell="{ row }">
+                <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
+              </template>
+              <template #gross-cell="{ row }">
+                {{ money(row.original.paycheckId != null ? (store.paycheckGrossMap[row.original.paycheckId] ?? row.original.amount) : row.original.amount) }}
+              </template>
+              <template #net-cell="{ row }">{{ money(row.original.amount) }}</template>
+            </UTable>
 
-        <!-- All other sections: single Amount column -->
-        <UTable v-else :data="detailTransactions" :columns="sectionColumns" :empty="emptyMessage">
-          <template #account-cell="{ row }">
-            <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
-          </template>
-          <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
-        </UTable>
+            <!-- All other sections: single Amount column -->
+            <UTable v-else :data="detailTransactions" :columns="sectionColumns" :empty="emptyMessage">
+              <template #account-cell="{ row }">
+                <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
+              </template>
+              <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
+            </UTable>
+          </div>
+        </Transition>
       </div>
     </template>
 
