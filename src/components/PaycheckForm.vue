@@ -14,13 +14,49 @@ import type { Paycheck } from '../lib/types/Paycheck'
 
 
 const props = defineProps<{ editing: Paycheck | null; copyFrom: Paycheck | null }>()
-const emit = defineEmits<{ saved: [] }>()
+const emit = defineEmits<{ saved: [close: boolean] }>()
 
 const store = usePaychecksStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
 const saving = ref(false)
 const saveError = ref<string | null>(null)
+
+// ─── Save modes (split button) ───────────────────────────────────────────────
+// Most paychecks look like the last one, so bulk entry is common. The three
+// modes mirror the Add Transaction form:
+// 'close' — save and dismiss the modal (default)
+// 'add'   — save, reset to a blank form, keep the modal open for the next entry
+// 'keep'  — save, keep the current values, keep the modal open
+type SaveMode = 'close' | 'add' | 'keep'
+
+const saveModeOptions: { value: SaveMode; label: string }[] = [
+  { value: 'close', label: 'Save Paycheck' },
+  { value: 'add', label: 'Save & Add Another' },
+  { value: 'keep', label: 'Save, Keep Values, & Add Another' },
+]
+
+const SAVE_MODE_KEY = 'trackmyfi.paycheckSaveMode'
+function loadSaveMode(): SaveMode {
+  const v = localStorage.getItem(SAVE_MODE_KEY)
+  return v === 'add' || v === 'keep' ? v : 'close'
+}
+const saveMode = ref<SaveMode>(loadSaveMode())
+watch(saveMode, (m) => localStorage.setItem(SAVE_MODE_KEY, m))
+
+const saveModeLabel = computed(
+  () => saveModeOptions.find((o) => o.value === saveMode.value)?.label ?? 'Save Paycheck',
+)
+const saveMenuItems = computed(() => [
+  saveModeOptions.map((o) => ({
+    label: o.label,
+    icon: saveMode.value === o.value ? 'i-ph-check' : undefined,
+    onSelect: () => {
+      saveMode.value = o.value
+      save(o.value)
+    },
+  })),
+])
 
 const knownEmployers = computed(() =>
   [...new Set(store.paychecks.map((p) => p.employer).filter(Boolean))]
@@ -182,7 +218,9 @@ function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-async function save() {
+async function save(mode: SaveMode = 'close') {
+  // Editing always saves and closes; the "add another" modes only apply to new entries.
+  if (props.editing) mode = 'close'
   saveError.value = null
   const now = DateTime.now().toISO()!
   saving.value = true
@@ -224,8 +262,11 @@ async function save() {
         createdAt: now,
       })
       toast.add({ title: 'Paycheck added', color: 'success' })
+      // 'add' starts fresh; 'keep' leaves the entered values in place for the next entry.
+      if (mode === 'add') resetForm()
     }
-    emit('saved')
+    // Close the modal only for plain saves; the "add another" modes keep it open.
+    emit('saved', mode === 'close')
   } catch (err) {
     saveError.value = String(err)
     toast.add({ title: 'Failed to save paycheck', description: String(err), color: 'error' })
@@ -236,7 +277,7 @@ async function save() {
 </script>
 
 <template>
-  <form class="space-y-5" @submit.prevent="save">
+  <form class="space-y-5" @submit.prevent="save(saveMode)">
 
     <div class="flex flex-wrap lg:flex-nowrap gap-3 space-y-5">
       <div class="flex-1 space-y-5">
@@ -378,7 +419,19 @@ async function save() {
     <p v-if="saveError" class="text-sm text-error">{{ saveError }}</p>
 
     <div class="flex justify-end gap-2 pt-2">
-      <UButton type="submit" :loading="saving" :disabled="saving">{{ props.editing ? 'Save' : props.copyFrom ? 'Copy paycheck' : 'Add paycheck' }}</UButton>
+      <UButton v-if="props.editing" type="submit" :loading="saving" :disabled="saving">Save</UButton>
+      <UFieldGroup v-else>
+        <UButton type="submit" :loading="saving" :disabled="saving">{{ saveModeLabel }}</UButton>
+        <UDropdownMenu :items="saveMenuItems" :content="{ align: 'end' }">
+          <UButton
+            type="button"
+            color="primary"
+            icon="i-ph-caret-down"
+            aria-label="More save options"
+            :disabled="saving"
+          />
+        </UDropdownMenu>
+      </UFieldGroup>
     </div>
 
   </form>

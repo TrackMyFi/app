@@ -30,7 +30,7 @@ const copySource = ref<Paycheck | null>(null)
 function openAdd() { editing.value = null; copySource.value = null; isModalOpen.value = true }
 function openEdit(p: Paycheck) { editing.value = p; copySource.value = null; isModalOpen.value = true }
 function openCopy(p: Paycheck) { editing.value = null; copySource.value = p; isModalOpen.value = true }
-function onSaved() { isModalOpen.value = false }
+function onSaved(close = true) { if (close) isModalOpen.value = false }
 
 watch(isModalOpen, (open) => {
   if (!open) {
