@@ -65,10 +65,11 @@ pub trait TokenStore: Send + Sync {
 
 pub struct KeyringStore;
 
-// On macOS we talk to Security.framework directly so we can set SecAccessCreate(NULL),
-// which means any app can read the item without a per-binary ACL prompt. The
-// keyring crate's default ACL is tied to the calling binary's code hash, which
-// changes on every auto-update when the app is self-signed.
+// On macOS we talk to Security.framework directly so we can build a permissive ACL
+// (see `allow_any_app`) that lets any app read the item without a per-binary prompt.
+// The keyring crate's default ACL — like SecAccessCreate's default — is tied to the
+// calling binary's code signature, which changes on every auto-update when the app
+// is self-signed, so "Always Allow" never sticks across updates.
 //
 // Migration: the first get() after shipping this fix will prompt once (reading the
 // old item). We then delete the old entry and recreate it with the permissive ACL,
@@ -83,6 +84,7 @@ mod macos_keychain {
         string::CFString,
     };
     use core_foundation_sys::{
+        array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef},
         base::{CFRelease, OSStatus},
         data::CFDataRef,
         string::CFStringRef,
@@ -100,17 +102,105 @@ mod macos_keychain {
 
     const ERR_NOT_FOUND: OSStatus = -25300; // errSecItemNotFound
 
+    // Opaque SecACL handle (a toll-free CFType pointer).
+    type SecACLRef = *mut c_void;
+
+    // CSSM_ACL_KEYCHAIN_PROMPT_SELECTOR: { uint16 version; uint16 flags; }.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CssmAclKeychainPromptSelector {
+        version: u16,
+        flags: u16,
+    }
+    // flags bit 0: require re-entering the keychain passphrase on access. We clear it.
+    const CSSM_ACL_KEYCHAIN_PROMPT_REQUIRE_PASSPHRASE: u16 = 0x0001;
+
     // Security.framework constants/functions not yet exported by security_framework_sys.
     #[link(name = "Security", kind = "framework")]
     extern "C" {
         static kSecMatchLimitOne: CFStringRef;
         static kSecAttrAccess: CFStringRef;
+        // CAUTION: for SecAccessCreate a NULL applicationList yields the DEFAULT ACL,
+        // which trusts ONLY the calling binary — it does NOT mean "any app". (That is
+        // the exact opposite of SecACLSetSimpleContents below, where NULL *does* mean
+        // "any app".) We pass NULL here, then rewrite the ACL in `allow_any_app` to
+        // actually grant access to every application.
         fn SecAccessCreate(
             descriptor: CFStringRef,
-            // NULL means "any application may access this item without prompting"
-            applicationList: *const c_void,
+            application_list: *const c_void,
             access: *mut SecAccessRef,
         ) -> OSStatus;
+        // ACL editing API used to mirror `security add-generic-password -A`: make the
+        // item readable by ANY application with no Keychain prompt. Without this the
+        // ACL is bound to the calling binary's code signature, which changes on every
+        // self-signed auto-update — producing a password prompt on every update.
+        fn SecAccessCopyACLList(access: SecAccessRef, acl_list: *mut CFArrayRef) -> OSStatus;
+        fn SecACLCopySimpleContents(
+            acl: SecACLRef,
+            application_list: *mut CFArrayRef,
+            description: *mut CFStringRef,
+            prompt_selector: *mut CssmAclKeychainPromptSelector,
+        ) -> OSStatus;
+        fn SecACLSetSimpleContents(
+            acl: SecACLRef,
+            // NULL here = any application may access the item without prompting.
+            application_list: *const c_void,
+            description: CFStringRef,
+            prompt_selector: *const CssmAclKeychainPromptSelector,
+        ) -> OSStatus;
+    }
+
+    /// Rewrite every ACL on `access` so ANY application can read the item without a
+    /// prompt — the real "allow any app" behavior: a NULL application list with the
+    /// passphrase-prompt flag cleared, mirroring `security add-generic-password -A`.
+    ///
+    /// Best-effort: a failure here only degrades to the old prompting behavior, so we
+    /// log and continue rather than failing the whole keychain write.
+    fn allow_any_app(access: SecAccessRef, descriptor: &CFString) {
+        let mut acl_list: CFArrayRef = ptr::null();
+        let status = unsafe { SecAccessCopyACLList(access, &mut acl_list) };
+        if status != 0 || acl_list.is_null() {
+            eprintln!("keychain: SecAccessCopyACLList failed ({status}); ACL left restrictive");
+            return;
+        }
+
+        let count = unsafe { CFArrayGetCount(acl_list) };
+        for i in 0..count {
+            let acl = unsafe { CFArrayGetValueAtIndex(acl_list, i) } as SecACLRef;
+
+            // Read the current contents so we preserve the prompt description/selector.
+            let mut app_list: CFArrayRef = ptr::null();
+            let mut prompt_desc: CFStringRef = ptr::null();
+            let mut selector = CssmAclKeychainPromptSelector { version: 0, flags: 0 };
+            let copy = unsafe {
+                SecACLCopySimpleContents(acl, &mut app_list, &mut prompt_desc, &mut selector)
+            };
+            // ACLs without "simple" contents (e.g. the one guarding ACL edits) return
+            // an error here; leave those untouched.
+            if copy != 0 {
+                continue;
+            }
+            if !app_list.is_null() {
+                unsafe { CFRelease(app_list as *const c_void) };
+            }
+
+            // Clear "require passphrase", then NULL app list = any app, no prompt.
+            selector.flags &= !CSSM_ACL_KEYCHAIN_PROMPT_REQUIRE_PASSPHRASE;
+            let desc = if prompt_desc.is_null() {
+                descriptor.as_concrete_TypeRef()
+            } else {
+                prompt_desc
+            };
+            let set = unsafe { SecACLSetSimpleContents(acl, ptr::null(), desc, &selector) };
+            if !prompt_desc.is_null() {
+                unsafe { CFRelease(prompt_desc as *const c_void) };
+            }
+            if set != 0 {
+                eprintln!("keychain: SecACLSetSimpleContents failed ({set}) on acl {i}");
+            }
+        }
+
+        unsafe { CFRelease(acl_list as *const c_void) };
     }
 
     // Cast a typed CF pointer to *const c_void for use as a CFDictionary key/value.
@@ -153,7 +243,10 @@ mod macos_keychain {
         // Remove any existing entry first — it may have the old per-binary ACL.
         let _ = delete(service, account);
 
-        // Create a permissive SecAccess: NULL applicationList = any app, no prompt.
+        // Create a SecAccess, then make it permissive. SecAccessCreate's default ACL
+        // trusts only THIS binary, whose signature changes on every self-signed
+        // update — the root cause of the repeating Keychain prompt. allow_any_app
+        // rewrites the ACL so any application can read it without prompting.
         let svc_desc = CFString::new(service);
         let mut access: SecAccessRef = ptr::null_mut();
         let acc_status = unsafe {
@@ -162,6 +255,7 @@ mod macos_keychain {
         if acc_status != 0 {
             return Err(format!("SecAccessCreate failed ({acc_status})"));
         }
+        allow_any_app(access, &svc_desc);
 
         let svc = CFString::new(service);
         let acct = CFString::new(account);

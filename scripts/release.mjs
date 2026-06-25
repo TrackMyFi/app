@@ -3,6 +3,8 @@
 // those files, tags, and pushes — which triggers the GitHub Actions build.
 //
 //   npm run release -- v0.2.0   (the leading "v" is optional)
+//   npm run release             (no version → prompts for major/minor/patch,
+//                                defaulting to a patch bump of the current version)
 //
 // The actual release build (compile, sign, bundle, publish) happens in GitHub
 // Actions once the tag is pushed — nothing is built locally for distribution.
@@ -16,6 +18,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -33,24 +36,56 @@ function capture(cmd) {
   return execSync(cmd, { cwd: root, encoding: 'utf8' }).trim()
 }
 
+// --- Read the current version so we can bump or validate against it --------
+
+const pkgPath = join(root, 'package.json')
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+const current = pkg.version
+if (!/^\d+\.\d+\.\d+$/.test(current)) {
+  fail(`Current package.json version "${current}" is not a valid semver.`)
+}
+
+/** Bump the current x.y.z by the given release type. */
+function nextVersion(type) {
+  const [major, minor, patch] = current.split('.').map(Number)
+  if (type === 'major') return `${major + 1}.0.0`
+  if (type === 'minor') return `${major}.${minor + 1}.0`
+  return `${major}.${minor}.${patch + 1}` // patch
+}
+
+/** Ask which part to bump; default to patch. Returns the bumped version. */
+async function promptForBump() {
+  // Non-interactive (CI, piped) — just default to a patch bump, no prompt.
+  if (!process.stdin.isTTY) return nextVersion('patch')
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    console.log(`\nCurrent version is ${current}. Which part do you want to bump?`)
+    console.log(`  1) patch  → ${nextVersion('patch')}  (default)`)
+    console.log(`  2) minor  → ${nextVersion('minor')}`)
+    console.log(`  3) major  → ${nextVersion('major')}`)
+    const answer = (await rl.question('Choose [1-3, patch/minor/major]: ')).trim().toLowerCase()
+    if (answer === '2' || answer === 'minor') return nextVersion('minor')
+    if (answer === '3' || answer === 'major') return nextVersion('major')
+    return nextVersion('patch') // empty, "1", "patch", or anything else
+  } finally {
+    rl.close()
+  }
+}
+
 // --- Parse + validate the requested version -------------------------------
 
 const args = process.argv.slice(2)
 const skipChecks = args.includes('--skip-checks')
 const raw = args.find((a) => !a.startsWith('--'))
-if (!raw) fail('Usage: npm run release -- v0.2.0')
 
-const version = raw.replace(/^v/, '') // bare semver for file contents
+// No explicit version → prompt for a major/minor/patch bump (defaults to patch).
+const version = raw ? raw.replace(/^v/, '') : await promptForBump()
 const tag = `v${version}` // tag always has the leading v
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
   fail(`"${raw}" is not a valid semver version (expected e.g. v0.2.0)`)
 }
 
-// --- Read the current version so replacements are precise ------------------
-
-const pkgPath = join(root, 'package.json')
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
-const current = pkg.version
 if (current === version) fail(`Version is already ${version} — nothing to bump.`)
 
 // Refuse to clobber an existing tag.
