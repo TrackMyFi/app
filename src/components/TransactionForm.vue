@@ -63,7 +63,6 @@ const form = reactive({
   type: 'expense',
   category: 'uncategorized',
   isContribution: false,
-  isWithdrawal: false,
 })
 
 function resetForm() {
@@ -75,7 +74,6 @@ function resetForm() {
   form.type = 'expense'
   form.category = 'uncategorized'
   form.isContribution = false
-  form.isWithdrawal = false
 }
 
 watch(
@@ -90,7 +88,6 @@ watch(
       form.type = e.type
       form.category = e.category
       form.isContribution = e.isContribution
-      form.isWithdrawal = e.isWithdrawal
     } else {
       resetForm()
     }
@@ -128,7 +125,6 @@ const contributionFlagLabel = computed(() =>
 watch([() => form.accountId, () => form.transferAccountId], () => {
   if (props.editing) return
   form.isContribution = isContributionTransfer.value || isWithdrawalTransfer.value
-  form.isWithdrawal = isWithdrawalTransfer.value
 })
 
 // Default the switch on for cash/liability accounts, off for investment accounts.
@@ -193,7 +189,7 @@ async function save(mode: SaveMode = 'close') {
         type: form.type,
         category: form.category,
         isContribution: form.isContribution,
-        isWithdrawal: form.isContribution && form.isWithdrawal,
+        isWithdrawal: form.isContribution && isWithdrawalTransfer.value,
         updateBalance: updateBalance.value,
         updatedAt: now,
       })
@@ -208,7 +204,7 @@ async function save(mode: SaveMode = 'close') {
         type: form.type,
         category: form.category,
         isContribution: form.isContribution,
-        isWithdrawal: form.isContribution && form.isWithdrawal,
+        isWithdrawal: form.isContribution && isWithdrawalTransfer.value,
         importSource: 'manual',
         updateBalance: updateBalance.value,
         createdAt: now,
