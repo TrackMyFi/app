@@ -341,15 +341,65 @@ const addModalOpen = ref(false)
 const newBalance = ref<number>(0)
 const newDate = ref<string>(DateTime.now().toISODate()!)
 const addingSnapshot = ref(false)
+const addForm = ref<HTMLFormElement | null>(null)
 
-async function submitAddSnapshot() {
+// Focus the first field once the modal's open transition settles — running
+// after `after:enter` means Reka's own focus handling has already fired, so
+// ours wins. The date field's first segment is a spinbutton, not an <input>.
+function focusFirstField() {
+  const el = addForm.value?.querySelector<HTMLElement>(
+    'input, [role="spinbutton"], [tabindex]:not([tabindex="-1"])',
+  )
+  el?.focus()
+}
+
+// ─── Save modes (split button) ───────────────────────────────────────────────
+// 'close' — save and dismiss the modal (default)
+// 'add'   — save, reset to a blank form, keep the modal open for the next entry
+// 'keep'  — save, keep the current values, keep the modal open
+type SaveMode = 'close' | 'add' | 'keep'
+
+const saveModeOptions: { value: SaveMode; label: string }[] = [
+  { value: 'close', label: 'Save Snapshot' },
+  { value: 'add', label: 'Save & Add Another' },
+  { value: 'keep', label: 'Save, Keep Values, & Add Another' },
+]
+
+const SAVE_MODE_KEY = 'trackmyfi.snapshotSaveMode'
+function loadSaveMode(): SaveMode {
+  const v = localStorage.getItem(SAVE_MODE_KEY)
+  return v === 'add' || v === 'keep' ? v : 'close'
+}
+const saveMode = ref<SaveMode>(loadSaveMode())
+watch(saveMode, (m) => localStorage.setItem(SAVE_MODE_KEY, m))
+
+const saveModeLabel = computed(
+  () => saveModeOptions.find((o) => o.value === saveMode.value)?.label ?? 'Save Snapshot',
+)
+const saveMenuItems = computed(() => [
+  saveModeOptions.map((o) => ({
+    label: o.label,
+    icon: saveMode.value === o.value ? 'i-ph-check' : undefined,
+    onSelect: () => {
+      saveMode.value = o.value
+      submitAddSnapshot(o.value)
+    },
+  })),
+])
+
+async function submitAddSnapshot(mode: SaveMode = 'close') {
   const savedMonth = newDate.value.slice(0, 7)
   addingSnapshot.value = true
   try {
     await api.addBalance({ accountId: accountId.value, balance: newBalance.value, recordedAt: newDate.value })
-    addModalOpen.value = false
-    newBalance.value = 0
-    newDate.value = DateTime.now().toISODate()!
+    toast.add({ title: 'Snapshot added', color: 'success' })
+    // 'add' starts fresh; 'keep' leaves the entered values in place for the next entry.
+    if (mode === 'close') {
+      addModalOpen.value = false
+    } else if (mode === 'add') {
+      newBalance.value = 0
+      newDate.value = DateTime.now().toISODate()!
+    }
     await refreshSummaries()
     await invalidateMonth(savedMonth)
   } catch (err) {
@@ -610,19 +660,30 @@ async function deleteAccount() {
     </UModal>
 
     <!-- Add snapshot modal -->
-    <UModal v-model:open="addModalOpen" title="Add Snapshot" class="w-84">
+    <UModal v-model:open="addModalOpen" title="Add Snapshot" class="w-84" @after:enter="focusFirstField">
       <template #body>
-        <div class="space-y-4">
+        <form ref="addForm" class="space-y-4" @submit.prevent="submitAddSnapshot(saveMode)">
           <UFormField label="Date">
             <DateInput v-model="newDate" class="w-full" />
           </UFormField>
           <UFormField label="Balance">
             <CurrencyInput v-model="newBalance" class="w-full" />
           </UFormField>
-          <div class="flex justify-end pt-2">
-            <UButton :loading="addingSnapshot" :disabled="addingSnapshot" @click="submitAddSnapshot" block>Add Snapshot</UButton>
+          <div class="flex justify-end pt-2 w-full">
+            <UFieldGroup class="w-full">
+              <UButton type="submit" :loading="addingSnapshot" :disabled="addingSnapshot" block>{{ saveModeLabel }}</UButton>
+              <UDropdownMenu :items="saveMenuItems" :content="{ align: 'end' }">
+                <UButton
+                  type="button"
+                  color="primary"
+                  icon="i-ph-caret-down"
+                  aria-label="More save options"
+                  :disabled="addingSnapshot"
+                />
+              </UDropdownMenu>
+            </UFieldGroup>
           </div>
-        </div>
+        </form>
       </template>
     </UModal>
 
