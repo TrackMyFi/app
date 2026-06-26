@@ -44,7 +44,7 @@ const money = (n: number) =>
     </dd>
 
     <template v-if="transaction.isContribution">
-      <dt class="text-gray-500">Contribution</dt>
+      <dt class="text-gray-500">{{ transaction.isWithdrawal ? 'Withdrawal' : 'Contribution' }}</dt>
       <dd class="col-span-2">Yes</dd>
     </template>
 

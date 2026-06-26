@@ -74,21 +74,38 @@ const GROUPS: GroupDef[] = [
   { label: 'Crypto', types: ['crypto'], order: 4 },
 ]
 
+interface TypeSums {
+  /** Inflows only — drives IRS-limited totals, which count gross contributions. */
+  inflow: number
+  /** Inflows minus withdrawals — drives unlimited (brokerage/crypto) totals. */
+  net: number
+}
+
 function sumByType(
   txns: Transaction[],
   accounts: Account[],
   yearPrefix: string,
-): Map<string, number> {
+): Map<string, TypeSums> {
   const typeOf = new Map(accounts.map((a) => [a.id, a.type]))
-  const out = new Map<string, number>()
+  const out = new Map<string, TypeSums>()
   for (const t of txns) {
     if (!t.date.startsWith(yearPrefix)) continue
-    const effectiveId = t.transferAccountId ?? t.accountId
+    // A withdrawal's investment side is its SOURCE (money leaving the account); a
+    // contribution's is the destination (money landing in it).
+    const effectiveId = t.isWithdrawal ? t.accountId : (t.transferAccountId ?? t.accountId)
     const type = typeOf.get(effectiveId)
     if (!type) continue // orphan txn (account deleted) — excluded
-    // Amounts are summed signed: a negative (refund/correction) contribution
-    // legitimately nets the type total down.
-    out.set(type, (out.get(type) ?? 0) + t.amount)
+    const cur = out.get(type) ?? { inflow: 0, net: 0 }
+    if (t.isWithdrawal) {
+      // Withdrawals never touch the inflow total, only the net.
+      cur.net -= t.amount
+    } else {
+      // Inflows are summed signed: a negative (refund/correction) contribution
+      // legitimately nets both totals down.
+      cur.inflow += t.amount
+      cur.net += t.amount
+    }
+    out.set(type, cur)
   }
   return out
 }
@@ -107,8 +124,12 @@ export function buildContributionRows(
   const rows: (ContributionRow & { _order: number })[] = []
 
   for (const group of GROUPS) {
-    const total = group.types.reduce((s, t) => s + (thisYear.get(t) ?? 0), 0)
-    const priorTotal = group.types.reduce((s, t) => s + (priorYear.get(t) ?? 0), 0)
+    // IRS-limited groups count gross inflows only — a withdrawal does not restore
+    // contribution room. Unlimited groups (brokerage/crypto) net withdrawals down.
+    const useNet = group.limitFor === undefined
+    const pick = (e?: TypeSums) => (e ? (useNet ? e.net : e.inflow) : 0)
+    const total = group.types.reduce((s, t) => s + pick(thisYear.get(t)), 0)
+    const priorTotal = group.types.reduce((s, t) => s + pick(priorYear.get(t)), 0)
 
     // Omit groups with no contributions in either year.
     if (total === 0 && priorTotal === 0) continue
@@ -126,7 +147,7 @@ export function buildContributionRows(
       row.breakdown = group.types.map((t) => ({
         type: t,
         label: TYPE_LABELS[t] ?? t,
-        total: thisYear.get(t) ?? 0,
+        total: pick(thisYear.get(t)),
       }))
     }
 

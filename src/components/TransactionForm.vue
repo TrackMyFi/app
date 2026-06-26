@@ -63,6 +63,7 @@ const form = reactive({
   type: 'expense',
   category: 'uncategorized',
   isContribution: false,
+  isWithdrawal: false,
 })
 
 function resetForm() {
@@ -74,6 +75,7 @@ function resetForm() {
   form.type = 'expense'
   form.category = 'uncategorized'
   form.isContribution = false
+  form.isWithdrawal = false
 }
 
 watch(
@@ -88,6 +90,7 @@ watch(
       form.type = e.type
       form.category = e.category
       form.isContribution = e.isContribution
+      form.isWithdrawal = e.isWithdrawal
     } else {
       resetForm()
     }
@@ -107,8 +110,25 @@ const isContributionTransfer = computed(() => {
   return src != null && dst != null && !isInvestment(src.type) && isInvestment(dst.type)
 })
 
+// The mirror of a contribution transfer: money leaving an investment account back
+// to cash/liability. Flagging it nets the amount out of contribution tracking.
+const isWithdrawalTransfer = computed(() => {
+  if (!isTransfer.value || form.accountId == null || form.transferAccountId == null) return false
+  const src = accountsStore.accounts.find((a) => a.id === form.accountId)
+  const dst = accountsStore.accounts.find((a) => a.id === form.transferAccountId)
+  return src != null && dst != null && isInvestment(src.type) && !isInvestment(dst.type)
+})
+
+const contributionFlagLabel = computed(() =>
+  isWithdrawalTransfer.value
+    ? 'Counts as an investment withdrawal (reduces contributions)'
+    : 'Counts as an investment contribution',
+)
+
 watch([() => form.accountId, () => form.transferAccountId], () => {
-  if (!props.editing) form.isContribution = isContributionTransfer.value
+  if (props.editing) return
+  form.isContribution = isContributionTransfer.value || isWithdrawalTransfer.value
+  form.isWithdrawal = isWithdrawalTransfer.value
 })
 
 // Default the switch on for cash/liability accounts, off for investment accounts.
@@ -173,6 +193,7 @@ async function save(mode: SaveMode = 'close') {
         type: form.type,
         category: form.category,
         isContribution: form.isContribution,
+        isWithdrawal: form.isContribution && form.isWithdrawal,
         updateBalance: updateBalance.value,
         updatedAt: now,
       })
@@ -187,6 +208,7 @@ async function save(mode: SaveMode = 'close') {
         type: form.type,
         category: form.category,
         isContribution: form.isContribution,
+        isWithdrawal: form.isContribution && form.isWithdrawal,
         importSource: 'manual',
         updateBalance: updateBalance.value,
         createdAt: now,
@@ -230,7 +252,7 @@ async function save(mode: SaveMode = 'close') {
     <UFormField v-if="!isTransfer" label="Category">
       <USelect v-model="form.category" :items="categoryItems" class="w-full" />
     </UFormField>
-    <UCheckbox v-if="!isTransfer || isContributionTransfer" v-model="form.isContribution" label="Counts as an investment contribution" />
+    <UCheckbox v-if="!isTransfer || isContributionTransfer || isWithdrawalTransfer" v-model="form.isContribution" :label="contributionFlagLabel" />
 
     <div class="rounded-lg border border-default p-3 space-y-2">
       <USwitch v-model="updateBalance" label="Update account balance" />

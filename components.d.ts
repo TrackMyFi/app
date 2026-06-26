@@ -15,7 +15,6 @@ declare module 'vue' {
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
     AccountsTable: typeof import('./src/components/AccountsTable.vue')['default']
     AssetEventForm: typeof import('./src/components/AssetEventForm.vue')['default']
-    BalanceForm: typeof import('./src/components/BalanceForm.vue')['default']
     ComboboxInput: typeof import('./src/components/ComboboxInput.vue')['default']
     CurrencyInput: typeof import('./src/components/CurrencyInput.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']

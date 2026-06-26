@@ -12,7 +12,7 @@ const accounts: Account[] = [
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 100, description: '', date: '2026-05-01',
-    type: 'expense', category: 'discretionary', isContribution: false, importSource: 'manual',
+    type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
     generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
@@ -49,6 +49,14 @@ describe('classifyFlow', () => {
     expect(f).toMatchObject({ outflow: 500, bucket: 'savings', isSavings: true })
   })
 
+  it('treats a withdrawal as negative savings (dis-saving)', () => {
+    const f = classifyFlow(
+      tx({ type: 'transfer', accountId: 2, transferAccountId: 1, isContribution: true, isWithdrawal: true, amount: 400 }),
+      accounts,
+    )
+    expect(f).toMatchObject({ outflow: -400, bucket: 'savings', isSavings: true })
+  })
+
   it('treats an asset → asset transfer as neutral (no cash flow)', () => {
     const f = classifyFlow(tx({ type: 'transfer', accountId: 1, transferAccountId: 2, amount: 500 }), accounts)
     expect(f).toMatchObject({ direction: 'neutral', inflow: 0, outflow: 0, isSavings: false })
@@ -74,6 +82,15 @@ describe('cashFlowTotals', () => {
       tx({ type: 'transfer', accountId: 1, transferAccountId: 2, isContribution: true, amount: 500 }),
     ]
     expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1000, expense: 300, savings: 500, net: 700 })
+  })
+
+  it('nets a withdrawal out of the savings total', () => {
+    const txns = [
+      tx({ type: 'income', amount: 1000 }),
+      tx({ type: 'transfer', accountId: 1, transferAccountId: 2, isContribution: true, amount: 500 }),
+      tx({ type: 'transfer', accountId: 2, transferAccountId: 1, isContribution: true, isWithdrawal: true, amount: 200 }),
+    ]
+    expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1000, expense: 0, savings: 300, net: 1000 })
   })
 })
 

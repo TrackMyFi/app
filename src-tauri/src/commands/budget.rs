@@ -28,8 +28,8 @@ pub struct BudgetPaycheckSummary {
 }
 
 const TXN_COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
-    category, is_contribution, import_source, generated_balance_id, generated_balance_to_id, \
-    paycheck_id, created_at, updated_at";
+    category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
+    generated_balance_to_id, paycheck_id, created_at, updated_at";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -42,12 +42,13 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         r#type: row.get(6).map_err(|e| e.to_string())?,
         category: row.get(7).map_err(|e| e.to_string())?,
         is_contribution: row.get::<i64>(8).map_err(|e| e.to_string())? != 0,
-        import_source: row.get(9).map_err(|e| e.to_string())?,
-        generated_balance_id: row.get(10).map_err(|e| e.to_string())?,
-        generated_balance_to_id: row.get(11).map_err(|e| e.to_string())?,
-        paycheck_id: row.get(12).map_err(|e| e.to_string())?,
-        created_at: row.get(13).map_err(|e| e.to_string())?,
-        updated_at: row.get(14).map_err(|e| e.to_string())?,
+        is_withdrawal: row.get::<i64>(9).map_err(|e| e.to_string())? != 0,
+        import_source: row.get(10).map_err(|e| e.to_string())?,
+        generated_balance_id: row.get(11).map_err(|e| e.to_string())?,
+        generated_balance_to_id: row.get(12).map_err(|e| e.to_string())?,
+        paycheck_id: row.get(13).map_err(|e| e.to_string())?,
+        created_at: row.get(14).map_err(|e| e.to_string())?,
+        updated_at: row.get(15).map_err(|e| e.to_string())?,
     })
 }
 

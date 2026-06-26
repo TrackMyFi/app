@@ -517,11 +517,11 @@ onMounted(() => run(async () => {
           <div class="flex items-center gap-1.5">
             <UBadge
               v-if="row.original.isContribution"
-              color="info"
+              :color="row.original.isWithdrawal ? 'warning' : 'info'"
               variant="subtle"
               size="sm"
-              icon="i-ph-piggy-bank"
-            >Contribution</UBadge>
+              :icon="row.original.isWithdrawal ? 'i-ph-arrow-line-up' : 'i-ph-piggy-bank'"
+            >{{ row.original.isWithdrawal ? 'Withdrawal' : 'Contribution' }}</UBadge>
             <span v-else>{{ labelForCategory(row.original.category) }}</span>
           </div>
         </template>

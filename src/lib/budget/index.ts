@@ -34,6 +34,12 @@ function sumAmount(txns: Transaction[]): number {
   return txns.reduce((acc, t) => acc + t.amount, 0)
 }
 
+// Savings is summed signed: a withdrawal (money pulled back out of investments)
+// nets the savings total down rather than adding to it.
+function sumSavings(txns: Transaction[]): number {
+  return txns.reduce((acc, t) => acc + (t.isWithdrawal ? -t.amount : t.amount), 0)
+}
+
 export function buildBudgetMonth(txns: Transaction[], paycheckSummary: PaycheckSummary): BudgetMonthSummary {
   const savings = txns.filter((t) => t.isContribution === true)
   const nonPaycheckIncome = txns.filter((t) => t.type === 'income' && !t.isContribution && t.importSource !== 'paycheck')
@@ -41,7 +47,7 @@ export function buildBudgetMonth(txns: Transaction[], paycheckSummary: PaycheckS
   const discretionary = txns.filter((t) => t.type === 'expense' && t.category === 'discretionary' && !t.isContribution)
 
   const incomeItem: BudgetLineItem = { total: sumAmount(nonPaycheckIncome), transactions: nonPaycheckIncome }
-  const savingsItem: BudgetLineItem = { total: sumAmount(savings), transactions: savings }
+  const savingsItem: BudgetLineItem = { total: sumSavings(savings), transactions: savings }
   const fixedItem: BudgetLineItem = { total: sumAmount(fixed), transactions: fixed }
   const discretionaryItem: BudgetLineItem = { total: sumAmount(discretionary), transactions: discretionary }
 

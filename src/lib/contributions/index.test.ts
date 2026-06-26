@@ -16,7 +16,18 @@ function acct(id: number, type: string): Account {
 function txn(id: number, accountId: number, amount: number, date: string): Transaction {
   return {
     id, accountId, transferAccountId: null, amount, description: 'Contribution',
-    date, type: 'income', category: 'savings', isContribution: true,
+    date, type: 'income', category: 'savings', isContribution: true, isWithdrawal: false,
+    importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
+    paycheckId: null, createdAt: date, updatedAt: date,
+  }
+}
+
+// A withdrawal: a transfer OUT of an investment account (the source, `accountId`)
+// to cash. Flagged as a contribution (the gate) with isWithdrawal set.
+function withdrawal(id: number, fromInvestmentId: number, toCashId: number, amount: number, date: string): Transaction {
+  return {
+    id, accountId: fromInvestmentId, transferAccountId: toCashId, amount, description: 'Withdrawal',
+    date, type: 'transfer', category: 'transfer', isContribution: true, isWithdrawal: true,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, createdAt: date, updatedAt: date,
   }
@@ -163,5 +174,28 @@ describe('buildContributionRows', () => {
     const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
     const k401 = rows.find((r) => r.label === '401k / Roth 401k')!
     expect(k401.total).toBe(4000)
+  })
+
+  it('nets a withdrawal out of an unlimited (brokerage) total, attributed to its source account', () => {
+    const accounts = [acct(1, 'checking'), acct(2, 'brokerage')]
+    const txns = [
+      txn(10, 2, 5000, '2025-03-01'),            // contribute into brokerage
+      withdrawal(11, 2, 1, 2000, '2025-04-01'),  // pull $2k back out to checking
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const brokerage = rows.find((r) => r.label === 'Brokerage')!
+    expect(brokerage.total).toBe(3000) // 5000 − 2000; source-attributed, not lost to checking
+  })
+
+  it('ignores withdrawals for IRS-limited groups — limit counts gross inflows only', () => {
+    const accounts = [acct(1, 'checking'), acct(2, 'roth_ira')]
+    const txns = [
+      txn(10, 2, 7000, '2025-03-01'),            // contribute into Roth IRA
+      withdrawal(11, 2, 1, 3000, '2025-04-01'),  // withdraw $3k — must not restore limit room
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const ira = rows.find((r) => r.label === 'Traditional / Roth IRA')!
+    expect(ira.total).toBe(7000) // withdrawal does not net the inflow-only total down
+    expect(ira.pctUsed).toBeCloseTo(7000 / 7000)
   })
 })

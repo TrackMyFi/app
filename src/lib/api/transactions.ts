@@ -22,6 +22,7 @@ export interface NewTransaction {
   type: string
   category: string
   isContribution: boolean
+  isWithdrawal: boolean
   importSource: string
   updateBalance: boolean
   createdAt: string
@@ -37,6 +38,7 @@ export interface UpdateTransaction {
   type: string
   category: string
   isContribution: boolean
+  isWithdrawal: boolean
   updateBalance: boolean
   updatedAt: string
 }

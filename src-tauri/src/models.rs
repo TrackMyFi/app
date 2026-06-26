@@ -74,6 +74,7 @@ pub struct Transaction {
     pub r#type: String,
     pub category: String,
     pub is_contribution: bool,
+    pub is_withdrawal: bool,
     pub import_source: String,
     pub generated_balance_id: Option<i32>,
     pub generated_balance_to_id: Option<i32>,

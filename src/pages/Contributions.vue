@@ -5,6 +5,7 @@ import { useContributionsStore } from '../stores/contributions'
 import { useAccountsStore } from '../stores/accounts'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { buildContributionRows, type ContributionRow } from '../lib/contributions/index'
+import type { Transaction } from '../lib/types/Transaction'
 import { resolveYearLimits } from '../lib/contributions/irsLimits'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
@@ -57,11 +58,21 @@ function accountType(id: number): string {
   return accountsStore.accounts.find((a) => a.id === id)?.type ?? ''
 }
 
+// A withdrawal belongs to its source (investment) account; a contribution to its
+// destination. Mirrors the attribution in buildContributionRows.
+function contributionType(t: Transaction): string {
+  return accountType(t.isWithdrawal ? t.accountId : (t.transferAccountId ?? t.accountId))
+}
+
 function rowTxns(row: ContributionRow) {
+  // Limited (tax-advantaged) groups count inflows only, so omit withdrawals there
+  // to keep the table consistent with the card's inflow-only total.
+  const limited = row.limit !== undefined
   return store.txns.filter(
     (t) =>
       t.date.startsWith(String(selectedYear.value)) &&
-      row.accountTypes.includes(accountType(t.transferAccountId ?? t.accountId)),
+      row.accountTypes.includes(contributionType(t)) &&
+      !(limited && t.isWithdrawal),
   )
 }
 
@@ -343,7 +354,10 @@ onMounted(() => run(async () => {
               <span class="text-muted text-xs">{{ importLabel(txnRow.original.importSource) }}</span>
             </template>
             <template #amount-cell="{ row: txnRow }">
-              <span class="font-mono tabular-nums">{{ money(txnRow.original.amount) }}</span>
+              <span
+                class="font-mono tabular-nums"
+                :class="txnRow.original.isWithdrawal ? 'text-error' : ''"
+              >{{ txnRow.original.isWithdrawal ? `−${money(txnRow.original.amount)}` : money(txnRow.original.amount) }}</span>
             </template>
           </UTable>
         </div>

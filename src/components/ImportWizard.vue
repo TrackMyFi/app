@@ -366,6 +366,7 @@ async function confirmImport() {
       type: p.type,
       category: p.type === 'transfer' ? 'uncategorized' : (rowCategories.value[i] ?? p.category),
       isContribution: false,
+      isWithdrawal: false,
       importSource: 'csv',
       createdAt: now,
     }))

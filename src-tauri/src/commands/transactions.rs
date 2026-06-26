@@ -18,6 +18,7 @@ pub struct NewTransaction {
     pub r#type: String,
     pub category: String,
     pub is_contribution: bool,
+    pub is_withdrawal: bool,
     pub import_source: String,
     pub update_balance: bool,
     pub created_at: String,
@@ -36,6 +37,7 @@ pub struct UpdateTransaction {
     pub r#type: String,
     pub category: String,
     pub is_contribution: bool,
+    pub is_withdrawal: bool,
     pub update_balance: bool,
     pub updated_at: String,
 }
@@ -69,8 +71,8 @@ pub struct TransactionPage {
 }
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
-    category, is_contribution, import_source, generated_balance_id, generated_balance_to_id, \
-    paycheck_id, created_at, updated_at";
+    category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
+    generated_balance_to_id, paycheck_id, created_at, updated_at";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -83,12 +85,13 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         r#type: row.get(6).map_err(|e| e.to_string())?,
         category: row.get(7).map_err(|e| e.to_string())?,
         is_contribution: row.get::<i64>(8).map_err(|e| e.to_string())? != 0,
-        import_source: row.get(9).map_err(|e| e.to_string())?,
-        generated_balance_id: row.get(10).map_err(|e| e.to_string())?,
-        generated_balance_to_id: row.get(11).map_err(|e| e.to_string())?,
-        paycheck_id: row.get(12).map_err(|e| e.to_string())?,
-        created_at: row.get(13).map_err(|e| e.to_string())?,
-        updated_at: row.get(14).map_err(|e| e.to_string())?,
+        is_withdrawal: row.get::<i64>(9).map_err(|e| e.to_string())? != 0,
+        import_source: row.get(10).map_err(|e| e.to_string())?,
+        generated_balance_id: row.get(11).map_err(|e| e.to_string())?,
+        generated_balance_to_id: row.get(12).map_err(|e| e.to_string())?,
+        paycheck_id: row.get(13).map_err(|e| e.to_string())?,
+        created_at: row.get(14).map_err(|e| e.to_string())?,
+        updated_at: row.get(15).map_err(|e| e.to_string())?,
     })
 }
 
@@ -527,9 +530,9 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
 
     conn.execute(
         "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
-         category, is_contribution, import_source, generated_balance_id, \
+         category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
          generated_balance_to_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -539,6 +542,7 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
             t.r#type.clone(),
             t.category.clone(),
             t.is_contribution,
+            t.is_withdrawal,
             t.import_source.clone(),
             gen_id,
             gen_to_id,
@@ -571,8 +575,8 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
 
     conn.execute(
         "UPDATE txn SET account_id=?1, transfer_account_id=?2, amount=?3, description=?4, \
-         date=?5, type=?6, category=?7, is_contribution=?8, generated_balance_id=?9, \
-         generated_balance_to_id=?10, updated_at=?11 WHERE id=?12",
+         date=?5, type=?6, category=?7, is_contribution=?8, is_withdrawal=?9, \
+         generated_balance_id=?10, generated_balance_to_id=?11, updated_at=?12 WHERE id=?13",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -582,6 +586,7 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
             t.r#type.clone(),
             t.category.clone(),
             t.is_contribution,
+            t.is_withdrawal,
             gen_id,
             gen_to_id,
             t.updated_at.clone(),
@@ -615,9 +620,9 @@ pub async fn bulk_create_transactions(
     for t in rows {
         tx.execute(
             "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
-             category, is_contribution, import_source, generated_balance_id, \
+             category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
              generated_balance_to_id, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'csv', NULL, NULL, ?9, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'csv', NULL, NULL, ?10, ?10)",
             params![
                 t.account_id,
                 t.transfer_account_id,
@@ -627,6 +632,7 @@ pub async fn bulk_create_transactions(
                 t.r#type.clone(),
                 t.category.clone(),
                 t.is_contribution,
+                t.is_withdrawal,
                 t.created_at.clone()
             ],
         )
@@ -816,9 +822,9 @@ pub async fn bulk_create_transactions_with_snapshots(
         };
         sql.push_str(&format!(
             "INSERT INTO txn (account_id, transfer_account_id, amount, description, \
-             date, type, category, is_contribution, import_source, \
+             date, type, category, is_contribution, is_withdrawal, import_source, \
              generated_balance_id, generated_balance_to_id, created_at, updated_at) \
-             VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', {}, '{}', {}, {}, '{}', '{}');\n",
+             VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', {}, {}, '{}', {}, {}, '{}', '{}');\n",
             t.account_id,
             transfer_id_sql,
             t.amount,
@@ -827,6 +833,7 @@ pub async fn bulk_create_transactions_with_snapshots(
             sql_escape(&t.r#type),
             sql_escape(&t.category),
             i32::from(t.is_contribution),
+            i32::from(t.is_withdrawal),
             sql_escape(&t.import_source),
             gen_id_sql,
             gen_to_id_sql,
@@ -1023,6 +1030,7 @@ mod tests {
             r#type: ty.to_string(),
             category: "test".to_string(),
             is_contribution: false,
+            is_withdrawal: false,
             import_source: "csv".to_string(),
             update_balance: true,
             created_at: "2024-01-01T00:00:00".to_string(),
@@ -1039,6 +1047,7 @@ mod tests {
             r#type: "transfer".to_string(),
             category: "transfer".to_string(),
             is_contribution: false,
+            is_withdrawal: false,
             import_source: "csv".to_string(),
             update_balance: true,
             created_at: "2024-01-01T00:00:00".to_string(),

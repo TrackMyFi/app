@@ -14,7 +14,8 @@ export function trailingMonthlyContribution(txns: Transaction[], asOfIso: string
   let total = 0
   for (const t of txns) {
     if (!t.isContribution) continue
-    if (t.date > cutoff && t.date <= asOfIso) total += t.amount
+    // Withdrawals net the trailing contribution rate down.
+    if (t.date > cutoff && t.date <= asOfIso) total += t.isWithdrawal ? -t.amount : t.amount
   }
   return total / 12
 }

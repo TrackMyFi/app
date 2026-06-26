@@ -10,7 +10,7 @@ import type { Transaction } from '../types/Transaction'
 function txn(p: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 0, description: '',
-    date: '2026-01-01', type: 'expense', category: '', isContribution: false,
+    date: '2026-01-01', type: 'expense', category: '', isContribution: false, isWithdrawal: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, createdAt: '', updatedAt: '', ...p,
   }
@@ -34,6 +34,14 @@ describe('trailingMonthlyContribution', () => {
       txn({ amount: 1200, date: '2026-12-01', isContribution: true }), // future → out
     ]
     expect(trailingMonthlyContribution(txns, asOf)).toBe(0)
+  })
+
+  it('nets withdrawals out of the trailing average', () => {
+    const txns = [
+      txn({ amount: 1200, date: '2026-01-15', isContribution: true }),
+      txn({ amount: 600, date: '2026-03-01', isContribution: true, isWithdrawal: true }), // pull some back out
+    ]
+    expect(trailingMonthlyContribution(txns, asOf)).toBe(50) // (1200 − 600) / 12
   })
 })
 

@@ -70,9 +70,12 @@ export function classifyFlow(t: Transaction, accounts: AccountLookup): Transacti
     accountType(t.transferAccountId, accounts),
   )
 
-  // Contributions always count as savings, whatever their underlying type.
+  // Contributions always count as savings, whatever their underlying type. A
+  // withdrawal is dis-saving — it nets the savings bucket down via a negative
+  // outflow, so savings rate reflects money pulled back out of investments.
   if (t.isContribution) {
-    return { direction, isTransfer, inflow: 0, outflow: t.amount, bucket: 'savings', isSavings: true }
+    const outflow = t.isWithdrawal ? -t.amount : t.amount
+    return { direction, isTransfer, inflow: 0, outflow, bucket: 'savings', isSavings: true }
   }
 
   if (t.type === 'income') {
