@@ -613,11 +613,11 @@ async function deleteAccount() {
     <UModal v-model:open="addModalOpen" title="Add Snapshot" class="w-84">
       <template #body>
         <div class="space-y-4">
-          <UFormField label="Balance">
-            <CurrencyInput v-model="newBalance" class="w-full" />
-          </UFormField>
           <UFormField label="Date">
             <DateInput v-model="newDate" class="w-full" />
+          </UFormField>
+          <UFormField label="Balance">
+            <CurrencyInput v-model="newBalance" class="w-full" />
           </UFormField>
           <div class="flex justify-end pt-2">
             <UButton :loading="addingSnapshot" :disabled="addingSnapshot" @click="submitAddSnapshot" block>Add Snapshot</UButton>

@@ -218,11 +218,11 @@ async function save(mode: SaveMode = 'close') {
         <USelect v-model="form.transferAccountId" :items="accountItems" placeholder="Select account" class="w-full" />
       </UFormField>
     </div>
-    <UFormField label="Amount">
-      <CurrencyInput v-model="form.amount" class="w-full" />
-    </UFormField>
     <UFormField label="Date">
       <DateInput v-model="form.date" class="w-full" />
+    </UFormField>
+    <UFormField label="Amount">
+      <CurrencyInput v-model="form.amount" class="w-full" />
     </UFormField>
     <UFormField label="Description">
       <UInput v-model="form.description" placeholder="Optional" class="w-full" />
