@@ -34,6 +34,7 @@ interface GroupDef {
 const TYPE_LABELS: Record<string, string> = {
   '401k': '401k',
   roth_401k: 'Roth 401k',
+  mixed_401k: 'Mixed 401k',
   traditional_ira: 'Traditional IRA',
   roth_ira: 'Roth IRA',
   hsa: 'HSA',
@@ -45,7 +46,7 @@ const TYPE_LABELS: Record<string, string> = {
 const GROUPS: GroupDef[] = [
   {
     label: '401k / Roth 401k',
-    types: ['401k', 'roth_401k'],
+    types: ['401k', 'roth_401k', 'mixed_401k'],
     order: 0,
     limitFor: (l, age) => ({
       base: l.k401,
@@ -142,13 +143,15 @@ export function buildContributionRows(
       _order: group.order,
     }
 
-    // Breakdown only for merged (multi-type) groups.
+    // Breakdown only for merged (multi-type) groups, and only when there's a
+    // genuine split to show — list the subtypes that actually have contributions
+    // this year, and suppress the breakdown entirely if just one (it would only
+    // restate the row total).
     if (group.types.length > 1) {
-      row.breakdown = group.types.map((t) => ({
-        type: t,
-        label: TYPE_LABELS[t] ?? t,
-        total: pick(thisYear.get(t)),
-      }))
+      const parts = group.types
+        .map((t) => ({ type: t, label: TYPE_LABELS[t] ?? t, total: pick(thisYear.get(t)) }))
+        .filter((p) => p.total !== 0)
+      if (parts.length > 1) row.breakdown = parts
     }
 
     if (group.limitFor) {

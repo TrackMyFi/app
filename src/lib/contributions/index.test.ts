@@ -64,6 +64,33 @@ describe('buildContributionRows', () => {
     expect(k401.pctUsed).toBeCloseTo(18000 / 23500)
   })
 
+  it('omits the breakdown when only one subtype in a merged group has contributions', () => {
+    const accounts = [acct(1, '401k'), acct(2, 'roth_401k')]
+    const txns = [txn(10, 1, 12000, '2025-06-01')]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const k401 = rows.find((r) => r.label === '401k / Roth 401k')!
+    expect(k401.total).toBe(12000)
+    expect(k401.breakdown).toBeUndefined()
+  })
+
+  it('counts mixed_401k toward the 401k group and shows it in the breakdown', () => {
+    const accounts = [acct(1, '401k'), acct(2, 'roth_401k'), acct(3, 'mixed_401k')]
+    const txns = [
+      txn(10, 1, 12000, '2025-06-01'),
+      txn(11, 2, 6000, '2025-06-01'),
+      txn(12, 3, 5000, '2025-06-01'),
+    ]
+    const rows = buildContributionRows(txns, accounts, 2025, 30, 'self', limits)
+    const k401 = rows.find((r) => r.label === '401k / Roth 401k')!
+    expect(k401.total).toBe(23000)
+    expect(k401.limit).toBe(23500)
+    expect(k401.breakdown).toEqual([
+      { type: '401k', label: '401k', total: 12000 },
+      { type: 'roth_401k', label: 'Roth 401k', total: 6000 },
+      { type: 'mixed_401k', label: 'Mixed 401k', total: 5000 },
+    ])
+  })
+
   it('omits account types with no contributions in either year', () => {
     const accounts = [acct(1, '401k')]
     const txns = [txn(10, 1, 1000, '2025-03-01')]
