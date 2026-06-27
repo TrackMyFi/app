@@ -9,6 +9,8 @@ const props = defineProps<{
   fiDateLabel?: string // "Mar 2041"
   yearsToFi?: number | null
   journeyProgress?: number | null // time-based %, always >= progress due to compounding
+  targetRetirementAge?: number | null
+  retirementYearsAhead?: number | null // positive = FI before target, negative = FI after target
 }>()
 
 // Quarter-marks of the long road. The destination (FI) is the bar's end.
@@ -19,6 +21,13 @@ const reached = computed(() => props.progress >= 100)
 // Animated display value — eases up from zero on reveal, lands on the real %.
 const shown = computed(() => props.progress * props.reveal)
 const fillWidth = computed(() => `${Math.min(shown.value, 100)}%`)
+
+// Secondary bar: the compounding-boosted delta, animated alongside the primary.
+const compoundingWidth = computed(() => {
+  if (props.journeyProgress == null) return '0%'
+  const end = Math.min(props.journeyProgress * props.reveal, 100)
+  return `${Math.max(0, end)}%`
+})
 
 // Warm, motivating, still precise. Tied to the *real* value (not the animated
 // one) so the phrase doesn't flicker while the number counts up.
@@ -80,6 +89,12 @@ const motes = [
             {{ phase }}
           </span>
         </div>
+        <!-- Compounding insight: time-based progress is always ahead of dollar progress -->
+        <div v-if="journeyProgress != null && !reached" class="mt-1 text-xs text-muted">
+          Compounding puts you
+          <span class="font-mono tabular-nums font-medium text-default">{{ (journeyProgress * reveal).toFixed(1) }}%</span>
+          through the time journey
+        </div>
       </div>
 
       <div v-if="fiDateLabel" class="text-right shrink-0">
@@ -89,6 +104,15 @@ const motes = [
         </div>
         <div v-if="yearsToFi != null" class="text-xs text-muted">
           {{ yearsToFi }} year{{ yearsToFi === 1 ? '' : 's' }} to go
+        </div>
+        <div
+          v-if="retirementYearsAhead != null"
+          class="text-xs mt-0.5"
+          :class="retirementYearsAhead >= 0 ? 'text-success' : 'text-warning'"
+        >
+          {{ (retirementYearsAhead ?? 0) >= 0
+            ? `${retirementYearsAhead} yr${retirementYearsAhead === 1 ? '' : 's'} before target age ${targetRetirementAge}`
+            : `${Math.abs(retirementYearsAhead ?? 0)} yr${Math.abs(retirementYearsAhead ?? 0) === 1 ? '' : 's'} past target age ${targetRetirementAge}` }}
         </div>
       </div>
     </div>
@@ -106,6 +130,17 @@ const motes = [
         <div class="relative h-full rounded-full bg-primary" :style="{ width: fillWidth }">
           <span v-if="reached" class="tmfi-sheen" aria-hidden="true" />
         </div>
+        <!-- Compounding delta: striped extension beyond the raw savings fill -->
+         <div v-if="journeyProgress != null && !reached" class="absolute h-full rounded-full overflow-hidden bg-primary/20 inset-y-0" :style="{ width: compoundingWidth }">
+          <div
+            class="w-full h-full"
+            :style="{
+              background: 'repeating-linear-gradient(-45deg, var(--ui-primary) 0, var(--ui-primary) 3px, transparent 3px, transparent 8px)',
+              opacity: '0.45',
+            }"
+            aria-hidden="true"
+          />
+         </div>
       </div>
 
       <!-- Checkpoints reached punch through the fill as pale waypoints -->
@@ -135,13 +170,6 @@ const motes = [
       <span class="font-mono tabular-nums font-medium text-default">{{ investableLabel }}</span>
       invested toward your
       <span class="font-mono tabular-nums font-medium text-default">{{ goalLabel }}</span> goal
-    </div>
-
-    <!-- Compounding insight: time-based progress is always ahead of dollar progress -->
-    <div v-if="journeyProgress != null && !reached" class="mt-1 text-xs text-muted">
-      Compounding puts you
-      <span class="font-mono tabular-nums font-medium text-default">{{ (journeyProgress * reveal).toFixed(1) }}%</span>
-      through the time journey
     </div>
   </div>
 </template>
