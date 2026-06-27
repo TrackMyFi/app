@@ -12,6 +12,7 @@ import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
 import CurrencyInput from './CurrencyInput.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
+import { InputMenuItem } from '@nuxt/ui'
 
 
 const props = defineProps<{ editing: Paycheck | null; copyFrom: Paycheck | null }>()
@@ -193,15 +194,17 @@ const pastFreeTextDeductionLabels = computed(() => {
   return [...seen]
 })
 
-const deductionComboItems = computed(() => {
-  const groups: { label: string; items: string[] }[] = []
+const deductionComboItems = computed((): InputMenuItem[] => {
+  const items: InputMenuItem[] = []
   if (investmentAccountNames.value.length > 0) {
-    groups.push({ label: 'Accounts', items: investmentAccountNames.value })
+    items.push({ label: 'Accounts', type: 'label' })
+    items.push(...investmentAccountNames.value)
   }
   if (pastFreeTextDeductionLabels.value.length > 0) {
-    groups.push({ label: 'Past deductions', items: pastFreeTextDeductionLabels.value })
+    items.push({ label: 'Past deductions', type: 'label' })
+    items.push(...pastFreeTextDeductionLabels.value)
   }
-  return groups
+  return items
 })
 
 const depositAccountItems = computed(() =>
