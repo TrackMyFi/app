@@ -6,6 +6,7 @@ import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
 import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
+import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
 import { useReveal } from '../composables/useReveal'
 import * as api from '../lib/api/transactions'
 import TransactionForm from '../components/TransactionForm.vue'
@@ -118,7 +119,14 @@ async function clearFilters() {
 // ─── Data loading ──────────────────────────────────────────────────────────────
 
 const yearTransactions = ref<Transaction[]>([])
+// Full transaction set only loaded for the 'all time' scope (needed by the cumulative
+// and breakdown charts). Median comparison uses periodStats instead — much lighter.
 const allTimeTransactions = ref<Transaction[]>([])
+
+// Per-period stats used for median comparison — fetched directly from the DB as
+// lightweight aggregates rather than pulling all transaction rows to the frontend.
+const monthlyPeriodStats = ref<PeriodStats[]>([])
+const annualPeriodStats = ref<PeriodStats[]>([])
 
 async function applyFilters() {
   let startDate: string | null = null
@@ -151,6 +159,8 @@ async function applyFilters() {
     allTimeTransactions.value = []
   }
 
+  await loadPeriodStats()
+
   runReveal() // figures tick up once the scope's data has settled
 }
 
@@ -176,6 +186,29 @@ async function loadAllTimeData() {
     limit: null,
   })
   allTimeTransactions.value = result.rows
+}
+
+async function loadPeriodStats() {
+  const secondary = {
+    accountIds: accountIds.value,
+    types: types.value,
+    categories: categories.value,
+    searchTerms: searchTerms.value,
+  }
+  const [monthly, annual] = await Promise.all([
+    api.periodStats({
+      ...secondary,
+      groupBy: 'month',
+      excludePeriod: selectedDate.value.toFormat('yyyy-MM'),
+    }),
+    api.periodStats({
+      ...secondary,
+      groupBy: 'year',
+      excludePeriod: selectedDate.value.toFormat('yyyy'),
+    }),
+  ])
+  monthlyPeriodStats.value = monthly
+  annualPeriodStats.value = annual
 }
 
 // ─── Infinite scroll ───────────────────────────────────────────────────────────
@@ -227,6 +260,79 @@ function rateColor(rate: number | null, savings: number): string {
 function isStrongRate(rate: number | null): boolean {
   return rate != null && rate >= STRONG_RATE
 }
+
+// ─── Median comparisons ───────────────────────────────────────────────────────
+
+// Period stats are pre-aggregated by the Rust command (grouped, classified, current
+// period excluded) — computeMedian just takes the median across those rows.
+const medianMonthly = computed(() => computeMedian(monthlyPeriodStats.value))
+const medianAnnual = computed(() => computeMedian(annualPeriodStats.value))
+
+const activeTotals = computed(() => {
+  if (scope.value === 'month') return monthlyTotals.value
+  if (scope.value === 'year') return annualTotals.value
+  return null
+})
+
+const activeRate = computed(() => {
+  if (scope.value === 'month') return monthlyRate.value
+  if (scope.value === 'year') return annualRate.value
+  return null
+})
+
+const activeTransactionCount = computed(() => {
+  if (scope.value === 'month') return monthlyTransactions.value.length
+  if (scope.value === 'year') return yearTransactions.value.length
+  return 0
+})
+
+const activeMedian = computed(() => {
+  if (scope.value === 'month') return medianMonthly.value
+  if (scope.value === 'year') return medianAnnual.value
+  return null
+})
+
+// Only show comparison when there are at least 2 reference periods so the
+// baseline is meaningful (not just the one other month the user has entered).
+const showComparison = computed(() => (activeMedian.value?.periodCount ?? 0) >= 2)
+
+function pctVsMedian(current: number, med: number): number | null {
+  if (med === 0) return null
+  return (current - med) / Math.abs(med)
+}
+
+// Favorable direction: income/savings/net → higher is better; expense → lower is better.
+function changeColor(field: 'income' | 'expense' | 'savings' | 'net', pct: number | null): string {
+  if (pct == null || Math.abs(pct) < 0.005) return 'text-muted'
+  const favorable = field === 'expense' ? pct < 0 : pct > 0
+  return favorable ? 'text-success' : 'text-error'
+}
+
+// A calm directional cue instead of a raw percentage delta: an arrow that says
+// "above / below / on par with a typical period", paired with the median value
+// itself. Raw "% vs median" produced absurd figures (+5102%) when the baseline
+// was near-zero; the median value is always legible.
+function trendIcon(pct: number | null): string {
+  if (pct == null || Math.abs(pct) < 0.005) return 'i-ph-minus'
+  return pct > 0 ? 'i-ph-arrow-up' : 'i-ph-arrow-down'
+}
+
+function medianRate(totals: { income: number; savings: number }): string {
+  if (totals.income <= 0) return '—'
+  return (totals.savings / totals.income * 100).toFixed(1) + '%'
+}
+
+// Median savings rate as a fraction, for the trend arrow/colour on the hero.
+const medianRateValue = computed(() => {
+  const m = activeMedian.value?.totals
+  if (!m || m.income <= 0) return null
+  return m.savings / m.income
+})
+
+const rateTrendPct = computed(() => {
+  if (activeRate.value == null || medianRateValue.value == null) return null
+  return pctVsMedian(activeRate.value, medianRateValue.value)
+})
 
 // ─── Chart data (scope-aware, never paginated) ────────────────────────────────
 
@@ -361,6 +467,56 @@ onMounted(() => run(async () => {
           >Cumulative Chart</UButton>
         </div>
       </div>
+      <!-- Verdict strip — the period's headline figures, always visible across
+           both chart modes (the savings rate must survive the toggle). Hidden
+           for all-time scope, which has no single-period total. -->
+      <div v-if="scope !== 'all' && activeTotals" class="flex flex-wrap items-start gap-x-10 gap-y-4 pb-4 mb-4 border-b border-default">
+        <!-- Savings rate — the number a FIRE check-in is really about -->
+        <div class="shrink-0">
+          <div class="relative inline-block overflow-hidden">
+            <p class="text-3xl font-bold tabular-nums leading-none" :class="rateColor(activeRate, activeTotals.savings)">{{ fmtRate(activeRate) }}</p>
+            <span v-if="isStrongRate(activeRate)" :key="`r-${revealKey}`" class="tmfi-sheen" />
+          </div>
+          <p class="text-xs text-muted mt-1.5">Savings rate</p>
+          <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
+            <UIcon :name="trendIcon(rateTrendPct)" class="size-3 shrink-0" :class="changeColor('savings', rateTrendPct)" />
+            <span class="text-dimmed tabular-nums">typ. {{ medianRate(activeMedian!.totals) }}</span>
+          </p>
+        </div>
+
+        <div class="hidden lg:block w-px self-stretch bg-default shrink-0" />
+
+        <!-- Income / Expenses / Net — content-sized so values never collide -->
+        <div class="flex flex-wrap items-start gap-x-10 gap-y-4 flex-1 min-w-0">
+          <div class="shrink-0">
+            <p class="text-lg font-semibold tabular-nums leading-none text-success">{{ money(activeTotals.income * reveal) }}</p>
+            <p class="text-xs text-muted mt-1.5">Income</p>
+            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.income, activeMedian!.totals.income))" class="size-3 shrink-0" :class="changeColor('income', pctVsMedian(activeTotals.income, activeMedian!.totals.income))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.income) }}</span>
+            </p>
+          </div>
+          <div class="shrink-0">
+            <p class="text-lg font-semibold tabular-nums leading-none text-error">{{ money(activeTotals.expense * reveal) }}</p>
+            <p class="text-xs text-muted mt-1.5">Expenses</p>
+            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.expense, activeMedian!.totals.expense))" class="size-3 shrink-0" :class="changeColor('expense', pctVsMedian(activeTotals.expense, activeMedian!.totals.expense))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.expense) }}</span>
+            </p>
+          </div>
+          <div class="shrink-0">
+            <p class="text-lg font-semibold tabular-nums leading-none" :class="activeTotals.net >= 0 ? 'text-heading' : 'text-error'">{{ money(activeTotals.net * reveal) }}</p>
+            <p class="text-xs text-muted mt-1.5">Net</p>
+            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.net, activeMedian!.totals.net))" class="size-3 shrink-0" :class="changeColor('net', pctVsMedian(activeTotals.net, activeMedian!.totals.net))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.net) }}</span>
+            </p>
+          </div>
+        </div>
+
+        <span class="text-xs text-muted shrink-0">{{ activeTransactionCount }} transactions</span>
+      </div>
+
       <p class="text-sm text-muted mb-3">{{ chartTitle }}</p>
       <template v-if="chartMode === 'breakdown'">
         <TransactionMonthlyBreakdown
@@ -384,71 +540,6 @@ onMounted(() => run(async () => {
           <p class="text-sm text-muted">Nothing to chart for this period yet.</p>
         </div>
       </template>
-    </div>
-
-    <!-- Stats row -->
-    <div class="grid grid-cols-1 gap-4" :class="scope === 'month' ? 'xl:grid-cols-2' : 'xl:grid-cols-1'">
-      <div v-if="scope === 'month'" class="border border-default rounded-lg p-4">
-        <div class="flex items-center justify-between mb-3">
-          <p class="text-sm font-medium text-heading">{{ monthLabel }}</p>
-          <span class="text-xs text-muted">{{ monthlyTransactions.length }} transactions</span>
-        </div>
-        <div class="grid grid-cols-5 gap-3">
-          <div>
-            <p class="text-base font-semibold tabular-nums text-success">{{ money(monthlyTotals.income * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Income</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums text-error">{{ money(monthlyTotals.expense * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Expense</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums text-info">{{ money(monthlyTotals.savings * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Contributions</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums">{{ money(monthlyTotals.net * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Net</p>
-          </div>
-          <div class="border-l border-default pl-3">
-            <div class="relative inline-block overflow-hidden">
-              <p class="text-xl font-bold tabular-nums" :class="rateColor(monthlyRate, monthlyTotals.savings)">{{ fmtRate(monthlyRate) }}</p>
-              <span v-if="isStrongRate(monthlyRate)" :key="`m-${revealKey}`" class="tmfi-sheen" />
-            </div>
-            <p class="text-xs text-muted mt-0.5">Savings Rate</p>
-          </div>
-        </div>
-      </div>
-      <div class="border border-default rounded-lg p-4">
-        <div class="flex items-center justify-between mb-3">
-          <p class="text-sm font-medium text-heading">{{ yearLabel }} Annual</p>
-        </div>
-        <div class="grid grid-cols-5 gap-3">
-          <div>
-            <p class="text-base font-semibold tabular-nums text-success">{{ money(annualTotals.income * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Income</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums text-error">{{ money(annualTotals.expense * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Expense</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums text-info">{{ money(annualTotals.savings * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Contributions</p>
-          </div>
-          <div>
-            <p class="text-base font-semibold tabular-nums">{{ money(annualTotals.net * reveal) }}</p>
-            <p class="text-xs text-muted mt-0.5">Net</p>
-          </div>
-          <div class="border-l border-default pl-3">
-            <div class="relative inline-block overflow-hidden">
-              <p class="text-xl font-bold tabular-nums" :class="rateColor(annualRate, annualTotals.savings)">{{ fmtRate(annualRate) }}</p>
-              <span v-if="isStrongRate(annualRate)" :key="`a-${revealKey}`" class="tmfi-sheen" />
-            </div>
-            <p class="text-xs text-muted mt-0.5">Savings Rate</p>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Secondary filters -->

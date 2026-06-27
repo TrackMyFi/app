@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { TransactionPage } from '../types/TransactionPage'
 import type { Transaction } from '../types/Transaction'
+import type { PeriodStats } from '../types/PeriodStats'
+
+export type { PeriodStats }
 
 export interface TransactionFilter {
   accountIds?: number[]
@@ -11,6 +14,17 @@ export interface TransactionFilter {
   searchTerms?: string[]
   limit?: number | null
   offset?: number | null
+}
+
+export interface PeriodStatsFilter {
+  accountIds?: number[]
+  types?: string[]
+  categories?: string[]
+  searchTerms?: string[]
+  /** "month" → YYYY-MM groups;  "year" → YYYY groups. */
+  groupBy: 'month' | 'year'
+  /** Current period to exclude so a period isn't compared against itself. */
+  excludePeriod: string
 }
 
 export interface NewTransaction {
@@ -45,6 +59,8 @@ export interface UpdateTransaction {
 
 export const listTransactions = (filter: TransactionFilter = {}) =>
   invoke<TransactionPage>('list_transactions_cmd', { filter })
+export const periodStats = (filter: PeriodStatsFilter) =>
+  invoke<PeriodStats[]>('period_stats_cmd', { filter })
 export const getTransaction = (id: number) =>
   invoke<Transaction>('get_transaction_cmd', { id })
 export const createTransaction = (transaction: NewTransaction) =>

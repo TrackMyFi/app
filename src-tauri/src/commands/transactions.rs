@@ -2,7 +2,7 @@ use crate::db::Db;
 use crate::models::Transaction;
 use libsql::{params, Connection, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use ts_rs::TS;
 use tauri::State;
 
@@ -68,6 +68,47 @@ pub struct TransactionPage {
     pub total_income: f64,
     pub total_expense: f64,
     pub net: f64,
+}
+
+/// Per-period (month or year) aggregated cash-flow stats, used for median
+/// comparison on the Transactions page. Each row is one calendar period.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct PeriodStats {
+    /// Calendar period key — "YYYY-MM" for months, "YYYY" for years.
+    pub period: String,
+    pub income: f64,
+    /// Total spending, excluding savings/contributions.
+    pub expense: f64,
+    /// Total savings / investment contributions (withdrawals subtract).
+    pub savings: f64,
+    /// Income minus spending (savings is not subtracted — the money is still yours).
+    pub net: f64,
+    pub cat_fixed: f64,
+    pub cat_discretionary: f64,
+    pub cat_uncategorized: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodStatsFilter {
+    #[serde(default)]
+    pub account_ids: Vec<i32>,
+    #[serde(default)]
+    pub types: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    #[serde(default)]
+    pub search_terms: Vec<String>,
+    /// "month" → group by YYYY-MM;  "year" → group by YYYY.
+    pub group_by: String,
+    /// The current period key to exclude so a period isn't compared against itself.
+    pub exclude_period: String,
+}
+
+fn account_type_is_liability(ty: &str) -> bool {
+    ty == "liability" || ty == "mortgage"
 }
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
@@ -849,6 +890,114 @@ pub async fn bulk_create_transactions_with_snapshots(
     Ok(rows.len() as i64)
 }
 
+/// Return per-period (month or year) aggregated cash-flow stats across all time,
+/// applying the same secondary filters used by the main transactions view.
+/// Grouping, classification, and the per-period aggregation all happen in Rust so
+/// only a small `Vec<PeriodStats>` is transferred to the frontend — not all rows.
+pub async fn period_stats(
+    conn: &Connection,
+    f: &PeriodStatsFilter,
+) -> Result<Vec<PeriodStats>, String> {
+    let period_fmt = match f.group_by.as_str() {
+        "year" => "%Y",
+        _ => "%Y-%m",
+    };
+
+    // Reuse build_where for the secondary filters; all-time so no date range.
+    let base = TransactionFilter {
+        account_ids: f.account_ids.clone(),
+        types: f.types.clone(),
+        categories: f.categories.clone(),
+        search_terms: f.search_terms.clone(),
+        start_date: None,
+        end_date: None,
+        limit: None,
+        offset: None,
+    };
+    let mut params: Vec<Value> = Vec::new();
+    let where_sql = build_where(&base, &mut params);
+
+    let sql = format!(
+        "SELECT t.type, t.amount, t.category, t.is_contribution, t.is_withdrawal, \
+         a1.type, a2.type, strftime('{period_fmt}', t.date) \
+         FROM txn t \
+         LEFT JOIN account a1 ON a1.id = t.account_id \
+         LEFT JOIN account a2 ON a2.id = t.transfer_account_id \
+         {where_sql} \
+         ORDER BY 8"
+    );
+
+    let mut rows = conn
+        .query(&sql, libsql::params_from_iter(params))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Aggregate into a BTreeMap keyed by period string (BTree keeps periods sorted).
+    let mut by_period: BTreeMap<String, PeriodStats> = BTreeMap::new();
+
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        let tx_type: String = row.get(0).map_err(|e| e.to_string())?;
+        let amount: f64 = row.get(1).map_err(|e| e.to_string())?;
+        let category: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let is_contribution: bool = row.get::<i64>(3).map_err(|e| e.to_string())? != 0;
+        let is_withdrawal: bool = row.get::<i64>(4).map_err(|e| e.to_string())? != 0;
+        let account_type: Option<String> = row.get(5).map_err(|e| e.to_string())?;
+        let transfer_type: Option<String> = row.get(6).map_err(|e| e.to_string())?;
+        let period: String = row.get(7).map_err(|e| e.to_string())?;
+
+        // Skip the current period so it's never compared against itself.
+        if period == f.exclude_period {
+            continue;
+        }
+
+        let s = by_period.entry(period.clone()).or_insert(PeriodStats {
+            period,
+            income: 0.0,
+            expense: 0.0,
+            savings: 0.0,
+            net: 0.0,
+            cat_fixed: 0.0,
+            cat_discretionary: 0.0,
+            cat_uncategorized: 0.0,
+        });
+
+        // Classification mirrors classifyFlow() in src/lib/transactions/flow.ts.
+        if is_contribution {
+            s.savings += if is_withdrawal { -amount } else { amount };
+        } else if tx_type == "income" {
+            s.income += amount;
+        } else if tx_type == "expense" {
+            s.expense += amount;
+            match category.as_deref().unwrap_or("uncategorized") {
+                "fixed" => s.cat_fixed += amount,
+                "discretionary" => s.cat_discretionary += amount,
+                _ => s.cat_uncategorized += amount,
+            }
+        } else if tx_type == "transfer" {
+            let src_liab = account_type_is_liability(account_type.as_deref().unwrap_or(""));
+            let dst_liab = account_type_is_liability(transfer_type.as_deref().unwrap_or(""));
+            if src_liab != dst_liab {
+                if dst_liab {
+                    // asset → liability: debt payment (spending outflow)
+                    s.expense += amount;
+                    s.cat_uncategorized += amount;
+                } else {
+                    // liability → asset: credit/refund (income inflow)
+                    s.income += amount;
+                }
+            }
+            // same-kind transfers (asset↔asset, liability↔liability) are neutral — skip
+        }
+    }
+
+    // Compute net after all rows are aggregated.
+    for s in by_period.values_mut() {
+        s.net = s.income - s.expense;
+    }
+
+    Ok(by_period.into_values().collect())
+}
+
 // ---- thin command wrappers ----
 
 #[tauri::command]
@@ -858,6 +1007,15 @@ pub async fn list_transactions_cmd(
 ) -> Result<TransactionPage, String> {
     let conn = db.conn().await?;
     list_transactions(&conn, &filter).await
+}
+
+#[tauri::command]
+pub async fn period_stats_cmd(
+    db: State<'_, Db>,
+    filter: PeriodStatsFilter,
+) -> Result<Vec<PeriodStats>, String> {
+    let conn = db.conn().await?;
+    period_stats(&conn, &filter).await
 }
 
 #[tauri::command]

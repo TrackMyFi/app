@@ -126,6 +126,7 @@ pub fn run() {
             commands::accounts::list_balance_month_summaries_cmd,
             commands::accounts::list_balances_for_month_cmd,
             commands::transactions::list_transactions_cmd,
+            commands::transactions::period_stats_cmd,
             commands::transactions::get_transaction_cmd,
             commands::transactions::create_transaction_cmd,
             commands::transactions::update_transaction_cmd,
