@@ -8,6 +8,7 @@ const props = defineProps<{
   goalLabel: string // "$1,000,000"
   fiDateLabel?: string // "Mar 2041"
   yearsToFi?: number | null
+  journeyProgress?: number | null // time-based %, always >= progress due to compounding
 }>()
 
 // Quarter-marks of the long road. The destination (FI) is the bar's end.
@@ -134,6 +135,13 @@ const motes = [
       <span class="font-mono tabular-nums font-medium text-default">{{ investableLabel }}</span>
       invested toward your
       <span class="font-mono tabular-nums font-medium text-default">{{ goalLabel }}</span> goal
+    </div>
+
+    <!-- Compounding insight: time-based progress is always ahead of dollar progress -->
+    <div v-if="journeyProgress != null && !reached" class="mt-1 text-xs text-muted">
+      Compounding puts you
+      <span class="font-mono tabular-nums font-medium text-default">{{ (journeyProgress * reveal).toFixed(1) }}%</span>
+      through the time journey
     </div>
   </div>
 </template>

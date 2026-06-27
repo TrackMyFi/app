@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fireNumber, latestBalances, currentNetWorth, investableNetWorth, fiProgress } from './metrics'
+import { fireNumber, latestBalances, currentNetWorth, investableNetWorth, fiProgress, journeyProgress, portfolioMonthlyEarnings } from './metrics'
 import type { FireAccount, FireBalance } from './types'
 
 const accounts: FireAccount[] = [
@@ -23,4 +23,29 @@ describe('fire metrics', () => {
   it('currentNetWorth subtracts liabilities', () => { expect(currentNetWorth(accounts, balances)).toBe(220) })
   it('investableNetWorth counts only included accounts', () => { expect(investableNetWorth(accounts, balances)).toBe(200) })
   it('fiProgress is investable / fireNumber * 100', () => { expect(fiProgress(200_000, 1_000_000)).toBe(20) })
+
+  it('journeyProgress returns null when target is 0', () => {
+    expect(journeyProgress(0, 2000, 0.07, 0.03, 0)).toBeNull()
+  })
+  it('journeyProgress returns 100 when already at target', () => {
+    expect(journeyProgress(1_000_000, 2000, 0.07, 0.03, 1_000_000)).toBe(100)
+  })
+  it('journeyProgress is greater than fiProgress due to compounding', () => {
+    const jp = journeyProgress(500_000, 2000, 0.07, 0.03, 1_000_000)
+    expect(jp).not.toBeNull()
+    expect(jp!).toBeGreaterThan(50) // compounding means you're further than 50% in time
+    expect(jp!).toBeLessThan(100)
+  })
+  it('journeyProgress returns null when contributions can never reach target', () => {
+    expect(journeyProgress(0, 0, 0, 0, 1_000_000)).toBeNull()
+  })
+
+  it('portfolioMonthlyEarnings is zero when balance is zero', () => {
+    expect(portfolioMonthlyEarnings(0, 0.07)).toBe(0)
+  })
+  it('portfolioMonthlyEarnings compounds correctly at 7% annual', () => {
+    const monthly = portfolioMonthlyEarnings(500_000, 0.07)
+    expect(monthly).toBeCloseTo(500_000 * (Math.pow(1.07, 1 / 12) - 1), 2)
+    expect(monthly).toBeGreaterThan(2800) // sanity: ~$2,834/mo at 7% on $500k
+  })
 })

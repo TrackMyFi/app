@@ -6,7 +6,7 @@ import { useAccountsStore } from '../stores/accounts'
 import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
   netWorthOverTime, projectedFiDate, savingsRate, activeFireInputs,
-  derivedMonthlyContribution,
+  derivedMonthlyContribution, journeyProgress, portfolioMonthlyEarnings,
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
@@ -60,6 +60,15 @@ const yearsToFI = computed(() => {
   if (!fiDate.value) return null
   return Math.round(fiDate.value.diff(DateTime.now(), 'years').years)
 })
+
+const journeyProg = computed(() => {
+  if (!fp.profile) return null
+  return journeyProgress(investable.value, contribution.value.monthly, fp.profile.expectedReturnRate, fp.profile.inflationRate, fireNum.value)
+})
+
+const portfolioEarnings = computed(() =>
+  fp.profile ? portfolioMonthlyEarnings(investable.value, fp.profile.expectedReturnRate) : 0
+)
 </script>
 
 <template>
@@ -85,6 +94,7 @@ const yearsToFI = computed(() => {
       :goal-label="fmt(fireNum)"
       :fi-date-label="fiDate ? fiDate.toFormat('LLL yyyy') : undefined"
       :years-to-fi="yearsToFI"
+      :journey-progress="journeyProg"
     />
 
     <!-- Supporting metrics or first-run setup prompt -->
@@ -103,7 +113,7 @@ const yearsToFI = computed(() => {
       </div>
     </template>
     <template v-else>
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div class="tmfi-rise" :style="{ animationDelay: '40ms' }">
           <StatCard label="FIRE Number" :value="fmt(fireNum * reveal)" />
         </div>
@@ -120,11 +130,18 @@ const yearsToFI = computed(() => {
             :hint="contribution.estimated ? 'Estimated — under 12 months of contribution history' : undefined"
           />
         </div>
+        <div class="tmfi-rise" :style="{ animationDelay: '260ms' }">
+          <StatCard
+            label="Portfolio Earns / Mo"
+            :value="fmt(portfolioEarnings * reveal)"
+            hint="Nominal monthly growth from compounding alone"
+          />
+        </div>
       </div>
     </template>
 
     <!-- Net worth chart -->
-    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '260ms' }">
+    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '315ms' }">
       <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
       <NetWorthChart :points="series" />
     </div>
