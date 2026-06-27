@@ -4,6 +4,8 @@ use libsql::{params, Connection};
 use serde::Deserialize;
 use tauri::State;
 
+use super::transactions::{clear_generated, materialize_snapshots, reproject_accounts};
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewPaycheck {
@@ -20,6 +22,7 @@ pub struct NewPaycheck {
     pub deductions: Vec<PaycheckDeduction>,
     pub employer_match: Vec<EmployerMatchItem>,
     pub income_account_id: Option<i32>,
+    pub update_balance: bool,
     pub created_at: String,
 }
 
@@ -40,6 +43,7 @@ pub struct UpdatePaycheck {
     pub deductions: Vec<PaycheckDeduction>,
     pub employer_match: Vec<EmployerMatchItem>,
     pub income_account_id: Option<i32>,
+    pub update_balance: bool,
     pub updated_at: String,
 }
 
@@ -120,6 +124,10 @@ async fn auto_create_contributions(
     Ok(())
 }
 
+/// Create the income transaction for a paycheck deposit account.
+/// When `update_balance` is true, materializes a balance snapshot first and
+/// wires it into the row via `generated_balance_id`, matching the transaction
+/// command's create path. Reprojection is the caller's responsibility.
 async fn auto_create_income_txn(
     conn: &Connection,
     paycheck_id: i32,
@@ -128,21 +136,55 @@ async fn auto_create_income_txn(
     employer: &str,
     pay_date: &str,
     now: &str,
+    update_balance: bool,
 ) -> Result<(), String> {
     let Some(account_id) = income_account_id else {
         return Ok(());
     };
     let description = format!("Paycheck – {}", employer);
+
+    // Materialize before INSERT so the ID is available for the row in one write.
+    let gen_id: Option<i32> = if update_balance {
+        let (id, _) = materialize_snapshots(conn, account_id, None, net_amount, "income", pay_date).await?;
+        id
+    } else {
+        None
+    };
+
     conn.execute(
         "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
          type, category, is_contribution, import_source, paycheck_id, \
          generated_balance_id, generated_balance_to_id, created_at, updated_at) \
          VALUES (?1, NULL, ?2, ?3, ?4, 'income', 'fixed', 0, 'paycheck', ?5, \
-         NULL, NULL, ?6, ?6)",
-        params![account_id, net_amount, description, pay_date, paycheck_id, now],
+         ?6, NULL, ?7, ?7)",
+        params![account_id, net_amount, description, pay_date, paycheck_id, gen_id, now],
     )
     .await
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Collect and clear any balance snapshots owned by this paycheck's transactions.
+/// Must be called before the bulk `DELETE FROM txn WHERE paycheck_id = ?` so the
+/// snapshot rows are removed before their referencing txn rows disappear.
+async fn clear_paycheck_snapshots(conn: &Connection, paycheck_id: i32) -> Result<(), String> {
+    let mut rows = conn
+        .query(
+            "SELECT generated_balance_id, generated_balance_to_id FROM txn WHERE paycheck_id = ?1",
+            params![paycheck_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut snap_ids: Vec<(Option<i32>, Option<i32>)> = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        snap_ids.push((
+            r.get(0).map_err(|e| e.to_string())?,
+            r.get(1).map_err(|e| e.to_string())?,
+        ));
+    }
+    for ids in snap_ids {
+        clear_generated(conn, ids).await?;
+    }
     Ok(())
 }
 
@@ -212,15 +254,24 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
 
     let id = conn.last_insert_rowid() as i32;
     auto_create_contributions(conn, id, &p.pay_date, &p.deductions, &p.employer_match, &p.created_at).await?;
-    auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at).await?;
+    auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at, p.update_balance).await?;
+
+    // Ripple the new snapshot forward through any later transaction-tied snapshots.
+    if p.update_balance {
+        reproject_accounts(conn, &[p.income_account_id], &p.pay_date).await?;
+    }
+
     get_paycheck(conn, id).await
 }
 
 pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Paycheck, String> {
-    // Verify the paycheck exists before modifying anything
-    get_paycheck(conn, p.id).await?;
+    let old = get_paycheck(conn, p.id).await?;
 
-    // Delete ALL txns previously created by this paycheck (contributions + income)
+    // Remove any balance snapshots the old income txn wrote before deleting txns.
+    // This ensures the chain heals correctly whether or not we'll create a new snapshot.
+    clear_paycheck_snapshots(conn, p.id).await?;
+
+    // Delete ALL txns previously created by this paycheck (contributions + income).
     conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![p.id])
         .await
         .map_err(|e| e.to_string())?;
@@ -244,11 +295,23 @@ pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Pa
     .map_err(|e| e.to_string())?;
 
     auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, &p.updated_at).await?;
-    auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at).await?;
+    auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at, p.update_balance).await?;
+
+    // Reproject from min(old_date, new_date) for both old and new deposit accounts.
+    // Runs unconditionally: we may have deleted a snapshot (heal the chain) or created a
+    // new one (propagate it forward), and accounts or dates may have changed.
+    let from_date = old.pay_date.as_str().min(p.pay_date.as_str());
+    reproject_accounts(conn, &[old.income_account_id, p.income_account_id], from_date).await?;
+
     get_paycheck(conn, p.id).await
 }
 
 pub async fn delete_paycheck(conn: &Connection, id: i32) -> Result<(), String> {
+    let old = get_paycheck(conn, id).await?;
+
+    // Remove any balance snapshots owned by this paycheck's txns.
+    clear_paycheck_snapshots(conn, id).await?;
+
     // Explicitly delete contribution transactions before deleting the paycheck.
     // PRAGMA foreign_keys is NOT enabled in this project, so ON DELETE CASCADE does not fire.
     conn.execute("DELETE FROM txn WHERE paycheck_id = ?1", params![id])
@@ -257,6 +320,10 @@ pub async fn delete_paycheck(conn: &Connection, id: i32) -> Result<(), String> {
     conn.execute("DELETE FROM paycheck WHERE id = ?1", params![id])
         .await
         .map_err(|e| e.to_string())?;
+
+    // Heal later snapshots that were computed off the deleted income txn's snapshot.
+    reproject_accounts(conn, &[old.income_account_id], &old.pay_date).await?;
+
     Ok(())
 }
 

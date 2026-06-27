@@ -5,7 +5,8 @@ import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { contributionItems } from '../lib/paychecks/index'
-import { INVESTMENT_TYPES, investmentTypeItems, isLiability } from '../lib/accountTypes'
+import { INVESTMENT_TYPES, investmentTypeItems, isInvestment, isLiability } from '../lib/accountTypes'
+import { balancePreview } from '../lib/transactions/balancePreview'
 import { payPeriodItems } from '../lib/paychecks/constants'
 import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
@@ -206,7 +207,37 @@ function onContributionTypeChange(ded: DeductionRow) {
   ded.accountId = null
 }
 
-const preview = computed(() => {
+// ─── Update account balance ──────────────────────────────────────────────────
+function defaultUpdateBalance(accountId: number | null): boolean {
+  if (accountId == null) return false
+  const acct = accountsStore.accounts.find((a) => a.id === accountId)
+  return acct ? !isInvestment(acct.type) : false
+}
+const updateBalance = ref(false)
+watch(() => form.incomeAccountId, (id) => { updateBalance.value = defaultUpdateBalance(id) })
+
+const liabilityIds = computed(
+  () => new Set(accountsStore.accounts.filter((a) => isLiability(a.type)).map((a) => a.id)),
+)
+
+const depositPreview = computed(() =>
+  form.incomeAccountId == null
+    ? []
+    : balancePreview(
+        accountsStore.allBalances,
+        {
+          type: 'income',
+          amount: form.netAmount || 0,
+          accountId: form.incomeAccountId,
+          transferAccountId: null,
+          date: form.payDate,
+        },
+        liabilityIds.value,
+      ),
+)
+
+// ─── Contribution preview ─────────────────────────────────────────────────────
+const contributionPreview = computed(() => {
   const items = contributionItems(form.deductions, form.employerMatch)
   return items.map((item) => ({
     ...item,
@@ -241,6 +272,7 @@ async function save(mode: SaveMode = 'close') {
         deductions: form.deductions,
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
+        updateBalance: updateBalance.value,
         updatedAt: now,
       })
       toast.add({ title: 'Paycheck updated', color: 'success' })
@@ -259,6 +291,7 @@ async function save(mode: SaveMode = 'close') {
         deductions: form.deductions,
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
+        updateBalance: updateBalance.value,
         createdAt: now,
       })
       toast.add({ title: 'Paycheck added', color: 'success' })
@@ -310,6 +343,19 @@ async function save(mode: SaveMode = 'close') {
               placeholder="None (optional)"
               class="w-full"
             />
+          </div>
+
+          <div v-if="form.incomeAccountId != null" class="rounded-lg border border-default p-3 space-y-2">
+            <USwitch v-model="updateBalance" label="Update account balance" />
+            <p class="text-xs text-muted">
+              Writes a balance snapshot for the deposit account reflecting the net deposit, so it shows up in your net-worth history.
+            </p>
+            <div v-if="updateBalance" class="text-sm space-y-1">
+              <div v-for="line in depositPreview" :key="line.accountId" class="tabular-nums">
+                {{ accountsStore.accounts.find((a) => a.id === line.accountId)?.name ?? `#${line.accountId}` }}:
+                {{ money(line.from) }} → <strong>{{ money(line.to) }}</strong>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -406,9 +452,9 @@ async function save(mode: SaveMode = 'close') {
         </div>
 
         <!-- Contribution preview -->
-        <div v-if="preview.length > 0" class="rounded border border-default p-3 space-y-1">
+        <div v-if="contributionPreview.length > 0" class="rounded border border-default p-3 space-y-1">
           <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
-          <div v-for="item in preview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
+          <div v-for="item in contributionPreview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
             <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
             <span class="tabular-nums text-success">{{ money(item.amount) }}</span>
           </div>

@@ -35,6 +35,7 @@ export interface NewPaycheck {
   deductions: PaycheckDeductionInput[]
   employerMatch: EmployerMatchInput[]
   incomeAccountId?: number | null
+  updateBalance: boolean
   createdAt: string
 }
 
@@ -53,6 +54,7 @@ export interface UpdatePaycheck {
   deductions: PaycheckDeductionInput[]
   employerMatch: EmployerMatchInput[]
   incomeAccountId?: number | null
+  updateBalance: boolean
   updatedAt: string
 }
 

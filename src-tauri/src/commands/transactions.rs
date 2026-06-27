@@ -365,7 +365,7 @@ async fn side_delta(
 }
 
 // Returns (generated_balance_id, generated_balance_to_id) for a materialized txn.
-async fn materialize_snapshots(
+pub(crate) async fn materialize_snapshots(
     conn: &Connection,
     account_id: i32,
     transfer_account_id: Option<i32>,
@@ -408,7 +408,7 @@ async fn generated_ids(conn: &Connection, txn_id: i32) -> Result<(Option<i32>, O
     }
 }
 
-async fn clear_generated(conn: &Connection, ids: (Option<i32>, Option<i32>)) -> Result<(), String> {
+pub(crate) async fn clear_generated(conn: &Connection, ids: (Option<i32>, Option<i32>)) -> Result<(), String> {
     if let Some(id) = ids.0 {
         delete_snapshot(conn, id).await?;
     }
@@ -1026,7 +1026,7 @@ pub async fn get_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<Transacti
 
 /// Re-project `from_date` forward for each distinct account in `accounts`, so an
 /// out-of-order change ripples through later transaction-tied snapshots.
-async fn reproject_accounts(
+pub(crate) async fn reproject_accounts(
     conn: &Connection,
     accounts: &[Option<i32>],
     from_date: &str,
