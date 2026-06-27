@@ -611,7 +611,7 @@ async function deleteAccount() {
             :key="row.id"
             class="grid items-center py-1.5 not-first:border-t border-default tmfi-rise"
             :style="{ animationDelay: `${Math.min(i * 28, 196)}ms` }"
-            :class="editingSnapshotId === row.id ? 'grid-cols-[75px_1fr_100px]' : 'grid-cols-[75px_1fr_auto_100px]'"
+            :class="editingSnapshotId === row.id ? 'grid-cols-[130px_1fr_100px]' : 'grid-cols-[75px_1fr_auto_100px]'"
           >
             <template v-if="editingSnapshotId !== row.id">
               <span class="text-xs text-muted">{{ fmtDate(row.recordedAt) }}</span>
