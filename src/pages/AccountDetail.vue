@@ -175,6 +175,27 @@ const fmtPercent = (pct: number | null) => pct == null ? '' : (pct > 0 ? '+' : '
 
 const currentBalance = computed(() => monthSummaries.value[0]?.latestBalance ?? null)
 const currentBalanceAsOf = computed(() => monthSummaries.value[0] ? fmtMonthLabel(monthSummaries.value[0].month) : '')
+
+const balanceMoM = computed(() => {
+  if (monthSummaries.value.length < 2) return null
+  const cur = monthSummaries.value[0]
+  const prev = monthSummaries.value[1]
+  const delta = cur.latestBalance - prev.latestBalance
+  const pct = Math.abs(prev.latestBalance) >= 0.01 ? (delta / Math.abs(prev.latestBalance)) * 100 : null
+  return { delta, pct }
+})
+
+const balanceYTD = computed(() => {
+  if (monthSummaries.value.length < 2) return null
+  const cur = monthSummaries.value[0]
+  const curYear = cur.month.slice(0, 4)
+  const prevYearEntry = monthSummaries.value.find(s => s.month.slice(0, 4) !== curYear)
+  if (!prevYearEntry) return null
+  const delta = cur.latestBalance - prevYearEntry.latestBalance
+  const pct = Math.abs(prevYearEntry.latestBalance) >= 0.01 ? (delta / Math.abs(prevYearEntry.latestBalance)) * 100 : null
+  return { delta, pct }
+})
+
 const headerMenuItems = computed(() => [[
   { label: 'Archive', icon: 'i-ph-archive', onSelect: archiveAccount },
 ]])
@@ -497,20 +518,40 @@ async function deleteAccount() {
     </div>
 
     <!-- Current balance stat -->
-    <div v-if="currentBalance !== null" class="relative mb-6">
-      <StatCard
-        label="Current Balance"
-        :value="fmtMoney(displayBalance)"
-        :hint="`as of ${currentBalanceAsOf}`"
-      />
-      <div
-        v-if="milestoneCelebrating"
-        :key="moteKey"
-        class="pointer-events-none absolute inset-0 overflow-hidden"
-        aria-hidden="true"
-      >
-        <span v-for="i in MOTE_COUNT" :key="i" class="tmfi-mote" :style="moteStyle(i)" />
+    <div
+      v-if="currentBalance !== null"
+      class="grid gap-3 mb-6"
+      :class="balanceMoM && balanceYTD ? 'grid-cols-3' : balanceMoM || balanceYTD ? 'grid-cols-2' : 'grid-cols-1'"
+    >
+      <div class="relative">
+        <StatCard
+          label="Current Balance"
+          :value="fmtMoney(displayBalance)"
+          :hint="`as of ${currentBalanceAsOf}`"
+        />
+        <div
+          v-if="milestoneCelebrating"
+          :key="moteKey"
+          class="pointer-events-none absolute inset-0 overflow-hidden"
+          aria-hidden="true"
+        >
+          <span v-for="i in MOTE_COUNT" :key="i" class="tmfi-mote" :style="moteStyle(i)" />
+        </div>
       </div>
+      <StatCard
+        v-if="balanceMoM"
+        label="vs Last Month"
+        :value="fmtDelta(balanceMoM.delta)"
+        :hint="balanceMoM.pct != null ? fmtPercent(balanceMoM.pct) : undefined"
+        :color="balanceMoM.delta >= 0 ? 'success' : 'error'"
+      />
+      <StatCard
+        v-if="balanceYTD"
+        label="Year to Date"
+        :value="fmtDelta(balanceYTD.delta)"
+        :hint="balanceYTD.pct != null ? fmtPercent(balanceYTD.pct) : undefined"
+        :color="balanceYTD.delta >= 0 ? 'success' : 'error'"
+      />
     </div>
 
     <!-- Chart -->

@@ -176,6 +176,34 @@ const investmentAccountItems = computed(() =>
     .map((a) => ({ label: a.name, value: a.id })),
 )
 
+const investmentAccountNames = computed(() =>
+  investmentAccountItems.value.map((a) => a.label),
+)
+
+const pastFreeTextDeductionLabels = computed(() => {
+  const accountNames = new Set(investmentAccountNames.value)
+  const seen = new Set<string>()
+  for (const p of store.paychecks) {
+    for (const d of p.deductions) {
+      if (d.accountId == null && d.label && !accountNames.has(d.label)) {
+        seen.add(d.label)
+      }
+    }
+  }
+  return [...seen]
+})
+
+const deductionComboItems = computed(() => {
+  const groups: { label: string; items: string[] }[] = []
+  if (investmentAccountNames.value.length > 0) {
+    groups.push({ label: 'Accounts', items: investmentAccountNames.value })
+  }
+  if (pastFreeTextDeductionLabels.value.length > 0) {
+    groups.push({ label: 'Past deductions', items: pastFreeTextDeductionLabels.value })
+  }
+  return groups
+})
+
 const depositAccountItems = computed(() =>
   accountsStore.accounts
     .filter((a) => !INVESTMENT_TYPES.has(a.type) && !isLiability(a.type) && a.isActive)
@@ -192,16 +220,17 @@ function addMatch() {
 }
 function removeMatch(i: number) { form.employerMatch.splice(i, 1) }
 
-function onDeductionAccountChange(ded: DeductionRow) {
-  if (ded.accountId == null) {
-    ded.contributionAccountType = null
-    ded.label = ''
-    return
-  }
-  const acct = accountsStore.accounts.find((a) => a.id === ded.accountId)
+function onDeductionLabelChange(ded: DeductionRow, value: string) {
+  ded.label = value
+  const acct = accountsStore.accounts.find(
+    (a) => INVESTMENT_TYPES.has(a.type) && a.isActive && a.name === value,
+  )
   if (acct) {
+    ded.accountId = acct.id
     ded.contributionAccountType = acct.type
-    ded.label = acct.name
+  } else {
+    ded.accountId = null
+    ded.contributionAccountType = null
   }
 }
 
@@ -405,13 +434,19 @@ async function save(mode: SaveMode = 'close') {
           </div>
           <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3">
             <div class="flex gap-2 items-center">
-              <USelect
-                v-model="ded.accountId"
-                :items="investmentAccountItems"
-                placeholder="Account"
+              <UInputMenu
+                :model-value="ded.label"
+                mode="autocomplete"
+                :items="deductionComboItems"
+                placeholder="Account or description"
                 class="flex-1"
-                @update:model-value="onDeductionAccountChange(ded)"
-              />
+                @update:model-value="onDeductionLabelChange(ded, $event)"
+              >
+                <template #empty>
+                  <span v-if="ded.label">Use "{{ ded.label }}"</span>
+                  <span v-else>No accounts</span>
+                </template>
+              </UInputMenu>
               <CurrencyInput v-model="ded.amount" class="w-24" />
               <UCheckbox v-model="ded.preTax" label="Pre-tax" class="shrink-0" />
               <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeDeduction(i)" />
