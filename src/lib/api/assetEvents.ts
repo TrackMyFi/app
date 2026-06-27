@@ -19,6 +19,7 @@ export interface NewAssetEvent {
   assetValue?: number | null
   vendor?: string | null
   notes?: string | null
+  lifeExpectancy?: string | null
   linkedTransactionId?: number | null
   createdAt: string
 }
@@ -34,6 +35,7 @@ export interface UpdateAssetEvent {
   assetValue?: number | null
   vendor?: string | null
   notes?: string | null
+  lifeExpectancy?: string | null
   linkedTransactionId?: number | null
   updatedAt: string
 }

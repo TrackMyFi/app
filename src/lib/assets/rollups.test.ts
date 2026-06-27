@@ -22,6 +22,7 @@ const ev = (over: Partial<AssetEvent>): AssetEvent => ({
   assetValue: null,
   vendor: null,
   notes: null,
+  lifeExpectancy: null,
   linkedTransactionId: null,
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',

@@ -4,7 +4,7 @@ import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useAssetEventsStore } from '../stores/assetEvents'
 import { useAccountsStore } from '../stores/accounts'
-import { assetEventKindItems } from '../lib/assets/constants'
+import { assetEventKindItems, LIFE_EXPECTANCY_SUGGESTIONS } from '../lib/assets/constants'
 import { currentValue } from '../lib/assets/rollups'
 import DateInput from './DateInput.vue'
 import CurrencyInput from './CurrencyInput.vue'
@@ -50,6 +50,7 @@ const form = reactive({
   assetValue: null as number | null,
   vendor: '',
   notes: '',
+  lifeExpectancy: '',
   linkedTransactionId: null as number | null,
 })
 
@@ -76,6 +77,7 @@ function resetForm() {
   form.assetValue = null
   form.vendor = ''
   form.notes = ''
+  form.lifeExpectancy = ''
   form.linkedTransactionId = null
 }
 
@@ -93,6 +95,7 @@ watch(
       form.assetValue = e.assetValue ?? null
       form.vendor = e.vendor ?? ''
       form.notes = e.notes ?? ''
+      form.lifeExpectancy = e.lifeExpectancy ?? ''
       form.linkedTransactionId = e.linkedTransactionId ?? null
     } else {
       resetForm()
@@ -127,6 +130,7 @@ async function save() {
     assetValue: isOther.value ? form.assetValue : null,
     vendor: form.vendor.trim() || null,
     notes: form.notes.trim() || null,
+    lifeExpectancy: (form.kind === 'purchase' || form.kind === 'improvement') ? form.lifeExpectancy.trim() || null : null,
     linkedTransactionId: form.linkedTransactionId,
   }
 
@@ -191,6 +195,16 @@ async function save() {
         <p class="text-xs text-muted mb-1">Vendor (optional)</p>
         <UInput v-model="form.vendor" placeholder="e.g. ABC Roofing" class="w-full" />
       </div>
+    </div>
+
+    <div v-if="form.kind === 'purchase' || form.kind === 'improvement'">
+      <p class="text-xs text-muted mb-1">Life expectancy (optional)</p>
+      <ComboboxInput
+        v-model="form.lifeExpectancy"
+        :items="LIFE_EXPECTANCY_SUGGESTIONS"
+        placeholder="e.g. 20–30 years"
+        class="w-full"
+      />
     </div>
 
     <div v-if="isOther">

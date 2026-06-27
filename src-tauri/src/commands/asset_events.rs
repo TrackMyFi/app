@@ -16,6 +16,7 @@ pub struct NewAssetEvent {
     pub asset_value: Option<f64>,
     pub vendor: Option<String>,
     pub notes: Option<String>,
+    pub life_expectancy: Option<String>,
     pub linked_transaction_id: Option<i32>,
     pub created_at: String,
 }
@@ -33,6 +34,7 @@ pub struct UpdateAssetEvent {
     pub asset_value: Option<f64>,
     pub vendor: Option<String>,
     pub notes: Option<String>,
+    pub life_expectancy: Option<String>,
     pub linked_transaction_id: Option<i32>,
     pub updated_at: String,
 }
@@ -48,7 +50,7 @@ pub struct AssetEventFilter {
 }
 
 const COLS: &str = "id, account_id, asset_label, date, description, kind, cost, asset_value, \
-    vendor, notes, linked_transaction_id, created_at, updated_at";
+    vendor, notes, life_expectancy, linked_transaction_id, created_at, updated_at";
 
 fn row_to_asset_event(row: &libsql::Row) -> Result<AssetEvent, String> {
     Ok(AssetEvent {
@@ -62,9 +64,10 @@ fn row_to_asset_event(row: &libsql::Row) -> Result<AssetEvent, String> {
         asset_value: row.get(7).map_err(|e| e.to_string())?,
         vendor: row.get(8).map_err(|e| e.to_string())?,
         notes: row.get(9).map_err(|e| e.to_string())?,
-        linked_transaction_id: row.get(10).map_err(|e| e.to_string())?,
-        created_at: row.get(11).map_err(|e| e.to_string())?,
-        updated_at: row.get(12).map_err(|e| e.to_string())?,
+        life_expectancy: row.get(10).map_err(|e| e.to_string())?,
+        linked_transaction_id: row.get(11).map_err(|e| e.to_string())?,
+        created_at: row.get(12).map_err(|e| e.to_string())?,
+        updated_at: row.get(13).map_err(|e| e.to_string())?,
     })
 }
 
@@ -140,12 +143,12 @@ pub async fn create_asset_event(conn: &Connection, e: &NewAssetEvent) -> Result<
     validate_asset_ref(e.account_id, &e.asset_label)?;
     conn.execute(
         "INSERT INTO asset_event (account_id, asset_label, date, description, kind, cost, \
-         asset_value, vendor, notes, linked_transaction_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+         asset_value, vendor, notes, life_expectancy, linked_transaction_id, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             e.account_id, e.asset_label.clone(), e.date.clone(), e.description.clone(),
             e.kind.clone(), e.cost, e.asset_value, e.vendor.clone(), e.notes.clone(),
-            e.linked_transaction_id, e.created_at.clone()
+            e.life_expectancy.clone(), e.linked_transaction_id, e.created_at.clone()
         ],
     )
     .await
@@ -165,12 +168,12 @@ pub async fn update_asset_event(
 
     conn.execute(
         "UPDATE asset_event SET account_id=?1, asset_label=?2, date=?3, description=?4, \
-         kind=?5, cost=?6, asset_value=?7, vendor=?8, notes=?9, linked_transaction_id=?10, \
-         updated_at=?11 WHERE id=?12",
+         kind=?5, cost=?6, asset_value=?7, vendor=?8, notes=?9, life_expectancy=?10, \
+         linked_transaction_id=?11, updated_at=?12 WHERE id=?13",
         params![
             e.account_id, e.asset_label.clone(), e.date.clone(), e.description.clone(),
             e.kind.clone(), e.cost, e.asset_value, e.vendor.clone(), e.notes.clone(),
-            e.linked_transaction_id, e.updated_at.clone(), e.id
+            e.life_expectancy.clone(), e.linked_transaction_id, e.updated_at.clone(), e.id
         ],
     )
     .await

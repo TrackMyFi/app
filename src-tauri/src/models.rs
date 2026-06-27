@@ -137,6 +137,7 @@ pub struct AssetEvent {
     pub asset_value: Option<f64>,
     pub vendor: Option<String>,
     pub notes: Option<String>,
+    pub life_expectancy: Option<String>,
     pub linked_transaction_id: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
