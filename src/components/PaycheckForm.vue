@@ -5,8 +5,8 @@ import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
 import { contributionItems } from '../lib/paychecks/index'
-import { INVESTMENT_TYPES, investmentTypeItems, isInvestment, isLiability } from '../lib/accountTypes'
-import { balancePreview } from '../lib/transactions/balancePreview'
+import { INVESTMENT_TYPES, isInvestment, isLiability } from '../lib/accountTypes'
+import { balancePreview, type PreviewLine } from '../lib/transactions/balancePreview'
 import { payPeriodItems } from '../lib/paychecks/constants'
 import DateInput from './DateInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
@@ -61,10 +61,6 @@ const saveMenuItems = computed(() => [
 
 const knownEmployers = computed(() =>
   [...new Set(store.paychecks.map((p) => p.employer).filter(Boolean))]
-)
-
-const knownDeductionLabels = computed(() =>
-  [...new Set(store.paychecks.flatMap((p) => p.deductions.map((d) => d.label)).filter(Boolean))]
 )
 
 const today = DateTime.now().toISODate()!
@@ -174,13 +170,6 @@ watch(
   { immediate: true },
 )
 
-function accountsForType(type: string | null) {
-  if (!type) return []
-  return accountsStore.accounts
-    .filter((a) => a.type === type && a.isActive)
-    .map((a) => ({ label: a.name, value: a.id }))
-}
-
 const investmentAccountItems = computed(() =>
   accountsStore.accounts
     .filter((a) => INVESTMENT_TYPES.has(a.type) && a.isActive)
@@ -203,8 +192,17 @@ function addMatch() {
 }
 function removeMatch(i: number) { form.employerMatch.splice(i, 1) }
 
-function onContributionTypeChange(ded: DeductionRow) {
-  ded.accountId = null
+function onDeductionAccountChange(ded: DeductionRow) {
+  if (ded.accountId == null) {
+    ded.contributionAccountType = null
+    ded.label = ''
+    return
+  }
+  const acct = accountsStore.accounts.find((a) => a.id === ded.accountId)
+  if (acct) {
+    ded.contributionAccountType = acct.type
+    ded.label = acct.name
+  }
 }
 
 // ─── Update account balance ──────────────────────────────────────────────────
@@ -220,21 +218,29 @@ const liabilityIds = computed(
   () => new Set(accountsStore.accounts.filter((a) => isLiability(a.type)).map((a) => a.id)),
 )
 
-const depositPreview = computed(() =>
-  form.incomeAccountId == null
-    ? []
-    : balancePreview(
-        accountsStore.allBalances,
-        {
-          type: 'income',
-          amount: form.netAmount || 0,
-          accountId: form.incomeAccountId,
-          transferAccountId: null,
-          date: form.payDate,
-        },
-        liabilityIds.value,
-      ),
+const hasLinkedAccounts = computed(
+  () => form.incomeAccountId != null || form.deductions.some((d) => d.accountId != null),
 )
+
+const allBalancePreviews = computed((): PreviewLine[] => {
+  if (!updateBalance.value) return []
+  const results: PreviewLine[] = []
+  if (form.incomeAccountId != null) {
+    results.push(...balancePreview(accountsStore.allBalances, {
+      type: 'income', amount: form.netAmount || 0,
+      accountId: form.incomeAccountId, transferAccountId: null, date: form.payDate,
+    }, liabilityIds.value))
+  }
+  for (const ded of form.deductions) {
+    if (ded.accountId != null) {
+      results.push(...balancePreview(accountsStore.allBalances, {
+        type: 'income', amount: ded.amount || 0,
+        accountId: ded.accountId, transferAccountId: null, date: form.payDate,
+      }, liabilityIds.value))
+    }
+  }
+  return results
+})
 
 // ─── Contribution preview ─────────────────────────────────────────────────────
 const contributionPreview = computed(() => {
@@ -345,18 +351,6 @@ async function save(mode: SaveMode = 'close') {
             />
           </div>
 
-          <div v-if="form.incomeAccountId != null" class="rounded-lg border border-default p-3 space-y-2">
-            <USwitch v-model="updateBalance" label="Update account balance" />
-            <p class="text-xs text-muted">
-              Writes a balance snapshot for the deposit account reflecting the net deposit, so it shows up in your net-worth history.
-            </p>
-            <div v-if="updateBalance" class="text-sm space-y-1">
-              <div v-for="line in depositPreview" :key="line.accountId" class="tabular-nums">
-                {{ accountsStore.accounts.find((a) => a.id === line.accountId)?.name ?? `#${line.accountId}` }}:
-                {{ money(line.from) }} → <strong>{{ money(line.to) }}</strong>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- Amounts -->
@@ -402,35 +396,25 @@ async function save(mode: SaveMode = 'close') {
         </div>
       </div>
 
-      <div class="w-full lg:w-1/2 bg-muted border border-default/50 rounded-xl space-y-5 lg:-my-4 lg:ml-3 p-4">
+      <div class="w-full lg:w-1/2 bg-muted border border-default/50 rounded-xl flex flex-col space-y-4 lg:-my-4 lg:ml-3 p-4">
         <!-- Deductions -->
         <div class="space-y-2">
           <div class="flex items-center justify-between">
             <p class="text-xs font-semibold uppercase tracking-wide text-muted">Deductions</p>
             <UButton size="xs" variant="soft" icon="i-ph-plus" @click="addDeduction">Add</UButton>
           </div>
-          <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3 space-y-2">
-            <div class="flex gap-2 items-center">
-              <ComboboxInput v-model="ded.label" :items="knownDeductionLabels" placeholder="Label" class="flex-1 min-w-0" />
-              <CurrencyInput v-model="ded.amount" class="w-24" />
-              <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeDeduction(i)" />
-            </div>
+          <div v-for="(ded, i) in form.deductions" :key="i" class="rounded border border-default p-3">
             <div class="flex gap-2 items-center">
               <USelect
-                v-model="ded.contributionAccountType"
-                :items="investmentTypeItems"
-                placeholder="Contribution type"
-                class="flex-1"
-                @update:model-value="onContributionTypeChange(ded)"
-              />
-              <USelect
-                v-if="ded.contributionAccountType"
                 v-model="ded.accountId"
-                :items="accountsForType(ded.contributionAccountType)"
+                :items="investmentAccountItems"
                 placeholder="Account"
                 class="flex-1"
+                @update:model-value="onDeductionAccountChange(ded)"
               />
+              <CurrencyInput v-model="ded.amount" class="w-24" />
               <UCheckbox v-model="ded.preTax" label="Pre-tax" class="shrink-0" />
+              <UButton size="xs" variant="ghost" color="error" icon="i-ph-x" @click="removeDeduction(i)" />
             </div>
           </div>
           <p v-if="form.deductions.length === 0" class="text-xs text-muted">No deductions added.</p>
@@ -452,11 +436,25 @@ async function save(mode: SaveMode = 'close') {
         </div>
 
         <!-- Contribution preview -->
-        <div v-if="contributionPreview.length > 0" class="rounded border border-default p-3 space-y-1">
+        <div v-if="contributionPreview.length > 0" class="rounded border border-default p-3 space-y-1 mt-auto">
           <p class="text-xs font-semibold uppercase tracking-wide text-muted">Contributions that will be created</p>
           <div v-for="item in contributionPreview" :key="`${item.accountId}:${item.label}`" class="flex justify-between text-sm">
             <span class="text-muted">{{ item.label }} → {{ item.accountName }}</span>
             <span class="tabular-nums text-success">{{ money(item.amount) }}</span>
+          </div>
+        </div>
+
+        <!-- Update account balance -->
+        <div v-if="hasLinkedAccounts" class="rounded-lg border border-default p-3 space-y-2">
+          <USwitch v-model="updateBalance" label="Update account balance" />
+          <p class="text-xs text-muted">
+            Writes balance snapshots for linked accounts (deposit and contributions), so they show up in your net-worth history.
+          </p>
+          <div v-if="updateBalance" class="text-sm space-y-1">
+            <div v-for="(line, li) in allBalancePreviews" :key="li" class="tabular-nums">
+              {{ accountsStore.accounts.find((a) => a.id === line.accountId)?.name ?? `#${line.accountId}` }}:
+              {{ money(line.from) }} → <strong>{{ money(line.to) }}</strong>
+            </div>
           </div>
         </div>
       </div>

@@ -89,18 +89,25 @@ async fn auto_create_contributions(
     pay_date: &str,
     deductions: &[PaycheckDeduction],
     employer_match: &[EmployerMatchItem],
+    update_balance: bool,
     now: &str,
 ) -> Result<(), String> {
     for ded in deductions {
         if ded.contribution_account_type.as_deref().is_some_and(|s| !s.is_empty()) {
             if let Some(account_id) = ded.account_id {
+                let gen_id: Option<i32> = if update_balance {
+                    let (id, _) = materialize_snapshots(conn, account_id, None, ded.amount, "income", pay_date).await?;
+                    id
+                } else {
+                    None
+                };
                 conn.execute(
                     "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
                      type, category, is_contribution, import_source, paycheck_id, \
                      generated_balance_id, generated_balance_to_id, created_at, updated_at) \
                      VALUES (?1, NULL, ?2, ?3, ?4, 'income', 'savings', 1, 'paycheck', ?5, \
-                     NULL, NULL, ?6, ?6)",
-                    params![account_id, ded.amount, ded.label.clone(), pay_date, paycheck_id, now],
+                     ?6, NULL, ?7, ?7)",
+                    params![account_id, ded.amount, ded.label.clone(), pay_date, paycheck_id, gen_id, now],
                 )
                 .await
                 .map_err(|e| e.to_string())?;
@@ -109,13 +116,19 @@ async fn auto_create_contributions(
     }
     for em in employer_match {
         if let Some(account_id) = em.account_id {
+            let gen_id: Option<i32> = if update_balance {
+                let (id, _) = materialize_snapshots(conn, account_id, None, em.amount, "income", pay_date).await?;
+                id
+            } else {
+                None
+            };
             conn.execute(
                 "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
                  type, category, is_contribution, import_source, paycheck_id, \
                  generated_balance_id, generated_balance_to_id, created_at, updated_at) \
                  VALUES (?1, NULL, ?2, ?3, ?4, 'income', 'savings', 1, 'paycheck', ?5, \
-                 NULL, NULL, ?6, ?6)",
-                params![account_id, em.amount, em.label.clone(), pay_date, paycheck_id, now],
+                 ?6, NULL, ?7, ?7)",
+                params![account_id, em.amount, em.label.clone(), pay_date, paycheck_id, gen_id, now],
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -253,12 +266,15 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
     .map_err(|e| e.to_string())?;
 
     let id = conn.last_insert_rowid() as i32;
-    auto_create_contributions(conn, id, &p.pay_date, &p.deductions, &p.employer_match, &p.created_at).await?;
+    auto_create_contributions(conn, id, &p.pay_date, &p.deductions, &p.employer_match, p.update_balance, &p.created_at).await?;
     auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at, p.update_balance).await?;
 
-    // Ripple the new snapshot forward through any later transaction-tied snapshots.
+    // Ripple new snapshots forward through any later transaction-tied snapshots.
     if p.update_balance {
-        reproject_accounts(conn, &[p.income_account_id], &p.pay_date).await?;
+        let mut reproject_ids: Vec<Option<i32>> = vec![p.income_account_id];
+        for d in &p.deductions { reproject_ids.push(d.account_id); }
+        for m in &p.employer_match { reproject_ids.push(m.account_id); }
+        reproject_accounts(conn, &reproject_ids, &p.pay_date).await?;
     }
 
     get_paycheck(conn, id).await
@@ -294,14 +310,19 @@ pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Pa
     .await
     .map_err(|e| e.to_string())?;
 
-    auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, &p.updated_at).await?;
+    auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, p.update_balance, &p.updated_at).await?;
     auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at, p.update_balance).await?;
 
-    // Reproject from min(old_date, new_date) for both old and new deposit accounts.
-    // Runs unconditionally: we may have deleted a snapshot (heal the chain) or created a
-    // new one (propagate it forward), and accounts or dates may have changed.
+    // Reproject from min(old_date, new_date) for all affected accounts (income + contributions,
+    // old and new). Runs unconditionally: snapshots may have been deleted or added, and accounts
+    // or dates may have changed.
     let from_date = old.pay_date.as_str().min(p.pay_date.as_str());
-    reproject_accounts(conn, &[old.income_account_id, p.income_account_id], from_date).await?;
+    let mut reproject_ids: Vec<Option<i32>> = vec![old.income_account_id, p.income_account_id];
+    for d in &old.deductions { reproject_ids.push(d.account_id); }
+    for m in &old.employer_match { reproject_ids.push(m.account_id); }
+    for d in &p.deductions { reproject_ids.push(d.account_id); }
+    for m in &p.employer_match { reproject_ids.push(m.account_id); }
+    reproject_accounts(conn, &reproject_ids, from_date).await?;
 
     get_paycheck(conn, p.id).await
 }
@@ -321,8 +342,11 @@ pub async fn delete_paycheck(conn: &Connection, id: i32) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    // Heal later snapshots that were computed off the deleted income txn's snapshot.
-    reproject_accounts(conn, &[old.income_account_id], &old.pay_date).await?;
+    // Heal later snapshots that were computed off deleted income and contribution snapshots.
+    let mut reproject_ids: Vec<Option<i32>> = vec![old.income_account_id];
+    for d in &old.deductions { reproject_ids.push(d.account_id); }
+    for m in &old.employer_match { reproject_ids.push(m.account_id); }
+    reproject_accounts(conn, &reproject_ids, &old.pay_date).await?;
 
     Ok(())
 }
