@@ -15,6 +15,7 @@ import {
   type AssetGroup,
 } from '../lib/assets/rollups'
 import AssetEventForm from '../components/AssetEventForm.vue'
+import AssetEventDetail from '../components/AssetEventDetail.vue'
 import DateInput from '../components/DateInput.vue'
 import type { AssetEvent } from '../lib/types/AssetEvent'
 import PageError from '../components/PageError.vue'
@@ -33,6 +34,24 @@ function openEdit(e: AssetEvent) { editing.value = e; isModalOpen.value = true }
 function onSaved() { isModalOpen.value = false }
 
 watch(isModalOpen, (open) => { if (!open) editing.value = null })
+
+// ---- detail view ----
+const isDetailOpen = ref(false)
+const viewingEvent = ref<AssetEvent | null>(null)
+const viewingRelated = ref<AssetEvent[]>([])
+
+function openDetail(e: AssetEvent, groupEvents: AssetEvent[]) {
+  viewingEvent.value = e
+  viewingRelated.value = groupEvents.filter((ge) => ge.id !== e.id)
+  isDetailOpen.value = true
+}
+
+watch(isDetailOpen, (open) => { if (!open) viewingEvent.value = null })
+
+function onDetailEdit(e: AssetEvent) {
+  isDetailOpen.value = false
+  openEdit(e)
+}
 
 const removingId = ref<number | null>(null)
 async function removeRow(e: AssetEvent) {
@@ -197,7 +216,12 @@ onMounted(() => run(async () => {
       </div>
       <table class="w-full text-sm">
         <tbody>
-          <tr v-for="e in group.events" :key="e.id" class="border-t border-default">
+          <tr
+            v-for="e in group.events"
+            :key="e.id"
+            class="border-t border-default cursor-pointer hover:bg-muted/30 transition-colors"
+            @click="openDetail(e, group.events)"
+          >
             <td class="px-4 py-2 whitespace-nowrap text-muted">{{ fmtDate(e.date) }}</td>
             <td class="px-4 py-2">
               <UBadge :color="colorForAssetEventKind(e.kind)" variant="subtle" size="xs">
@@ -209,7 +233,7 @@ onMounted(() => run(async () => {
               <span v-if="e.vendor" class="text-muted"> · {{ e.vendor }}</span>
             </td>
             <td class="px-4 py-2 text-right tabular-nums">{{ money(e.cost) }}</td>
-            <td class="px-4 py-2 text-right whitespace-nowrap">
+            <td class="px-4 py-2 text-right whitespace-nowrap" @click.stop>
               <UTooltip v-if="e.hasAttachment" text="Has attachment">
                 <span class="i-ph-paperclip inline-block text-muted mr-1 align-middle" />
               </UTooltip>
@@ -232,6 +256,22 @@ onMounted(() => run(async () => {
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit asset event' : 'Add asset event'" class="sm:w-[560px] max-w-full">
       <template #body>
         <AssetEventForm :editing="editing" @saved="onSaved" />
+      </template>
+    </UModal>
+
+    <UModal
+      v-if="viewingEvent"
+      v-model:open="isDetailOpen"
+      :title="viewingEvent.description"
+      class="sm:w-[600px] max-w-full"
+    >
+      <template #body>
+        <AssetEventDetail
+          :event="viewingEvent"
+          :asset-name="assetName(viewingEvent.accountId, viewingEvent.assetLabel)"
+          :related-events="viewingRelated"
+          @edit="onDetailEdit"
+        />
       </template>
     </UModal>
   </div>
