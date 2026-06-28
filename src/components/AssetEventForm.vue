@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { DateTime } from 'luxon'
 import { useAssetEventsStore } from '../stores/assetEvents'
 import { useAccountsStore } from '../stores/accounts'
+import { useStorageStore } from '../stores/storage'
 import { assetEventKindItems, LIFE_EXPECTANCY_SUGGESTIONS } from '../lib/assets/constants'
 import { currentValue } from '../lib/assets/rollups'
+import { listAttachments, uploadAttachment, deleteAttachment, openAttachment } from '../lib/api/storage'
 import DateInput from './DateInput.vue'
 import CurrencyInput from './CurrencyInput.vue'
 import ComboboxInput from './ComboboxInput.vue'
 import type { AssetEvent } from '../lib/types/AssetEvent'
+import type { AssetAttachment } from '../lib/types/AssetAttachment'
 
 const props = defineProps<{
   editing: AssetEvent | null
@@ -19,9 +23,18 @@ const emit = defineEmits<{ saved: [] }>()
 
 const store = useAssetEventsStore()
 const accountsStore = useAccountsStore()
+const storageStore = useStorageStore()
 const toast = useToast()
 const saving = ref(false)
 const saveError = ref<string | null>(null)
+
+// Attachment state
+const existingAttachments = ref<AssetAttachment[]>([])
+const pendingFiles = ref<{ path: string; name: string }[]>([])
+const attachmentLoading = ref(false)
+const attachmentError = ref<string | null>(null)
+
+onMounted(() => storageStore.load())
 
 const OTHER = '__other__'
 
@@ -79,12 +92,61 @@ function resetForm() {
   form.notes = ''
   form.lifeExpectancy = ''
   form.linkedTransactionId = null
+  pendingFiles.value = []
+  attachmentError.value = null
+}
+
+async function loadAttachments(eventId: number) {
+  existingAttachments.value = await listAttachments(eventId).catch(() => [])
+}
+
+async function pickFile() {
+  const result = await openFileDialog({ multiple: true, directory: false })
+  if (!result) return
+  const paths = Array.isArray(result) ? result : [result]
+  for (const path of paths) {
+    const name = path.split('/').pop() ?? path
+    if (!pendingFiles.value.some(f => f.path === path)) {
+      pendingFiles.value.push({ path, name })
+    }
+  }
+  attachmentError.value = null
+}
+
+function removePending(index: number) {
+  pendingFiles.value.splice(index, 1)
+}
+
+async function removeExistingAttachment(att: AssetAttachment) {
+  attachmentLoading.value = true
+  attachmentError.value = null
+  try {
+    await deleteAttachment(att.id)
+    existingAttachments.value = existingAttachments.value.filter(a => a.id !== att.id)
+  } catch (e) {
+    attachmentError.value = String(e)
+  } finally {
+    attachmentLoading.value = false
+  }
+}
+
+async function openExistingAttachment(att: AssetAttachment) {
+  attachmentLoading.value = true
+  attachmentError.value = null
+  try {
+    await openAttachment(att.id)
+  } catch (e) {
+    attachmentError.value = String(e)
+  } finally {
+    attachmentLoading.value = false
+  }
 }
 
 watch(
   () => [props.editing, props.presetAccountId] as const,
   ([e]) => {
     saveError.value = null
+    existingAttachments.value = []
     if (e) {
       form.assetSelection = e.accountId != null ? String(e.accountId) : OTHER
       form.assetLabel = e.assetLabel ?? ''
@@ -97,6 +159,8 @@ watch(
       form.notes = e.notes ?? ''
       form.lifeExpectancy = e.lifeExpectancy ?? ''
       form.linkedTransactionId = e.linkedTransactionId ?? null
+      pendingFiles.value = []
+      loadAttachments(e.id)
     } else {
       resetForm()
     }
@@ -136,13 +200,33 @@ async function save() {
 
   saving.value = true
   try {
+    let eventId: number
     if (props.editing) {
-      await store.update({ id: props.editing.id, ...base, updatedAt: now })
+      const updated = await store.update({ id: props.editing.id, ...base, updatedAt: now })
+      eventId = updated.id
       toast.add({ title: 'Asset event updated', color: 'success' })
     } else {
-      await store.create({ ...base, createdAt: now })
+      const created = await store.create({ ...base, createdAt: now })
+      eventId = created.id
       toast.add({ title: 'Asset event added', color: 'success' })
     }
+
+    const failedUploads: string[] = []
+    for (const file of pendingFiles.value) {
+      try {
+        await uploadAttachment(eventId, file.path)
+      } catch {
+        failedUploads.push(file.name)
+      }
+    }
+    if (failedUploads.length > 0) {
+      toast.add({
+        title: 'Event saved, but some attachments failed to upload',
+        description: failedUploads.join(', '),
+        color: 'warning',
+      })
+    }
+
     emit('saved')
   } catch (err) {
     saveError.value = String(err)
@@ -222,6 +306,61 @@ async function save() {
     <div>
       <p class="text-xs text-muted mb-1">Notes (optional)</p>
       <UTextarea v-model="form.notes" :rows="2" placeholder="Warranty, details…" class="w-full" />
+    </div>
+
+    <!-- Attachment section -->
+    <div>
+      <p class="text-xs text-muted mb-1">Attachments (optional)</p>
+
+      <!-- Existing saved attachments -->
+      <div v-for="att in existingAttachments" :key="att.id"
+           class="flex items-center gap-2 mb-2 p-2 rounded-md bg-elevated border border-default">
+        <span class="i-ph-paperclip text-muted shrink-0" />
+        <button type="button"
+                class="flex-1 text-sm text-left truncate hover:text-primary transition-colors"
+                :disabled="attachmentLoading"
+                @click="openExistingAttachment(att)">
+          {{ att.originalName }}
+        </button>
+        <UBadge v-if="att.provider !== storageStore.provider"
+                color="warning" variant="subtle" size="xs"
+                :label="`stored in ${att.provider}`" />
+        <UButton color="neutral" variant="ghost" size="xs" icon="i-ph-x"
+                 :disabled="attachmentLoading"
+                 @click="removeExistingAttachment(att)" />
+      </div>
+
+      <!-- Pending (not yet uploaded) files -->
+      <div v-for="(file, i) in pendingFiles" :key="file.path"
+           class="flex items-center gap-2 mb-2 p-2 rounded-md bg-elevated border border-default">
+        <span class="i-ph-paperclip text-muted shrink-0" />
+        <span class="flex-1 text-sm truncate">{{ file.name }}</span>
+        <UBadge color="neutral" variant="subtle" size="xs" label="pending upload" />
+        <UButton color="neutral" variant="ghost" size="xs" icon="i-ph-x"
+                 @click="removePending(i)" />
+      </div>
+
+      <!-- Pick button (always visible) -->
+      <div class="flex items-center gap-3">
+        <UButton type="button" color="neutral" variant="outline" size="sm"
+                 icon="i-ph-paperclip"
+                 @click="pickFile">
+          Attach file
+        </UButton>
+        <p class="text-xs text-muted">
+          <span v-if="storageStore.isCloudProvider"
+                class="inline-flex items-center gap-1">
+            <span class="i-ph-cloud-check text-success" />
+            {{ storageStore.syncLabel }}
+          </span>
+          <span v-else class="inline-flex items-center gap-1">
+            <span class="i-ph-device-mobile-slash text-muted" />
+            {{ storageStore.syncLabel }}
+          </span>
+        </p>
+      </div>
+
+      <p v-if="attachmentError" class="text-xs text-error mt-1">{{ attachmentError }}</p>
     </div>
 
     <p v-if="saveError" class="text-sm text-error">{{ saveError }}</p>

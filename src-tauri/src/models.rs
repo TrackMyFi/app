@@ -141,6 +141,32 @@ pub struct AssetEvent {
     pub linked_transaction_id: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
+    pub has_attachment: bool,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct AssetAttachment {
+    pub id: i32,
+    pub asset_event_id: i32,
+    pub object_key: String,
+    pub original_name: String,
+    pub provider: String,
+    pub byte_size: Option<i64>,
+    pub created_at: String,
+}
+
+#[derive(Serialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct StorageInfo {
+    pub provider: String,
+    pub bucket_name: Option<String>,
+    pub r2_account_id: Option<String>,
+    pub s3_region: Option<String>,
+    pub local_path: String,
+    pub has_credentials: bool,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

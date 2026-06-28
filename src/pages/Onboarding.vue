@@ -2,6 +2,7 @@
 import { reactive, ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFireProfileStore } from '../stores/fireProfile'
+import { useStorageStore } from '../stores/storage'
 import { markOnboardingComplete, upsertFireProfile } from '../lib/api/fireProfile'
 import { saveSyncConfig, restartApp } from '../lib/api/sync'
 import type { FireProfile } from '../lib/types/FireProfile'
@@ -11,9 +12,10 @@ import DateInput from '../components/DateInput.vue'
 
 const router = useRouter()
 const fireProfileStore = useFireProfileStore()
+const storageStore = useStorageStore()
 
-const step = ref<1 | 2 | 3 | 4 | 5>(1)
-const TOTAL_STEPS = 5
+const step = ref<1 | 2 | 3 | 4 | 5 | 6>(1)
+const TOTAL_STEPS = 6
 
 const form = reactive({
   dateOfBirth: null as string | null,
@@ -34,6 +36,22 @@ const syncBusy = ref(false)
 const syncError = ref('')
 const showSyncHelp = ref(false)
 
+// Step 6: Attachment Storage
+const storageEnabled = ref(false)
+const storageProvider = ref('r2')
+const storageBucket = ref('')
+const storageR2AccountId = ref('')
+const storageS3Region = ref('')
+const storageAccessKey = ref('')
+const storageSecretKey = ref('')
+const storageServiceAccountJson = ref('')
+
+const STORAGE_PROVIDER_OPTIONS = [
+  { label: 'Cloudflare R2 (free egress, recommended)', value: 'r2' },
+  { label: 'Google Cloud Storage', value: 'gcs' },
+  { label: 'Amazon S3', value: 's3' },
+]
+
 onMounted(async () => {
   if (fireProfileStore.profile) {
     const p = fireProfileStore.profile
@@ -52,11 +70,11 @@ onMounted(async () => {
 const progressWidth = computed(() => `${((step.value - 1) / (TOTAL_STEPS - 1)) * 100}%`)
 
 function next() {
-  if (step.value < TOTAL_STEPS) step.value = (step.value + 1) as typeof step.value
+  if (step.value < TOTAL_STEPS) step.value = (step.value + 1) as 1 | 2 | 3 | 4 | 5 | 6
 }
 
 function back() {
-  if (step.value > 1) step.value = (step.value - 1) as typeof step.value
+  if (step.value > 1) step.value = (step.value - 1) as 1 | 2 | 3 | 4 | 5 | 6
 }
 
 async function skip() {
@@ -82,6 +100,18 @@ async function finish() {
       onboardingCompleted: false,
     }
     await upsertFireProfile(profile)
+
+    if (storageEnabled.value) {
+      await storageStore.save({
+        provider: storageProvider.value,
+        bucketName: storageBucket.value.trim() || null,
+        r2AccountId: storageR2AccountId.value.trim() || null,
+        s3Region: storageS3Region.value.trim() || null,
+        accessKeyId: storageAccessKey.value.trim() || null,
+        secretAccessKey: storageSecretKey.value.trim() || null,
+        serviceAccountJson: storageServiceAccountJson.value.trim() || null,
+      })
+    }
 
     if (syncEnabled.value) {
       if (!syncUrl.value || !syncToken.value) {
@@ -232,6 +262,77 @@ async function finish() {
           </UFormField>
           <p v-if="syncError" class="text-sm text-error" aria-live="polite">{{ syncError }}</p>
         </template>
+      </div>
+
+      <!-- Step 6: Attachment Storage -->
+      <div v-else-if="step === 6" class="space-y-6">
+        <div>
+          <h1 class="text-2xl font-bold">Attachment storage</h1>
+          <p class="text-muted mt-1">
+            Attach receipts and files to asset events. By default files are stored locally.
+            Enable cloud storage to access attachments from any device.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <USwitch v-model="storageEnabled" />
+          <span class="text-sm font-medium">Store attachments in the cloud</span>
+        </div>
+
+        <template v-if="storageEnabled">
+          <UFormField label="Provider">
+            <USelect v-model="storageProvider" :items="STORAGE_PROVIDER_OPTIONS" class="w-full" />
+          </UFormField>
+
+          <template v-if="storageProvider === 'r2'">
+            <UFormField label="Account ID">
+              <UInput v-model="storageR2AccountId" placeholder="abc123…" class="w-full" />
+            </UFormField>
+            <UFormField label="Bucket name">
+              <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+            </UFormField>
+            <UFormField label="Access Key ID">
+              <UInput v-model="storageAccessKey" class="w-full" />
+            </UFormField>
+            <UFormField label="Secret Access Key">
+              <UInput v-model="storageSecretKey" type="password" class="w-full" />
+            </UFormField>
+          </template>
+
+          <template v-else-if="storageProvider === 'gcs'">
+            <UFormField label="Bucket name">
+              <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+            </UFormField>
+            <UFormField label="Service account JSON key">
+              <UTextarea v-model="storageServiceAccountJson" :rows="5" placeholder='{"type":"service_account",...}' class="w-full font-mono text-xs" />
+            </UFormField>
+          </template>
+
+          <template v-else-if="storageProvider === 's3'">
+            <UFormField label="Bucket name">
+              <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+            </UFormField>
+            <UFormField label="Region">
+              <UInput v-model="storageS3Region" placeholder="us-east-1" class="w-full" />
+            </UFormField>
+            <UFormField label="Access Key ID">
+              <UInput v-model="storageAccessKey" class="w-full" />
+            </UFormField>
+            <UFormField label="Secret Access Key">
+              <UInput v-model="storageSecretKey" type="password" class="w-full" />
+            </UFormField>
+          </template>
+
+          <p class="text-xs text-muted">
+            Credentials are stored in your OS keychain and never leave this device.
+            You can change these anytime in Settings.
+          </p>
+        </template>
+
+        <p v-if="!storageEnabled" class="text-xs text-muted border border-default rounded-lg p-3">
+          Files will be saved to <span class="font-mono">~/Library/Application Support/com.trackmyfi.desktop/attachments/</span>.
+          They stay on this machine only.
+        </p>
       </div>
 
       <!-- Navigation -->

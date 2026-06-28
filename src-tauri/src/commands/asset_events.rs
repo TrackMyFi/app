@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::models::AssetEvent;
+use crate::models::{AssetAttachment, AssetEvent};
 use libsql::{params, Connection};
 use serde::Deserialize;
 use tauri::State;
@@ -49,6 +49,7 @@ pub struct AssetEventFilter {
     pub search: Option<String>,
 }
 
+// col 14 is a boolean from a subquery — see the SELECT wrapper in list/get below.
 const COLS: &str = "id, account_id, asset_label, date, description, kind, cost, asset_value, \
     vendor, notes, life_expectancy, linked_transaction_id, created_at, updated_at";
 
@@ -68,7 +69,75 @@ fn row_to_asset_event(row: &libsql::Row) -> Result<AssetEvent, String> {
         linked_transaction_id: row.get(11).map_err(|e| e.to_string())?,
         created_at: row.get(12).map_err(|e| e.to_string())?,
         updated_at: row.get(13).map_err(|e| e.to_string())?,
+        // col 14: EXISTS subquery returns 0/1 as integer; map to bool
+        has_attachment: row.get::<i64>(14).unwrap_or(0) != 0,
     })
+}
+
+fn row_to_attachment(row: &libsql::Row) -> Result<AssetAttachment, String> {
+    Ok(AssetAttachment {
+        id: row.get(0).map_err(|e| e.to_string())?,
+        asset_event_id: row.get(1).map_err(|e| e.to_string())?,
+        object_key: row.get(2).map_err(|e| e.to_string())?,
+        original_name: row.get(3).map_err(|e| e.to_string())?,
+        provider: row.get(4).map_err(|e| e.to_string())?,
+        byte_size: row.get(5).map_err(|e| e.to_string())?,
+        created_at: row.get(6).map_err(|e| e.to_string())?,
+    })
+}
+
+pub async fn list_attachments(conn: &Connection, asset_event_id: i32) -> Result<Vec<AssetAttachment>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT id, asset_event_id, object_key, original_name, provider, byte_size, created_at \
+             FROM asset_attachment WHERE asset_event_id = ?1 ORDER BY id",
+            params![asset_event_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_attachment(&row)?);
+    }
+    Ok(out)
+}
+
+pub async fn insert_attachment(
+    conn: &Connection,
+    asset_event_id: i32,
+    object_key: &str,
+    original_name: &str,
+    provider: &str,
+    byte_size: Option<i64>,
+    created_at: &str,
+) -> Result<AssetAttachment, String> {
+    conn.execute(
+        "INSERT INTO asset_attachment (asset_event_id, object_key, original_name, provider, byte_size, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![asset_event_id, object_key, original_name, provider, byte_size, created_at],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid() as i32;
+    let mut rows = conn
+        .query(
+            "SELECT id, asset_event_id, object_key, original_name, provider, byte_size, created_at \
+             FROM asset_attachment WHERE id = ?1",
+            params![id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => row_to_attachment(&row),
+        None => Err(format!("attachment {id} not found after insert")),
+    }
+}
+
+pub async fn delete_attachment_row(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute("DELETE FROM asset_attachment WHERE id = ?1", params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // At least one of account_id / non-empty asset_label must be present.
@@ -81,7 +150,10 @@ fn validate_asset_ref(account_id: Option<i32>, asset_label: &Option<String>) -> 
 }
 
 pub async fn get_asset_event(conn: &Connection, id: i32) -> Result<AssetEvent, String> {
-    let sql = format!("SELECT {COLS} FROM asset_event WHERE id = ?1");
+    let sql = format!(
+        "SELECT {COLS}, EXISTS(SELECT 1 FROM asset_attachment WHERE asset_event_id = asset_event.id) \
+         FROM asset_event WHERE id = ?1"
+    );
     let mut rows = conn.query(&sql, params![id]).await.map_err(|e| e.to_string())?;
     match rows.next().await.map_err(|e| e.to_string())? {
         Some(row) => row_to_asset_event(&row),
@@ -126,7 +198,10 @@ pub async fn list_asset_events(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
 
-    let sql = format!("SELECT {COLS} FROM asset_event {where_sql} ORDER BY date DESC, id DESC");
+    let sql = format!(
+        "SELECT {COLS}, EXISTS(SELECT 1 FROM asset_attachment WHERE asset_event_id = asset_event.id) \
+         FROM asset_event {where_sql} ORDER BY date DESC, id DESC"
+    );
     let mut rows = conn
         .query(&sql, libsql::params_from_iter(bind_params))
         .await
@@ -225,7 +300,21 @@ pub async fn update_asset_event_cmd(
 }
 
 #[tauri::command]
-pub async fn delete_asset_event_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+pub async fn delete_asset_event_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    id: i32,
+) -> Result<(), String> {
     let conn = db.conn().await?;
+    // Fetch attachments before deletion so we can remove objects from storage.
+    let attachments = list_attachments(&conn, id).await.unwrap_or_default();
+    if !attachments.is_empty() {
+        if let Ok(store) = crate::storage::build_object_store(&app) {
+            for att in &attachments {
+                let path = object_store::path::Path::from(att.object_key.as_str());
+                let _ = store.delete(&path).await; // best-effort; DB cascade still cleans the row
+            }
+        }
+    }
     delete_asset_event(&conn, id).await
 }

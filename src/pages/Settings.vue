@@ -5,6 +5,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useSyncStore } from '../stores/sync'
+import { useStorageStore } from '../stores/storage'
 import { useUpdaterStore, CHECK_INTERVAL_MS } from '../stores/updater'
 import {
   saveSyncConfig,
@@ -75,6 +76,13 @@ onMounted(() => run(async () => {
   if (store.profile) Object.assign(form, store.profile)
   categoryRules.value = await categoryRulesApi.listCategoryRules()
   await updater.loadVersion()
+  await storageStore.load()
+  if (storageStore.config) {
+    storageProvider.value = storageStore.config.provider || 'local'
+    storageBucket.value = storageStore.config.bucketName ?? ''
+    storageR2AccountId.value = storageStore.config.r2AccountId ?? ''
+    storageS3Region.value = storageStore.config.s3Region ?? ''
+  }
 }))
 
 async function onSubmit() {
@@ -108,6 +116,25 @@ const syncUrl = ref('')
 const syncToken = ref('')
 const syncBusy = ref(false)
 const syncMessage = ref('')
+
+// ---- Attachment Storage ----
+const storageStore = useStorageStore()
+const storageProvider = ref('local')
+const storageBucket = ref('')
+const storageR2AccountId = ref('')
+const storageS3Region = ref('')
+const storageAccessKey = ref('')
+const storageSecretKey = ref('')
+const storageServiceAccountJson = ref('')
+const storageBusy = ref(false)
+const storageMessage = ref('')
+
+const PROVIDER_OPTIONS = [
+  { label: 'Local storage (no sync)', value: 'local' },
+  { label: 'Cloudflare R2', value: 'r2' },
+  { label: 'Google Cloud Storage', value: 'gcs' },
+  { label: 'Amazon S3', value: 's3' },
+]
 
 const showDeleteModal = ref(false)
 
@@ -214,6 +241,55 @@ const ruleColumns = [
   { accessorKey: 'category', header: 'Category', cell: ({ row }: { row: { original: { category: string } } }) => labelForCategory(row.original.category) },
   { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
 ]
+
+async function saveStorageSettings() {
+  storageBusy.value = true
+  storageMessage.value = ''
+  try {
+    await storageStore.save({
+      provider: storageProvider.value,
+      bucketName: storageBucket.value.trim() || null,
+      r2AccountId: storageR2AccountId.value.trim() || null,
+      s3Region: storageS3Region.value.trim() || null,
+      accessKeyId: storageAccessKey.value.trim() || null,
+      secretAccessKey: storageSecretKey.value.trim() || null,
+      serviceAccountJson: storageServiceAccountJson.value.trim() || null,
+    })
+    storageAccessKey.value = ''
+    storageSecretKey.value = ''
+    storageServiceAccountJson.value = ''
+    storageMessage.value = ''
+    toast.add({ title: 'Attachment storage saved', color: 'success' })
+  } catch (e) {
+    storageMessage.value = String(e)
+  } finally {
+    storageBusy.value = false
+  }
+}
+
+async function clearStorageSettings() {
+  const ok = await confirm(
+    'Reset to local storage? Existing cloud-stored attachments will remain in the bucket but won\'t be accessible from this device until you reconnect.',
+    { title: 'Clear storage config', kind: 'warning' },
+  )
+  if (!ok) return
+  storageBusy.value = true
+  try {
+    await storageStore.clear()
+    storageProvider.value = 'local'
+    storageBucket.value = ''
+    storageR2AccountId.value = ''
+    storageS3Region.value = ''
+    storageAccessKey.value = ''
+    storageSecretKey.value = ''
+    storageServiceAccountJson.value = ''
+    toast.add({ title: 'Attachment storage reset to local', color: 'success' })
+  } catch (e) {
+    storageMessage.value = String(e)
+  } finally {
+    storageBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -346,6 +422,90 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
           </div>
         </template>
       </UAccordion>
+    </section>
+
+    <hr class="border-default" />
+
+    <section class="space-y-3">
+      <h2 class="text-xl font-bold">Attachment Storage</h2>
+      <p class="text-sm text-muted">
+        Where receipts and files attached to asset events are stored. Local storage is private to
+        this machine. Cloud providers let attachments follow you across devices when the same
+        bucket is configured everywhere.
+      </p>
+
+      <div class="text-sm">
+        Current:
+        <span class="font-medium">{{ storageStore.providerLabel }}</span>
+        <template v-if="storageStore.config?.bucketName">
+          · <span class="font-mono">{{ storageStore.config.bucketName }}</span>
+        </template>
+        <template v-if="storageStore.provider === 'local' && storageStore.config?.localPath">
+          <br />
+          <span class="text-muted font-mono text-xs">{{ storageStore.config.localPath }}</span>
+        </template>
+      </div>
+
+      <UFormField label="Provider">
+        <USelect v-model="storageProvider" :items="PROVIDER_OPTIONS" class="w-72" />
+      </UFormField>
+
+      <!-- R2 fields -->
+      <template v-if="storageProvider === 'r2'">
+        <UFormField label="Account ID">
+          <UInput v-model="storageR2AccountId" placeholder="abc123..." class="w-full" />
+        </UFormField>
+        <UFormField label="Bucket name">
+          <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+        </UFormField>
+        <UFormField label="Access Key ID">
+          <UInput v-model="storageAccessKey" placeholder="Leave blank to keep existing" class="w-full" />
+        </UFormField>
+        <UFormField label="Secret Access Key">
+          <UInput v-model="storageSecretKey" type="password" placeholder="Leave blank to keep existing" class="w-full" />
+        </UFormField>
+      </template>
+
+      <!-- GCS fields -->
+      <template v-else-if="storageProvider === 'gcs'">
+        <UFormField label="Bucket name">
+          <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+        </UFormField>
+        <UFormField label="Service account JSON key" hint="Paste the full JSON from your GCP service account key file">
+          <UTextarea v-model="storageServiceAccountJson" :rows="6" placeholder='{"type":"service_account",...}' class="w-full font-mono text-xs" />
+        </UFormField>
+      </template>
+
+      <!-- S3 fields -->
+      <template v-else-if="storageProvider === 's3'">
+        <UFormField label="Bucket name">
+          <UInput v-model="storageBucket" placeholder="trackmyfi-attachments" class="w-full" />
+        </UFormField>
+        <UFormField label="Region">
+          <UInput v-model="storageS3Region" placeholder="us-east-1" class="w-full" />
+        </UFormField>
+        <UFormField label="Access Key ID">
+          <UInput v-model="storageAccessKey" placeholder="Leave blank to keep existing" class="w-full" />
+        </UFormField>
+        <UFormField label="Secret Access Key">
+          <UInput v-model="storageSecretKey" type="password" placeholder="Leave blank to keep existing" class="w-full" />
+        </UFormField>
+      </template>
+
+      <div class="flex gap-2">
+        <UButton :loading="storageBusy" @click="saveStorageSettings">Save storage settings</UButton>
+        <UButton
+          v-if="storageStore.provider !== 'local'"
+          color="error"
+          variant="soft"
+          :loading="storageBusy"
+          @click="clearStorageSettings"
+        >
+          Reset to local
+        </UButton>
+      </div>
+
+      <p v-if="storageMessage" class="text-sm text-error" aria-live="polite">{{ storageMessage }}</p>
     </section>
 
     <hr class="border-default" />

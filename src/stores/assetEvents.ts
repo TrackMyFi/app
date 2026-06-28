@@ -15,12 +15,14 @@ export const useAssetEventsStore = defineStore('assetEvents', () => {
     await load()
   }
   async function create(e: api.NewAssetEvent) {
-    await api.createAssetEvent(e)
+    const result = await api.createAssetEvent(e)
     await load()
+    return result
   }
   async function update(e: api.UpdateAssetEvent) {
-    await api.updateAssetEvent(e)
+    const result = await api.updateAssetEvent(e)
     await load()
+    return result
   }
   async function remove(id: number) {
     await api.deleteAssetEvent(id)

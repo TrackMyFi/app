@@ -2,6 +2,7 @@ pub mod commands;
 pub mod db;
 pub mod migrations;
 pub mod models;
+pub mod storage;
 pub mod sync;
 
 use tauri::{LogicalSize, Manager, RunEvent};
@@ -151,6 +152,13 @@ pub fn run() {
             commands::asset_events::create_asset_event_cmd,
             commands::asset_events::update_asset_event_cmd,
             commands::asset_events::delete_asset_event_cmd,
+            commands::storage::get_storage_config_cmd,
+            commands::storage::save_storage_config_cmd,
+            commands::storage::clear_storage_config_cmd,
+            commands::storage::list_attachments_cmd,
+            commands::storage::upload_attachment_cmd,
+            commands::storage::delete_attachment_cmd,
+            commands::storage::open_attachment_cmd,
             commands::contributions::list_contribution_txns_cmd,
             commands::contributions::list_contribution_years_cmd,
             commands::budget::list_budget_months_cmd,

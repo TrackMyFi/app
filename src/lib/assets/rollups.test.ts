@@ -26,6 +26,7 @@ const ev = (over: Partial<AssetEvent>): AssetEvent => ({
   linkedTransactionId: null,
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',
+  hasAttachment: false,
   ...over,
 })
 

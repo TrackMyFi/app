@@ -75,7 +75,7 @@ pub struct KeyringStore;
 // old item). We then delete the old entry and recreate it with the permissive ACL,
 // so every subsequent read — including after future updates — is prompt-free.
 #[cfg(target_os = "macos")]
-mod macos_keychain {
+pub mod macos_keychain {
     use core_foundation::{
         base::TCFType,
         boolean::CFBoolean,

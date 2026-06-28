@@ -210,6 +210,9 @@ onMounted(() => run(async () => {
             </td>
             <td class="px-4 py-2 text-right tabular-nums">{{ money(e.cost) }}</td>
             <td class="px-4 py-2 text-right whitespace-nowrap">
+              <UTooltip v-if="e.hasAttachment" text="Has attachment">
+                <span class="i-ph-paperclip inline-block text-muted mr-1 align-middle" />
+              </UTooltip>
               <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(e)" />
               <UButton
                 size="xs"
