@@ -5,13 +5,24 @@ use tauri::{AppHandle, Manager};
 
 use object_store::ObjectStore;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
     pub provider: String, // "local" | "r2" | "gcs" | "s3"
     pub bucket_name: Option<String>,
     pub r2_account_id: Option<String>,
     pub s3_region: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            provider: "local".into(),
+            bucket_name: None,
+            r2_account_id: None,
+            s3_region: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -29,28 +40,58 @@ const KEYCHAIN_SERVICE: &str = "com.trackmyfi.desktop.dev";
 const KEYCHAIN_SERVICE: &str = "com.trackmyfi.desktop";
 const KEYCHAIN_STORAGE_USER: &str = "storage-credentials";
 
-pub fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = crate::db::resolve_app_dir(app.path().app_config_dir().map_err(|e| e.to_string())?);
-    Ok(dir.join("storage.json"))
-}
-
-pub fn read_storage_config(app: &AppHandle) -> StorageConfig {
-    let Ok(path) = config_path(app) else {
-        return StorageConfig::default();
+/// Reads non-secret storage config from the DB (synced via Turso).
+pub async fn read_storage_config_db(conn: &libsql::Connection) -> StorageConfig {
+    let mut rows = match conn
+        .query(
+            "SELECT provider, bucket_name, r2_account_id, s3_region \
+             FROM storage_config WHERE id = 1",
+            (),
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return StorageConfig::default(),
     };
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => StorageConfig::default(),
+    match rows.next().await {
+        Ok(Some(row)) => {
+            let provider = row
+                .get::<String>(0)
+                .unwrap_or_else(|_| "local".into());
+            StorageConfig {
+                provider: if provider.is_empty() { "local".into() } else { provider },
+                bucket_name: row.get::<Option<String>>(1).unwrap_or(None),
+                r2_account_id: row.get::<Option<String>>(2).unwrap_or(None),
+                s3_region: row.get::<Option<String>>(3).unwrap_or(None),
+            }
+        }
+        _ => StorageConfig::default(),
     }
 }
 
-pub fn write_storage_config(app: &AppHandle, cfg: &StorageConfig) -> Result<(), String> {
-    let path = config_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+/// Writes non-secret storage config to the DB (syncs via Turso automatically).
+pub async fn write_storage_config_db(
+    conn: &libsql::Connection,
+    cfg: &StorageConfig,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO storage_config (id, provider, bucket_name, r2_account_id, s3_region)
+         VALUES (1, ?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+           provider      = excluded.provider,
+           bucket_name   = excluded.bucket_name,
+           r2_account_id = excluded.r2_account_id,
+           s3_region     = excluded.s3_region",
+        libsql::params![
+            cfg.provider.clone(),
+            cfg.bucket_name.clone(),
+            cfg.r2_account_id.clone(),
+            cfg.s3_region.clone(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn read_credentials() -> Result<Option<StorageCredentials>, String> {
@@ -142,12 +183,15 @@ pub fn build_store_from_spec(spec: &StoreSpec) -> Result<Arc<dyn ObjectStore>, S
     }
 }
 
-pub fn build_object_store(app: &AppHandle) -> Result<Arc<dyn ObjectStore>, String> {
-    let cfg = read_storage_config(app);
+pub async fn build_object_store(
+    app: &AppHandle,
+    conn: &libsql::Connection,
+) -> Result<Arc<dyn ObjectStore>, String> {
+    let cfg = read_storage_config_db(conn).await;
     let creds = read_credentials()?.unwrap_or_default();
     let local_dir = local_attachments_dir(app)?;
     build_store_from_spec(&StoreSpec {
-        provider: if cfg.provider.is_empty() { "local".into() } else { cfg.provider },
+        provider: cfg.provider,
         bucket_name: cfg.bucket_name,
         r2_account_id: cfg.r2_account_id,
         s3_region: cfg.s3_region,

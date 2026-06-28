@@ -2,8 +2,8 @@ use crate::db::Db;
 use crate::models::{AssetAttachment, MigrationSummary, StorageInfo};
 use crate::storage::{
     build_object_store, build_store_from_spec, delete_credentials, local_attachments_dir,
-    read_credentials, read_storage_config, write_credentials, write_storage_config, StorageConfig,
-    StorageCredentials, StoreSpec,
+    read_credentials, read_storage_config_db, write_credentials, write_storage_config_db,
+    StorageConfig, StorageCredentials, StoreSpec,
 };
 use bytes::Bytes;
 use object_store::ObjectStore;
@@ -23,38 +23,44 @@ pub struct SaveStorageConfigArgs {
 }
 
 #[tauri::command]
-pub async fn get_storage_config_cmd(app: tauri::AppHandle) -> Result<StorageInfo, String> {
-    let cfg = read_storage_config(&app);
+pub async fn get_storage_config_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<StorageInfo, String> {
+    let conn = db.conn().await?;
+    let cfg = read_storage_config_db(&conn).await;
     let local_path = local_attachments_dir(&app)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "unavailable".into());
-    let has_credentials = read_credentials()
-        .map(|c| c.is_some())
-        .unwrap_or(false);
+    let has_credentials = read_credentials().map(|c| c.is_some()).unwrap_or(false);
+    let needs_credentials = cfg.provider != "local" && !has_credentials;
     Ok(StorageInfo {
-        provider: if cfg.provider.is_empty() { "local".into() } else { cfg.provider },
+        provider: cfg.provider,
         bucket_name: cfg.bucket_name,
         r2_account_id: cfg.r2_account_id,
         s3_region: cfg.s3_region,
         local_path,
         has_credentials,
+        needs_credentials,
     })
 }
 
 #[tauri::command]
 pub async fn save_storage_config_cmd(
-    app: tauri::AppHandle,
+    db: State<'_, Db>,
     args: SaveStorageConfigArgs,
 ) -> Result<(), String> {
-    write_storage_config(
-        &app,
+    let conn = db.conn().await?;
+    write_storage_config_db(
+        &conn,
         &StorageConfig {
             provider: args.provider.clone(),
             bucket_name: args.bucket_name,
             r2_account_id: args.r2_account_id,
             s3_region: args.s3_region,
         },
-    )?;
+    )
+    .await?;
 
     // Only write credentials when the provider actually needs them.
     if args.provider != "local" {
@@ -70,8 +76,9 @@ pub async fn save_storage_config_cmd(
 }
 
 #[tauri::command]
-pub async fn clear_storage_config_cmd(app: tauri::AppHandle) -> Result<(), String> {
-    write_storage_config(&app, &StorageConfig::default())?;
+pub async fn clear_storage_config_cmd(db: State<'_, Db>) -> Result<(), String> {
+    let conn = db.conn().await?;
+    write_storage_config_db(&conn, &StorageConfig::default()).await?;
     let _ = delete_credentials(); // best-effort; may not exist
     Ok(())
 }
@@ -97,13 +104,14 @@ pub async fn migrate_and_save_storage_config_cmd(
     new_args: SaveStorageConfigArgs,
 ) -> Result<MigrationSummary, String> {
     let local_dir = local_attachments_dir(&app)?;
+    let conn = db.conn().await?;
 
     // Source = currently saved config + credentials (still intact at this point).
-    let src_store = build_object_store(&app)?;
-    let src_cfg = read_storage_config(&app);
-    let src_provider = if src_cfg.provider.is_empty() { "local".to_string() } else { src_cfg.provider };
+    let src_store = build_object_store(&app, &conn).await?;
+    let src_cfg = read_storage_config_db(&conn).await;
+    let src_provider = src_cfg.provider;
 
-    // Destination = new args (not yet saved to disk).
+    // Destination = new args (not yet saved to DB).
     let dst_provider = new_args.provider.clone();
     let dst_store = build_store_from_spec(&StoreSpec {
         provider: dst_provider.clone(),
@@ -117,7 +125,6 @@ pub async fn migrate_and_save_storage_config_cmd(
     })?;
 
     // Fetch every attachment stored under the source provider.
-    let conn = db.conn().await?;
     let attachments = crate::commands::asset_events::list_attachments_by_provider(
         &conn,
         &src_provider,
@@ -172,15 +179,16 @@ pub async fn migrate_and_save_storage_config_cmd(
     }
 
     // Now safe to save the new config (migration is done; old creds no longer needed).
-    write_storage_config(
-        &app,
+    write_storage_config_db(
+        &conn,
         &StorageConfig {
             provider: new_args.provider.clone(),
             bucket_name: new_args.bucket_name,
             r2_account_id: new_args.r2_account_id,
             s3_region: new_args.s3_region,
         },
-    )?;
+    )
+    .await?;
     if new_args.provider != "local" {
         write_credentials(&StorageCredentials {
             access_key_id: new_args.access_key_id,
@@ -222,17 +230,14 @@ pub async fn upload_attachment_cmd(
     let byte_size = data.len() as i64;
     let bytes = Bytes::from(data);
 
-    let cfg = read_storage_config(&app);
-    let provider = if cfg.provider.is_empty() { "local".to_string() } else { cfg.provider };
+    let conn = db.conn().await?;
+    let cfg = read_storage_config_db(&conn).await;
+    let provider = cfg.provider;
 
-    // Generate a stable, content-addressed-style key independent of event ID.
-    let object_key = format!(
-        "attachments/{}/{}",
-        uuid::Uuid::new_v4(),
-        original_name
-    );
+    // Generate a stable key independent of event ID.
+    let object_key = format!("attachments/{}/{}", uuid::Uuid::new_v4(), original_name);
 
-    let store = build_object_store(&app)?;
+    let store = build_object_store(&app, &conn).await?;
     let obj_path = object_store::path::Path::from(object_key.as_str());
     store
         .put(&obj_path, bytes.into())
@@ -240,7 +245,6 @@ pub async fn upload_attachment_cmd(
         .map_err(|e| e.to_string())?;
 
     let created_at = chrono_now();
-    let conn = db.conn().await?;
     crate::commands::asset_events::insert_attachment(
         &conn,
         asset_event_id,
@@ -260,7 +264,6 @@ pub async fn delete_attachment_cmd(
     attachment_id: i32,
 ) -> Result<(), String> {
     let conn = db.conn().await?;
-    // Fetch the attachment to get its object key before deleting the row.
     let mut rows = conn
         .query(
             "SELECT id, asset_event_id, object_key, original_name, provider, byte_size, created_at \
@@ -278,13 +281,9 @@ pub async fn delete_attachment_cmd(
     drop(rows);
 
     // Only attempt to delete from storage if the attachment was stored with the current provider.
-    let current_provider = {
-        let cfg = read_storage_config(&app);
-        if cfg.provider.is_empty() { "local".to_string() } else { cfg.provider }
-    };
-
+    let current_provider = read_storage_config_db(&conn).await.provider;
     if provider == current_provider {
-        if let Ok(store) = build_object_store(&app) {
+        if let Ok(store) = build_object_store(&app, &conn).await {
             let path = object_store::path::Path::from(object_key.as_str());
             let _ = store.delete(&path).await; // best-effort
         }
@@ -317,19 +316,15 @@ pub async fn open_attachment_cmd(
     let provider: String = row.get(4).map_err(|e| e.to_string())?;
     drop(rows);
 
-    let current_provider = {
-        let cfg = read_storage_config(&app);
-        if cfg.provider.is_empty() { "local".to_string() } else { cfg.provider }
-    };
-
+    let current_provider = read_storage_config_db(&conn).await.provider;
     if provider != current_provider {
         return Err(format!(
-            "This attachment was stored using '{provider}' but this device is configured for '{current_provider}'. \
-             Configure the same storage provider on this device to open it."
+            "This attachment was stored using '{provider}' but this device is configured for \
+             '{current_provider}'. Configure the same storage provider on this device to open it."
         ));
     }
 
-    let store = build_object_store(&app)?;
+    let store = build_object_store(&app, &conn).await?;
     let path = object_store::path::Path::from(object_key.as_str());
     let result = store.get(&path).await.map_err(|e| e.to_string())?;
     let data = result.bytes().await.map_err(|e| e.to_string())?;
@@ -346,13 +341,10 @@ pub async fn open_attachment_cmd(
 
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    // Format as ISO 8601 without pulling in chrono.
-    // We use the same pattern the frontend sends for created_at on other entities.
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    // Basic ISO string — good enough for storage; precise ms not required.
     let (y, mo, d, h, mi, s) = epoch_to_parts(secs);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }
@@ -364,7 +356,6 @@ fn epoch_to_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     let total_h = total_min / 60;
     let h = total_h % 24;
     let total_days = total_h / 24;
-    // Gregorian calendar approximation.
     let (y, yd) = days_to_year(total_days);
     let (mo, d) = yd_to_month_day(y, yd);
     (y, mo, d, h, mi, s)

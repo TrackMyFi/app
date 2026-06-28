@@ -340,6 +340,17 @@ async function save() {
                  @click="removePending(i)" />
       </div>
 
+      <!-- Cross-device credential warning -->
+      <div v-if="storageStore.needsCredentials"
+           class="flex items-start gap-2 rounded border border-warning bg-warning/10 px-3 py-2 text-xs">
+        <span class="i-ph-key-duotone mt-0.5 shrink-0 text-warning" />
+        <span class="text-warning">
+          {{ storageStore.providerLabel }} credentials aren't set up on this device yet —
+          uploads will fail until you add them in
+          <router-link to="/settings" class="underline">Settings → Attachment Storage</router-link>.
+        </span>
+      </div>
+
       <!-- Pick button (always visible) -->
       <div class="flex items-center gap-3">
         <UButton type="button" color="neutral" variant="outline" size="sm"

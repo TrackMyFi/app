@@ -74,6 +74,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "asset_attachments",
         sql: include_str!("../migrations/0013_asset_attachments.sql"),
     },
+    Migration {
+        version: 14,
+        name: "storage_config",
+        sql: include_str!("../migrations/0014_storage_config.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {

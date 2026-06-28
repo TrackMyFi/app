@@ -176,6 +176,9 @@ pub struct StorageInfo {
     pub s3_region: Option<String>,
     pub local_path: String,
     pub has_credentials: bool,
+    /// True when a cloud provider is configured (synced from another device) but no
+    /// credentials exist in this device's keychain yet.
+    pub needs_credentials: bool,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

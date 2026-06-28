@@ -359,7 +359,7 @@ pub async fn delete_asset_event_cmd(
     // Fetch attachments before deletion so we can remove objects from storage.
     let attachments = list_attachments(&conn, id).await.unwrap_or_default();
     if !attachments.is_empty() {
-        if let Ok(store) = crate::storage::build_object_store(&app) {
+        if let Ok(store) = crate::storage::build_object_store(&app, &conn).await {
             for att in &attachments {
                 let path = object_store::path::Path::from(att.object_key.as_str());
                 let _ = store.delete(&path).await; // best-effort; DB cascade still cleans the row

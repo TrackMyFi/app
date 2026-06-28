@@ -487,6 +487,22 @@ turso db tokens create trackmyfi     # the auth token</code></pre>
         </template>
       </div>
 
+      <!-- Cross-device credential prompt: config synced from another device but no local keychain entry -->
+      <div
+        v-if="storageStore.needsCredentials"
+        class="flex items-start gap-3 rounded-lg border border-warning bg-warning/10 px-4 py-3 text-sm"
+      >
+        <span class="i-ph-key-duotone mt-0.5 shrink-0 text-warning text-base" />
+        <div class="space-y-1">
+          <p class="font-medium text-warning">Credentials needed on this device</p>
+          <p class="text-muted">
+            {{ storageStore.providerLabel }} is configured (synced from another device) but no
+            credentials have been entered here yet. Enter them below and click
+            <strong>Save storage settings</strong> to enable attachments on this device.
+          </p>
+        </div>
+      </div>
+
       <UFormField label="Provider">
         <USelect v-model="storageProvider" :items="PROVIDER_OPTIONS" class="w-72" />
       </UFormField>

@@ -11,6 +11,8 @@ export const useStorageStore = defineStore('storage', () => {
 
   const provider = computed(() => config.value?.provider ?? 'local')
 
+  const needsCredentials = computed(() => config.value?.needsCredentials ?? false)
+
   const isCloudProvider = computed(() =>
     ['r2', 'gcs', 's3'].includes(provider.value),
   )
@@ -57,6 +59,7 @@ export const useStorageStore = defineStore('storage', () => {
     loading,
     error,
     provider,
+    needsCredentials,
     isCloudProvider,
     providerLabel,
     syncLabel,
