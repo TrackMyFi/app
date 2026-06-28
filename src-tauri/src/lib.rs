@@ -155,6 +155,8 @@ pub fn run() {
             commands::storage::get_storage_config_cmd,
             commands::storage::save_storage_config_cmd,
             commands::storage::clear_storage_config_cmd,
+            commands::storage::count_migratable_attachments_cmd,
+            commands::storage::migrate_and_save_storage_config_cmd,
             commands::storage::list_attachments_cmd,
             commands::storage::upload_attachment_cmd,
             commands::storage::delete_attachment_cmd,

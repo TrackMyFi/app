@@ -1,9 +1,9 @@
 use crate::db::Db;
-use crate::models::{AssetAttachment, StorageInfo};
+use crate::models::{AssetAttachment, MigrationSummary, StorageInfo};
 use crate::storage::{
-    build_object_store, delete_credentials, local_attachments_dir, read_credentials,
-    read_storage_config, write_credentials, write_storage_config, StorageConfig,
-    StorageCredentials,
+    build_object_store, build_store_from_spec, delete_credentials, local_attachments_dir,
+    read_credentials, read_storage_config, write_credentials, write_storage_config, StorageConfig,
+    StorageCredentials, StoreSpec,
 };
 use bytes::Bytes;
 use object_store::ObjectStore;
@@ -74,6 +74,125 @@ pub async fn clear_storage_config_cmd(app: tauri::AppHandle) -> Result<(), Strin
     write_storage_config(&app, &StorageConfig::default())?;
     let _ = delete_credentials(); // best-effort; may not exist
     Ok(())
+}
+
+/// Returns the number of attachments not yet stored in `new_provider`.
+/// Used by the UI to decide whether to offer a migration prompt.
+#[tauri::command]
+pub async fn count_migratable_attachments_cmd(
+    db: State<'_, Db>,
+    new_provider: String,
+) -> Result<i64, String> {
+    let conn = db.conn().await?;
+    crate::commands::asset_events::count_attachments_not_provider(&conn, &new_provider).await
+}
+
+/// Migrates all attachments stored under the current configured provider to the new
+/// provider specified in `new_args`, then saves the new config. Running migration
+/// before saving ensures the old credentials are still available as the source.
+#[tauri::command]
+pub async fn migrate_and_save_storage_config_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    new_args: SaveStorageConfigArgs,
+) -> Result<MigrationSummary, String> {
+    let local_dir = local_attachments_dir(&app)?;
+
+    // Source = currently saved config + credentials (still intact at this point).
+    let src_store = build_object_store(&app)?;
+    let src_cfg = read_storage_config(&app);
+    let src_provider = if src_cfg.provider.is_empty() { "local".to_string() } else { src_cfg.provider };
+
+    // Destination = new args (not yet saved to disk).
+    let dst_provider = new_args.provider.clone();
+    let dst_store = build_store_from_spec(&StoreSpec {
+        provider: dst_provider.clone(),
+        bucket_name: new_args.bucket_name.clone(),
+        r2_account_id: new_args.r2_account_id.clone(),
+        s3_region: new_args.s3_region.clone(),
+        access_key_id: new_args.access_key_id.clone(),
+        secret_access_key: new_args.secret_access_key.clone(),
+        service_account_json: new_args.service_account_json.clone(),
+        local_dir: local_dir.clone(),
+    })?;
+
+    // Fetch every attachment stored under the source provider.
+    let conn = db.conn().await?;
+    let attachments = crate::commands::asset_events::list_attachments_by_provider(
+        &conn,
+        &src_provider,
+    )
+    .await?;
+
+    let mut migrated = 0i64;
+    let mut failed_names: Vec<String> = Vec::new();
+
+    for att in &attachments {
+        let obj_path = object_store::path::Path::from(att.object_key.as_str());
+
+        // Download from source.
+        let get_result = match src_store.get(&obj_path).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("migration: get {} failed: {e}", att.object_key);
+                failed_names.push(att.original_name.clone());
+                continue;
+            }
+        };
+        let data: bytes::Bytes = match get_result.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("migration: read {} failed: {e}", att.object_key);
+                failed_names.push(att.original_name.clone());
+                continue;
+            }
+        };
+
+        // Upload to destination.
+        if let Err(e) = dst_store.put(&obj_path, data.into()).await {
+            eprintln!("migration: put {} failed: {e}", att.object_key);
+            failed_names.push(att.original_name.clone());
+            continue;
+        }
+
+        // Update the provider in the DB row.
+        if let Err(e) = crate::commands::asset_events::update_attachment_provider(
+            &conn,
+            att.id,
+            &dst_provider,
+        )
+        .await
+        {
+            eprintln!("migration: db update {} failed: {e}", att.id);
+            failed_names.push(att.original_name.clone());
+            continue;
+        }
+
+        migrated += 1;
+    }
+
+    // Now safe to save the new config (migration is done; old creds no longer needed).
+    write_storage_config(
+        &app,
+        &StorageConfig {
+            provider: new_args.provider.clone(),
+            bucket_name: new_args.bucket_name,
+            r2_account_id: new_args.r2_account_id,
+            s3_region: new_args.s3_region,
+        },
+    )?;
+    if new_args.provider != "local" {
+        write_credentials(&StorageCredentials {
+            access_key_id: new_args.access_key_id,
+            secret_access_key: new_args.secret_access_key,
+            service_account_json: new_args.service_account_json,
+        })?;
+    } else {
+        let _ = delete_credentials();
+    }
+
+    let failed = failed_names.len() as i64;
+    Ok(MigrationSummary { migrated, failed, failed_names })
 }
 
 #[tauri::command]

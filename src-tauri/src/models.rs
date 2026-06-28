@@ -160,6 +160,15 @@ pub struct AssetAttachment {
 #[derive(Serialize, TS, Clone)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
+pub struct MigrationSummary {
+    pub migrated: i64,
+    pub failed: i64,
+    pub failed_names: Vec<String>,
+}
+
+#[derive(Serialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
 pub struct StorageInfo {
     pub provider: String,
     pub bucket_name: Option<String>,

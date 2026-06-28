@@ -140,6 +140,56 @@ pub async fn delete_attachment_row(conn: &Connection, id: i32) -> Result<(), Str
     Ok(())
 }
 
+pub async fn update_attachment_provider(
+    conn: &Connection,
+    id: i32,
+    provider: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE asset_attachment SET provider = ?1 WHERE id = ?2",
+        params![provider, id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn list_attachments_by_provider(
+    conn: &Connection,
+    provider: &str,
+) -> Result<Vec<AssetAttachment>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT id, asset_event_id, object_key, original_name, provider, byte_size, created_at \
+             FROM asset_attachment WHERE provider = ?1 ORDER BY id",
+            params![provider],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_attachment(&row)?);
+    }
+    Ok(out)
+}
+
+pub async fn count_attachments_not_provider(
+    conn: &Connection,
+    provider: &str,
+) -> Result<i64, String> {
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM asset_attachment WHERE provider != ?1",
+            params![provider],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => row.get::<i64>(0).map_err(|e| e.to_string()),
+        None => Ok(0),
+    }
+}
+
 // At least one of account_id / non-empty asset_label must be present.
 fn validate_asset_ref(account_id: Option<i32>, asset_label: &Option<String>) -> Result<(), String> {
     let has_label = asset_label.as_deref().is_some_and(|s| !s.trim().is_empty());

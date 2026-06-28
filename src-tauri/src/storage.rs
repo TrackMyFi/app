@@ -77,16 +77,27 @@ pub fn local_attachments_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-pub fn build_object_store(app: &AppHandle) -> Result<Arc<dyn ObjectStore>, String> {
-    let cfg = read_storage_config(app);
-    match cfg.provider.as_str() {
+/// Inline spec for building a store without reading from disk. Used during migration
+/// so we can construct the destination store from form input before saving new config.
+pub struct StoreSpec {
+    pub provider: String,
+    pub bucket_name: Option<String>,
+    pub r2_account_id: Option<String>,
+    pub s3_region: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    pub service_account_json: Option<String>,
+    /// Directory used when provider is "local".
+    pub local_dir: PathBuf,
+}
+
+pub fn build_store_from_spec(spec: &StoreSpec) -> Result<Arc<dyn ObjectStore>, String> {
+    match spec.provider.as_str() {
         "r2" => {
-            let bucket = cfg.bucket_name.ok_or("R2 bucket name is required")?;
-            let account_id = cfg.r2_account_id.ok_or("R2 account ID is required")?;
-            let creds = read_credentials()?.ok_or("R2 credentials are not configured")?;
-            let access_key = creds.access_key_id.ok_or("R2 access key ID is required")?;
-            let secret_key =
-                creds.secret_access_key.ok_or("R2 secret access key is required")?;
+            let bucket = spec.bucket_name.as_deref().ok_or("R2 bucket name is required")?;
+            let account_id = spec.r2_account_id.as_deref().ok_or("R2 account ID is required")?;
+            let access_key = spec.access_key_id.as_deref().ok_or("R2 access key ID is required")?;
+            let secret_key = spec.secret_access_key.as_deref().ok_or("R2 secret access key is required")?;
             let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com");
             let store = object_store::aws::AmazonS3Builder::new()
                 .with_bucket_name(bucket)
@@ -99,25 +110,20 @@ pub fn build_object_store(app: &AppHandle) -> Result<Arc<dyn ObjectStore>, Strin
             Ok(Arc::new(store))
         }
         "gcs" => {
-            let bucket = cfg.bucket_name.ok_or("GCS bucket name is required")?;
-            let creds = read_credentials()?.ok_or("GCS credentials are not configured")?;
-            let sa_json = creds
-                .service_account_json
-                .ok_or("GCS service account JSON is required")?;
+            let bucket = spec.bucket_name.as_deref().ok_or("GCS bucket name is required")?;
+            let sa_json = spec.service_account_json.as_deref().ok_or("GCS service account JSON is required")?;
             let store = object_store::gcp::GoogleCloudStorageBuilder::new()
                 .with_bucket_name(bucket)
-                .with_service_account_key(&sa_json)
+                .with_service_account_key(sa_json)
                 .build()
                 .map_err(|e| e.to_string())?;
             Ok(Arc::new(store))
         }
         "s3" => {
-            let bucket = cfg.bucket_name.ok_or("S3 bucket name is required")?;
-            let region = cfg.s3_region.ok_or("S3 region is required")?;
-            let creds = read_credentials()?.ok_or("S3 credentials are not configured")?;
-            let access_key = creds.access_key_id.ok_or("S3 access key ID is required")?;
-            let secret_key =
-                creds.secret_access_key.ok_or("S3 secret access key is required")?;
+            let bucket = spec.bucket_name.as_deref().ok_or("S3 bucket name is required")?;
+            let region = spec.s3_region.as_deref().ok_or("S3 region is required")?;
+            let access_key = spec.access_key_id.as_deref().ok_or("S3 access key ID is required")?;
+            let secret_key = spec.secret_access_key.as_deref().ok_or("S3 secret access key is required")?;
             let store = object_store::aws::AmazonS3Builder::new()
                 .with_bucket_name(bucket)
                 .with_region(region)
@@ -128,14 +134,28 @@ pub fn build_object_store(app: &AppHandle) -> Result<Arc<dyn ObjectStore>, Strin
             Ok(Arc::new(store))
         }
         _ => {
-            // "local" (default)
-            let dir = local_attachments_dir(app)?;
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let store = object_store::local::LocalFileSystem::new_with_prefix(dir)
+            std::fs::create_dir_all(&spec.local_dir).map_err(|e| e.to_string())?;
+            let store = object_store::local::LocalFileSystem::new_with_prefix(&spec.local_dir)
                 .map_err(|e| e.to_string())?;
             Ok(Arc::new(store))
         }
     }
+}
+
+pub fn build_object_store(app: &AppHandle) -> Result<Arc<dyn ObjectStore>, String> {
+    let cfg = read_storage_config(app);
+    let creds = read_credentials()?.unwrap_or_default();
+    let local_dir = local_attachments_dir(app)?;
+    build_store_from_spec(&StoreSpec {
+        provider: if cfg.provider.is_empty() { "local".into() } else { cfg.provider },
+        bucket_name: cfg.bucket_name,
+        r2_account_id: cfg.r2_account_id,
+        s3_region: cfg.s3_region,
+        access_key_id: creds.access_key_id,
+        secret_access_key: creds.secret_access_key,
+        service_account_json: creds.service_account_json,
+        local_dir,
+    })
 }
 
 // ---- platform keychain helpers ----

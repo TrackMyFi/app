@@ -14,6 +14,7 @@ import {
   restartApp,
 } from '../lib/api/sync'
 import * as categoryRulesApi from '../lib/api/categoryRules'
+import { countMigratableAttachments, migrateAndSaveStorageConfig } from '../lib/api/storage'
 import type { FireProfile } from '../lib/types/FireProfile'
 import type { CategoryRule } from '../lib/types/CategoryRule'
 import DeleteDataModal from '../components/DeleteDataModal.vue'
@@ -136,6 +137,10 @@ const PROVIDER_OPTIONS = [
   { label: 'Amazon S3', value: 's3' },
 ]
 
+function providerLabel(value: string) {
+  return PROVIDER_OPTIONS.find((o) => o.value === value)?.label ?? value
+}
+
 const showDeleteModal = ref(false)
 
 const categoryRules = ref<CategoryRule[]>([])
@@ -246,15 +251,51 @@ async function saveStorageSettings() {
   storageBusy.value = true
   storageMessage.value = ''
   try {
-    await storageStore.save({
-      provider: storageProvider.value,
+    const newProvider = storageProvider.value
+    const currentProvider = storageStore.config?.provider ?? 'local'
+    const args = {
+      provider: newProvider,
       bucketName: storageBucket.value.trim() || null,
       r2AccountId: storageR2AccountId.value.trim() || null,
       s3Region: storageS3Region.value.trim() || null,
       accessKeyId: storageAccessKey.value.trim() || null,
       secretAccessKey: storageSecretKey.value.trim() || null,
       serviceAccountJson: storageServiceAccountJson.value.trim() || null,
-    })
+    }
+
+    // When switching providers, check if any existing attachments need migrating.
+    if (newProvider !== currentProvider) {
+      const migratable = await countMigratableAttachments(newProvider)
+      if (migratable > 0) {
+        const fileWord = migratable === 1 ? 'attachment' : 'attachments'
+        const shouldMigrate = await confirm(
+          `You have ${migratable} ${fileWord} stored in ${providerLabel(currentProvider)}. ` +
+            `Migrate ${migratable === 1 ? 'it' : 'them'} to ${providerLabel(newProvider)} now?\n\n` +
+            `If you skip, those files won't be accessible from the new storage until migrated.`,
+          { title: 'Migrate attachments?', kind: 'info' },
+        )
+        if (shouldMigrate) {
+          const result = await migrateAndSaveStorageConfig(args)
+          storageAccessKey.value = ''
+          storageSecretKey.value = ''
+          storageServiceAccountJson.value = ''
+          storageMessage.value = ''
+          await storageStore.load()
+          const failNote =
+            result.failed > 0
+              ? ` (${result.failed} failed: ${result.failedNames.join(', ')})`
+              : ''
+          toast.add({
+            title: `Migrated ${result.migrated} ${result.migrated === 1 ? 'attachment' : 'attachments'} to ${providerLabel(newProvider)}${failNote}`,
+            color: result.failed > 0 ? 'warning' : 'success',
+          })
+          return
+        }
+      }
+    }
+
+    // No migration needed or user chose to skip — plain save.
+    await storageStore.save(args)
     storageAccessKey.value = ''
     storageSecretKey.value = ''
     storageServiceAccountJson.value = ''

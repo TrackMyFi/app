@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { AssetAttachment } from '../types/AssetAttachment'
+import type { MigrationSummary } from '../types/MigrationSummary'
 import type { StorageInfo } from '../types/StorageInfo'
 
 export type SaveStorageConfigArgs = {
@@ -22,6 +23,14 @@ export function saveStorageConfig(args: SaveStorageConfigArgs): Promise<void> {
 
 export function clearStorageConfig(): Promise<void> {
   return invoke('clear_storage_config_cmd')
+}
+
+export function countMigratableAttachments(newProvider: string): Promise<number> {
+  return invoke('count_migratable_attachments_cmd', { newProvider })
+}
+
+export function migrateAndSaveStorageConfig(args: SaveStorageConfigArgs): Promise<MigrationSummary> {
+  return invoke('migrate_and_save_storage_config_cmd', { newArgs: args })
 }
 
 export function listAttachments(assetEventId: number): Promise<AssetAttachment[]> {
