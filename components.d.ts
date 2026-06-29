@@ -23,6 +23,7 @@ declare module 'vue' {
     FiProgressCard: typeof import('./src/components/FiProgressCard.vue')['default']
     ForecastChart: typeof import('./src/components/ForecastChart.vue')['default']
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']
+    InvestmentsChart: typeof import('./src/components/InvestmentsChart.vue')['default']
     MonthPicker: typeof import('./src/components/MonthPicker.vue')['default']
     NetWorthChart: typeof import('./src/components/NetWorthChart.vue')['default']
     PageError: typeof import('./src/components/PageError.vue')['default']

@@ -62,14 +62,14 @@ describe('classifyFlow', () => {
     expect(f).toMatchObject({ direction: 'neutral', inflow: 0, outflow: 0, isSavings: false })
   })
 
-  it('treats an asset → liability transfer as a spending outflow', () => {
+  it('treats an asset → liability transfer as cash-flow neutral (CC payment must not double-count the purchase)', () => {
     const f = classifyFlow(tx({ type: 'transfer', accountId: 1, transferAccountId: 3, amount: 200 }), accounts)
-    expect(f).toMatchObject({ direction: 'outflow', outflow: 200, bucket: 'uncategorized', isSavings: false })
+    expect(f).toMatchObject({ direction: 'outflow', inflow: 0, outflow: 0, isSavings: false })
   })
 
-  it('treats a liability → asset transfer as an inflow (refund)', () => {
+  it('treats a liability → asset transfer as cash-flow neutral (loan disbursement is not income)', () => {
     const f = classifyFlow(tx({ type: 'transfer', accountId: 3, transferAccountId: 1, amount: 75 }), accounts)
-    expect(f).toMatchObject({ direction: 'inflow', inflow: 75, outflow: 0, isSavings: false })
+    expect(f).toMatchObject({ direction: 'inflow', inflow: 0, outflow: 0, isSavings: false })
   })
 })
 

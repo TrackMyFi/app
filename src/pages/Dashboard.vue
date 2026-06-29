@@ -5,7 +5,7 @@ import { useFireProfileStore } from '../stores/fireProfile'
 import { useAccountsStore } from '../stores/accounts'
 import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
-  netWorthOverTime, projectedFiDate, savingsRate, activeFireInputs,
+  netWorthOverTime, investmentsOverTime, projectedFiDate, savingsRate, activeFireInputs,
   derivedMonthlyContribution, journeyProgress, portfolioMonthlyEarnings,
   coastStatus,
 } from '../lib/fire'
@@ -13,6 +13,7 @@ import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
 import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
+import InvestmentsChart from '../components/InvestmentsChart.vue'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
 import { useReveal } from '../composables/useReveal'
@@ -47,6 +48,16 @@ const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
 const progress = computed(() => fiProgress(investable.value, fireNum.value))
 const series = computed(() => netWorthOverTime(fireAccounts.value, fireBalances.value))
+const hasLiquidAccounts = computed(() => fireAccounts.value.some(a => ['checking', 'savings'].includes(a.type)))
+
+const investmentSeries = computed(() => investmentsOverTime(fireAccounts.value, fireBalances.value))
+const investmentAccounts = computed(() =>
+  investmentSeries.value.accountIds.map(id => ({
+    id,
+    name: acc.accounts.find(a => a.id === id)?.name ?? `Account ${id}`,
+  }))
+)
+
 const asOf = computed(() => DateTime.now().toISODate()!)
 const contribution = computed(() => {
   if (!fp.profile) return { monthly: 0, estimated: true }
@@ -242,7 +253,13 @@ const coastHint = computed(() => {
     <!-- Net worth chart -->
     <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '370ms' }">
       <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
-      <NetWorthChart :points="series" />
+      <NetWorthChart :points="series" :show-liquid-series="hasLiquidAccounts" />
+    </div>
+
+    <!-- Investments chart -->
+    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '425ms' }">
+      <h2 class="font-semibold mb-4">Investments Over Time</h2>
+      <InvestmentsChart :points="investmentSeries.points" :accounts="investmentAccounts" />
     </div>
   </div>
 </template>

@@ -107,10 +107,6 @@ pub struct PeriodStatsFilter {
     pub exclude_period: String,
 }
 
-fn account_type_is_liability(ty: &str) -> bool {
-    ty == "liability" || ty == "mortgage"
-}
-
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
     generated_balance_to_id, paycheck_id, created_at, updated_at";
@@ -941,8 +937,6 @@ pub async fn period_stats(
         let category: Option<String> = row.get(2).map_err(|e| e.to_string())?;
         let is_contribution: bool = row.get::<i64>(3).map_err(|e| e.to_string())? != 0;
         let is_withdrawal: bool = row.get::<i64>(4).map_err(|e| e.to_string())? != 0;
-        let account_type: Option<String> = row.get(5).map_err(|e| e.to_string())?;
-        let transfer_type: Option<String> = row.get(6).map_err(|e| e.to_string())?;
         let period: String = row.get(7).map_err(|e| e.to_string())?;
 
         // Skip the current period so it's never compared against itself.
@@ -974,19 +968,10 @@ pub async fn period_stats(
                 _ => s.cat_uncategorized += amount,
             }
         } else if tx_type == "transfer" {
-            let src_liab = account_type_is_liability(account_type.as_deref().unwrap_or(""));
-            let dst_liab = account_type_is_liability(transfer_type.as_deref().unwrap_or(""));
-            if src_liab != dst_liab {
-                if dst_liab {
-                    // asset → liability: debt payment (spending outflow)
-                    s.expense += amount;
-                    s.cat_uncategorized += amount;
-                } else {
-                    // liability → asset: credit/refund (income inflow)
-                    s.income += amount;
-                }
-            }
-            // same-kind transfers (asset↔asset, liability↔liability) are neutral — skip
+            // All transfers are cash-flow neutral — the economic event (income or
+            // expense) is captured on the individual transactions themselves.
+            // Counting a bank→CC payment as an expense double-counts every purchase
+            // already recorded against the card.
         }
     }
 

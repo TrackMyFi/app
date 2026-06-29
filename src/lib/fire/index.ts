@@ -1,6 +1,7 @@
 export * from './types'
 export * from './metrics'
 export * from './netWorthSeries'
+export * from './investmentSeries'
 export * from './projection'
 export * from './activeInputs'
 export * from './contributionRate'

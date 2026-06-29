@@ -87,13 +87,11 @@ export function classifyFlow(t: Transaction, accounts: AccountLookup): Transacti
     return { direction, isTransfer, inflow: 0, outflow: t.amount, bucket, isSavings: false }
   }
 
-  // Transfers: only debt payments and refunds move spendable cash.
-  if (direction === 'outflow') {
-    return { direction, isTransfer, inflow: 0, outflow: t.amount, bucket: 'uncategorized', isSavings: false }
-  }
-  if (direction === 'inflow') {
-    return { direction, isTransfer, inflow: t.amount, outflow: 0, bucket: null, isSavings: false }
-  }
+  // Transfers are always cash-flow neutral — the economic event (income or expense)
+  // is captured on the individual transactions themselves. Counting a credit card
+  // payment as an expense would double-count every purchase already recorded against
+  // the card. The visual `direction` arrow in the table is still driven by the
+  // asset/liability classification above; only the accounting values are zeroed.
   return { direction, isTransfer, inflow: 0, outflow: 0, bucket: null, isSavings: false }
 }
 
