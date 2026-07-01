@@ -8,7 +8,7 @@ import {
   activeFireInputs, investableNetWorth, savingsRate,
   derivedMonthlyContribution, buildForecast, projectionSeries, monthsToFire,
   realMonthlyReturn,
-  type ForecastInputs, type VariantForecast, type FireVariant,
+  type ForecastInputs, type VariantForecast, type FireVariant, type ProjectionPoint,
 } from '../lib/fire'
 import ForecastChart from '../components/ForecastChart.vue'
 import PageError from '../components/PageError.vue'
@@ -150,16 +150,50 @@ const { progress: reveal, play } = useReveal()
 let revealed = false
 watch(regular, r => { if (r && !revealed) { revealed = true; play() } }, { immediate: true })
 
+// Horizon runs a bit past whichever comes first — reaching the FIRE number or
+// hitting target retirement age — so the chart/table always show the crossing.
+function seriesToTarget(fi: ForecastInputs, fireNumber: number): ProjectionPoint[] {
+  const mr = realMonthlyReturn(fi.expectedReturnRate, fi.inflationRate)
+  const toFi = monthsToFire(fi.investable, fi.monthlyContribution, mr, fireNumber)
+  const toRet = Math.max(0, (fi.targetRetirementAge - fi.currentAge) * 12)
+  const horizon = Math.min(1200, Math.round((toFi ?? toRet ?? 360) * 1.1) + 12)
+  return projectionSeries(fi.investable, fi.monthlyContribution, fi.expectedReturnRate, fi.inflationRate, horizon)
+}
+
 const chartPoints = computed(() => {
   const fi = forecastInputs.value
   const reg = regular.value
   if (!fi || !reg) return []
-  const mr = realMonthlyReturn(fi.expectedReturnRate, fi.inflationRate)
-  const toFi = monthsToFire(fi.investable, fi.monthlyContribution, mr, reg.fireNumber)
-  const toRet = Math.max(0, (fi.targetRetirementAge - fi.currentAge) * 12)
-  const horizon = Math.min(1200, Math.round((toFi ?? toRet ?? 360) * 1.1) + 12)
-  return projectionSeries(fi.investable, fi.monthlyContribution, fi.expectedReturnRate, fi.inflationRate, horizon)
+  return seriesToTarget(fi, reg.fireNumber)
 })
+
+// Same series per variant, keyed for the detail table under each card.
+const variantSeries = computed(() => {
+  const fi = forecastInputs.value
+  const map = new Map<FireVariant, ProjectionPoint[]>()
+  if (!fi) return map
+  for (const v of forecasts.value) map.set(v.variant, seriesToTarget(fi, v.fireNumber))
+  return map
+})
+
+const expandedVariant = reactive<Record<FireVariant, boolean>>({ lean: false, regular: false, fat: false })
+
+function forecastRows(v: VariantForecast) {
+  const points = variantSeries.value.get(v.variant) ?? []
+  return points.map(p => ({
+    month: DateTime.fromISO(p.date).toFormat('LLL yyyy'),
+    pct: v.fireNumber > 0 ? p.value / v.fireNumber : 0,
+    value: p.value,
+  }))
+}
+
+const forecastColumns = [
+  { accessorKey: 'month', header: 'Month', meta: { class: { th: 'text-xs', td: 'text-xs' } } },
+  { accessorKey: 'pct', header: '% of goal', meta: { class: { th: 'text-right text-xs', td: 'text-right font-mono text-xs tabular-nums' } } },
+  { accessorKey: 'value', header: 'Forecasted value', meta: { class: { th: 'text-right text-xs', td: 'text-right font-mono text-xs tabular-nums' } } },
+]
+
+const fmtPct = (n: number) => `${Math.round(n * 100)}%`
 
 const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const labels: Record<FireVariant, string> = { lean: 'Lean FIRE', regular: 'FIRE', fat: 'Fat FIRE' }
@@ -272,7 +306,7 @@ const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.
       </div>
 
       <!-- Variant cards -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <UCard
           v-for="(v, i) in forecasts"
           :key="v.variant"
@@ -324,6 +358,31 @@ const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.
               <dd class="font-mono">{{ v.requiredMonthly !== null ? fmt(v.requiredMonthly) : '—' }}</dd>
             </div>
           </dl>
+
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            block
+            class="mt-3"
+            :icon="expandedVariant[v.variant] ? 'i-ph-caret-up' : 'i-ph-caret-down'"
+            @click="expandedVariant[v.variant] = !expandedVariant[v.variant]"
+          >
+            {{ expandedVariant[v.variant] ? 'Hide' : 'Show' }} monthly forecast
+          </UButton>
+
+          <div v-if="expandedVariant[v.variant]" class="mt-3 pt-3 border-t border-default">
+            <div class="max-h-[32rem] overflow-y-auto">
+              <UTable :data="forecastRows(v)" :columns="forecastColumns">
+                <template #pct-cell="{ row }">
+                    {{ fmtPct(row.original.pct) }}
+                </template>
+                <template #value-cell="{ row }">
+                    {{ fmt(row.original.value) }}
+                </template>
+              </UTable>
+            </div>
+          </div>
         </UCard>
       </div>
     </template>

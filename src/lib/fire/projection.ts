@@ -53,7 +53,12 @@ export function savingsRate(
   return (now - prior) / annualIncome
 }
 
-export interface ProjectionPoint { date: string; value: number }
+export interface ProjectionPoint {
+  date: string
+  value: number
+  /** Dollar amount this month's balance grew from compounding alone (excludes the contribution). */
+  growth: number
+}
 
 /**
  * Month-by-month projected investable value, `months + 1` points (index 0 = the
@@ -66,11 +71,12 @@ export function projectionSeries(
   months: number, from: DateTime = DateTime.now(),
 ): ProjectionPoint[] {
   const mr = realMonthlyReturn(expectedReturnRate, inflationRate)
-  const pts: ProjectionPoint[] = []
+  const pts: ProjectionPoint[] = [{ date: from.toISODate()!, value: presentValue, growth: 0 }]
   let fv = presentValue
-  for (let m = 0; m <= months; m++) {
-    if (m > 0) fv = fv * (1 + mr) + monthlyContribution
-    pts.push({ date: from.plus({ months: m }).toISODate()!, value: fv })
+  for (let m = 1; m <= months; m++) {
+    const growth = fv * mr
+    fv = fv + growth + monthlyContribution
+    pts.push({ date: from.plus({ months: m }).toISODate()!, value: fv, growth })
   }
   return pts
 }

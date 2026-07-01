@@ -35,13 +35,14 @@ onMounted(() => {
   COLOR_COAST.value = resolveColor('text-muted', COLOR_COAST.value)
 })
 
-type D = { t: number; v: number; fire: number; coast: number }
+type D = { t: number; v: number; growth: number; fire: number; coast: number }
 
 // Memoized: the template reads `data` on every crosshair mousemove, so parsing
 // ~350 ISO dates per move (when this was a function call) made hover janky.
 const data = computed<D[]>(() => props.points.map(p => ({
   t: DateTime.fromISO(p.date).toMillis(),
   v: p.value,
+  growth: p.growth,
   fire: props.fireNumber,
   coast: props.coastNumber,
 })))
@@ -75,6 +76,7 @@ const crosshairTemplate = (d: D) => {
     <div class="tmfi-chart-tip__date">${date}</div>
     <div class="tmfi-chart-tip__value">${money(d.v)}</div>
     <div class="tmfi-chart-tip__meta">${pct}% of FIRE target</div>
+    <div class="tmfi-chart-tip__meta">+${money(d.growth)}/mo from growth</div>
   </div>`
 }
 
