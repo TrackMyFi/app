@@ -11,7 +11,6 @@ import {
   type ForecastInputs, type VariantForecast, type FireVariant,
 } from '../lib/fire'
 import ForecastChart from '../components/ForecastChart.vue'
-import { CHART_COLORS } from '../lib/forecastColors'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
 import { useReveal } from '../composables/useReveal'
@@ -38,27 +37,28 @@ const baseline = computed(() => {
   return derivedMonthlyContribution(contrib.txns, asOf.value, estimateMonthly)
 })
 
-const ov = reactive<{ monthly: number | null; returnRate: number | null; inflation: number | null; retireAge: number | null }>({
-  monthly: null, returnRate: null, inflation: null, retireAge: null,
+const ov = reactive<{ monthly: number | null; returnRate: number | null; inflation: number | null; retireAge: number | null; annualExpenses: number | null }>({
+  monthly: null, returnRate: null, inflation: null, retireAge: null, annualExpenses: null,
 })
 const isScenario = computed(() =>
-  ov.monthly !== null || ov.returnRate !== null || ov.inflation !== null || ov.retireAge !== null)
+  ov.monthly !== null || ov.returnRate !== null || ov.inflation !== null || ov.retireAge !== null || ov.annualExpenses !== null)
 
 function reset() {
-  ov.monthly = null; ov.returnRate = null; ov.inflation = null; ov.retireAge = null
+  ov.monthly = null; ov.returnRate = null; ov.inflation = null; ov.retireAge = null; ov.annualExpenses = null
 }
 
 const effMonthly = computed(() => ov.monthly ?? baseline.value.monthly)
 const effReturn = computed(() => ov.returnRate ?? fp.profile?.expectedReturnRate ?? 0)
 const effInflation = computed(() => ov.inflation ?? fp.profile?.inflationRate ?? 0)
 const effRetireAge = computed(() => ov.retireAge ?? fp.profile?.targetRetirementAge ?? 0)
+const effAnnualExpenses = computed(() => ov.annualExpenses ?? fp.profile?.annualExpensesTarget ?? 0)
 
 const forecastInputs = computed<ForecastInputs | null>(() => {
   if (!fp.profile) return null
   return {
     currentAge: fp.currentAge,
     targetRetirementAge: effRetireAge.value,
-    annualExpensesTarget: fp.profile.annualExpensesTarget,
+    annualExpensesTarget: effAnnualExpenses.value,
     leanFireAnnualExpenses: fp.profile.leanFireAnnualExpenses,
     fatFireAnnualExpenses: fp.profile.fatFireAnnualExpenses,
     expectedReturnRate: effReturn.value,
@@ -168,15 +168,30 @@ const sMonthly = computed({ get: () => effMonthly.value, set: v => { ov.monthly 
 const sReturn = computed({ get: () => effReturn.value, set: v => { ov.returnRate = v ?? null } })
 const sInflation = computed({ get: () => effInflation.value, set: v => { ov.inflation = v ?? null } })
 const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireAge = v ?? null } })
+const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.annualExpenses = v ?? null } })
 </script>
 
 <template>
   <div class="p-6 space-y-6">
     <PageError v-if="error" :message="error" @retry="retry" />
 
-    <div class="flex items-center justify-between">
-      <h1 class="text-2xl font-bold">Forecast</h1>
-      <UButton v-if="fp.profile" icon="i-ph-sliders-horizontal" color="neutral" variant="outline" @click="open = true">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold">Forecast</h1>
+        <p v-if="fp.profile" class="text-sm text-muted mt-1 max-w-xl">
+          When your investable net worth is projected to cross each FIRE target — using your account
+          balances and contribution history, plus the return, inflation, and expense assumptions in
+          your FIRE profile.
+        </p>
+      </div>
+      <UButton
+        v-if="fp.profile"
+        icon="i-ph-sliders-horizontal"
+        color="neutral"
+        variant="outline"
+        class="shrink-0 whitespace-nowrap"
+        @click="open = true"
+      >
         What-if
       </UButton>
     </div>
@@ -217,6 +232,14 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               </span>
             </Transition>
           </div>
+          <p class="text-xs text-muted leading-relaxed mt-3 pt-3 border-t border-default">
+            Based on <span class="font-mono text-default">{{ fmt(investable) }}</span> invested today
+            across your accounts, contributing
+            <span class="font-mono text-default">{{ fmt(effMonthly) }}</span>/mo
+            ({{ ov.monthly !== null ? 'what-if override' : baseline.estimated ? 'estimated from your savings rate' : 'your trailing 12-month average' }}),
+            growing at {{ (effReturn * 100).toFixed(1) }}% with {{ (effInflation * 100).toFixed(1) }}% inflation
+            — both set in your FIRE profile{{ isScenario ? ' (currently overridden below)' : '' }}.
+          </p>
         </div>
         <div class="p-4 pt-3">
           <ForecastChart
@@ -226,18 +249,24 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
             :crossing="regular.fiDate ? { date: regular.fiDate.toISODate()!, value: regular.fireNumber } : null"
           />
           <div class="flex gap-4 text-xs text-muted mt-2">
-            <span>
-              <span class="inline-block w-3 h-2 rounded-xs align-middle" :style="{ backgroundColor: CHART_COLORS.portfolio, opacity: 0.85 }" />
-              Investable
-            </span>
-            <span>
-              <span class="inline-block w-3 border-t-2 border-dashed align-middle" :style="{ borderColor: CHART_COLORS.fire }" />
-              FIRE number
-            </span>
-            <span>
-              <span class="inline-block w-3 border-t-2 border-dashed align-middle" :style="{ borderColor: CHART_COLORS.coast }" />
-              Coast number
-            </span>
+            <UTooltip text="Your investable net worth today — the account balances marked to count toward FIRE.">
+              <span class="cursor-help">
+                <span class="inline-block w-3 h-2 rounded-xs align-middle" style="background-color: var(--ui-primary); opacity: 0.85" />
+                <span class="underline decoration-dotted underline-offset-2">Investable</span>
+              </span>
+            </UTooltip>
+            <UTooltip text="25× this variant's annual expenses target (the 4% rule) — the portfolio value needed to retire.">
+              <span class="cursor-help">
+                <span class="inline-block w-3 border-t-2 border-dashed align-middle" style="border-color: var(--ui-text-highlighted)" />
+                <span class="underline decoration-dotted underline-offset-2">FIRE number</span>
+              </span>
+            </UTooltip>
+            <UTooltip text="The smaller balance that could grow, untouched, to your FIRE number by your target retirement age — no further contributions needed.">
+              <span class="cursor-help">
+                <span class="inline-block w-3 border-t-2 border-dashed align-middle" style="border-color: var(--ui-text-muted)" />
+                <span class="underline decoration-dotted underline-offset-2">Coast number</span>
+              </span>
+            </UTooltip>
           </div>
         </div>
       </div>
@@ -253,6 +282,7 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
         >
           <div class="text-xs font-semibold text-muted uppercase tracking-wider">{{ labels[v.variant] }}</div>
           <div class="text-2xl font-bold font-mono mt-1">{{ fmt(v.fireNumber) }}</div>
+          <div class="text-xs text-muted mt-0.5">25× {{ fmt(v.expenses) }}/yr expenses</div>
           <dl class="mt-3 space-y-1 text-sm">
             <div class="flex justify-between">
               <dt class="text-muted">Projected FI</dt>
@@ -263,11 +293,19 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               <dd class="font-mono">{{ v.yearsToFi !== null ? v.yearsToFi.toFixed(1) : '—' }}</dd>
             </div>
             <div class="flex justify-between">
-              <dt class="text-muted">Coast number</dt>
+              <dt>
+                <UTooltip text="The smaller balance that could grow, untouched, to this FIRE number by your target retirement age.">
+                  <span class="text-muted underline decoration-dotted underline-offset-2 cursor-help">Coast number</span>
+                </UTooltip>
+              </dt>
               <dd class="font-mono">{{ fmt(v.coastNumber) }}</dd>
             </div>
             <div class="flex justify-between">
-              <dt class="text-muted">Coast status</dt>
+              <dt>
+                <UTooltip text="Coasting means this balance, growing at your assumed return with no further contributions, still reaches the FIRE number by your target retirement age.">
+                  <span class="text-muted underline decoration-dotted underline-offset-2 cursor-help">Coast status</span>
+                </UTooltip>
+              </dt>
               <dd :class="v.coasting ? 'text-success' : ''">
                 <template v-if="v.coasting">
                   <span class="i-ph-check-circle size-4 inline-block align-text-bottom mr-0.5" />Coasting
@@ -278,7 +316,11 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               </dd>
             </div>
             <div class="flex justify-between">
-              <dt class="text-muted">Required monthly</dt>
+              <dt>
+                <UTooltip text="The monthly contribution needed, from now until your target retirement age, to reach this FIRE number.">
+                  <span class="text-muted underline decoration-dotted underline-offset-2 cursor-help">Required monthly</span>
+                </UTooltip>
+              </dt>
               <dd class="font-mono">{{ v.requiredMonthly !== null ? fmt(v.requiredMonthly) : '—' }}</dd>
             </div>
           </dl>
@@ -289,6 +331,11 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
     <USlideover v-model:open="open" title="What-if scenario" side="right">
       <template #body>
         <div class="space-y-6">
+          <p class="text-sm text-muted leading-relaxed">
+            Drag any assumption to preview how it shifts your FIRE date above. Nothing here is saved —
+            close this panel or reset to fall back to your actual data and FIRE profile.
+          </p>
+
           <div>
             <div class="flex justify-between items-center text-sm mb-2">
               <label class="text-muted">Monthly contribution</label>
@@ -301,8 +348,10 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               />
             </div>
             <USlider v-model="sMonthly" :min="0" :max="20000" :step="100" />
-            <p v-if="baseline.estimated" class="text-xs text-muted mt-1.5">
-              Estimated — less than 12 months of contribution history.
+            <p class="text-xs text-muted mt-1.5">
+              <template v-if="baseline.estimated">Estimated from your savings rate — less than 12 months of contribution history.</template>
+              <template v-else>Based on your actual trailing 12-month average contribution.</template>
+              More saved each month shortens your timeline to FI.
             </p>
           </div>
 
@@ -321,6 +370,10 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               </div>
             </div>
             <USlider v-model="sReturn" :min="0" :max="0.15" :step="0.005" />
+            <p class="text-xs text-muted mt-1.5">
+              From your FIRE profile. Your assumed average annual investment growth — higher reaches FI
+              sooner, but is less certain.
+            </p>
           </div>
 
           <div>
@@ -338,6 +391,28 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               </div>
             </div>
             <USlider v-model="sInflation" :min="0" :max="0.1" :step="0.005" />
+            <p class="text-xs text-muted mt-1.5">
+              From your FIRE profile. Higher inflation erodes real returns, pushing both your FIRE
+              number and timeline later.
+            </p>
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Annual expenses target</label>
+              <input
+                type="number"
+                :value="Math.round(sExpenses)"
+                @change="ov.annualExpenses = Number(($event.target as HTMLInputElement).value)"
+                :min="0" :max="300000" :step="1000"
+                class="w-24 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+              />
+            </div>
+            <USlider v-model="sExpenses" :min="0" :max="300000" :step="1000" />
+            <p class="text-xs text-muted mt-1.5">
+              From your FIRE profile. Sets the regular FIRE number directly (25× this value, the 4%
+              rule) — lower spending means a smaller target and an earlier FI date.
+            </p>
           </div>
 
           <div>
@@ -352,6 +427,10 @@ const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireA
               />
             </div>
             <USlider v-model="sRetire" :min="fp.currentAge || 18" :max="80" :step="1" />
+            <p class="text-xs text-muted mt-1.5">
+              From your FIRE profile. Doesn't change the FIRE number — it caps how long you have to
+              reach it, which drives the coast number and required-monthly figures.
+            </p>
           </div>
 
           <div v-if="isScenario" class="pt-2 border-t border-default">

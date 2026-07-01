@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { VisXYContainer, VisLine, VisArea, VisAxis, VisScatter, VisCrosshair, VisTooltip } from '@unovis/vue'
 import type { ProjectionPoint } from '../lib/fire/projection'
 import { DateTime } from 'luxon'
-import { CHART_COLORS } from '../lib/forecastColors'
 
 const props = defineProps<{
   points: ProjectionPoint[]
@@ -12,6 +11,29 @@ const props = defineProps<{
   /** The day the portfolio is projected to reach the FIRE number, if reachable. */
   crossing: { date: string; value: number } | null
 }>()
+
+// ── palette ───────────────────────────────────────────────────────────────
+// Resolve CSS color tokens at mount time so SVG paint values match the active
+// theme, same pattern as NetWorthChart.
+function resolveColor(cls: string, fallback: string): string {
+  const el = document.createElement('span')
+  el.className = cls
+  el.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden'
+  document.body.appendChild(el)
+  const c = getComputedStyle(el).color
+  document.body.removeChild(el)
+  return c || fallback
+}
+
+const COLOR_PORTFOLIO = ref('#10b981')
+const COLOR_FIRE = ref('#1e293b')
+const COLOR_COAST = ref('#94a3b8')
+
+onMounted(() => {
+  COLOR_PORTFOLIO.value = resolveColor('text-primary', COLOR_PORTFOLIO.value)
+  COLOR_FIRE.value = resolveColor('text-highlighted', COLOR_FIRE.value)
+  COLOR_COAST.value = resolveColor('text-muted', COLOR_COAST.value)
+})
 
 type D = { t: number; v: number; fire: number; coast: number }
 
@@ -71,22 +93,22 @@ const markLabel = (d: Mark) => DateTime.fromMillis(d.t).toFormat('LLL yyyy')
   <VisXYContainer :data="data" :height="280" class="tmfi-forecast-chart">
     <!-- Investable: the hero. A calm emerald fill grounds a light line, so the
          curve reads as substantial without shouting. -->
-    <VisArea :x="x" :y="yValue" :color="CHART_COLORS.portfolio" :opacity="0.1" />
-    <VisLine :x="x" :y="yValue" :color="CHART_COLORS.portfolio" :line-width="2" />
+    <VisArea :x="x" :y="yValue" :color="COLOR_PORTFOLIO" :baseline="0" :opacity="0.1" />
+    <VisLine :x="x" :y="yValue" :color="COLOR_PORTFOLIO" :line-width="2" />
     <!-- Reference thresholds, kept quiet so emerald stays the single voice. -->
-    <VisLine :x="x" :y="yFire" :color="CHART_COLORS.fire" :line-width="1.5" :line-dash-array="[5, 5]" />
-    <VisLine :x="x" :y="yCoast" :color="CHART_COLORS.coast" :line-width="1.5" :line-dash-array="[2, 4]" />
+    <VisLine :x="x" :y="yFire" :color="COLOR_FIRE" :line-width="1.5" :line-dash-array="[5, 5]" />
+    <VisLine :x="x" :y="yCoast" :color="COLOR_COAST" :line-width="1.5" :line-dash-array="[2, 4]" />
     <template v-if="crossing">
       <VisScatter
         :data="crossingData" :x="mx" :y="my"
-        :color="CHART_COLORS.portfolio" :size="8"
+        :color="COLOR_PORTFOLIO" :size="8"
         :stroke-color="'#ffffff'" :stroke-width="2"
-        :label="markLabel" label-position="top" :label-color="CHART_COLORS.fire"
+        :label="markLabel" label-position="top" :label-color="COLOR_FIRE"
       />
     </template>
     <VisAxis type="x" :tick-format="tickFormatX" />
     <VisAxis type="y" :tick-format="tickFormatY" />
-    <VisCrosshair :x="x" :y="yValue" :color="CHART_COLORS.portfolio" :template="crosshairTemplate" />
+    <VisCrosshair :x="x" :y="yValue" :color="COLOR_PORTFOLIO" :template="crosshairTemplate" />
     <VisTooltip />
   </VisXYContainer>
 </template>
