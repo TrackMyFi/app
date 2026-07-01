@@ -6,6 +6,10 @@ use tauri::State;
 
 use super::transactions::{clear_generated, materialize_snapshots, reproject_accounts};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewPaycheck {
@@ -23,6 +27,12 @@ pub struct NewPaycheck {
     pub employer_match: Vec<EmployerMatchItem>,
     pub income_account_id: Option<i32>,
     pub update_balance: bool,
+    /// Whether to auto-create the deposit transaction on `income_account_id`.
+    /// The frontend sets this to false when it already found a matching
+    /// bank-imported transaction, so the user doesn't end up with two rows
+    /// for the same deposit. Defaults to true (existing behavior) if omitted.
+    #[serde(default = "default_true")]
+    pub create_deposit_txn: bool,
     pub created_at: String,
 }
 
@@ -44,6 +54,8 @@ pub struct UpdatePaycheck {
     pub employer_match: Vec<EmployerMatchItem>,
     pub income_account_id: Option<i32>,
     pub update_balance: bool,
+    #[serde(default = "default_true")]
+    pub create_deposit_txn: bool,
     pub updated_at: String,
 }
 
@@ -267,7 +279,9 @@ pub async fn create_paycheck(conn: &Connection, p: &NewPaycheck) -> Result<Paych
 
     let id = conn.last_insert_rowid() as i32;
     auto_create_contributions(conn, id, &p.pay_date, &p.deductions, &p.employer_match, p.update_balance, &p.created_at).await?;
-    auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at, p.update_balance).await?;
+    if p.create_deposit_txn {
+        auto_create_income_txn(conn, id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.created_at, p.update_balance).await?;
+    }
 
     // Ripple new snapshots forward through any later transaction-tied snapshots.
     if p.update_balance {
@@ -311,7 +325,9 @@ pub async fn update_paycheck(conn: &Connection, p: &UpdatePaycheck) -> Result<Pa
     .map_err(|e| e.to_string())?;
 
     auto_create_contributions(conn, p.id, &p.pay_date, &p.deductions, &p.employer_match, p.update_balance, &p.updated_at).await?;
-    auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at, p.update_balance).await?;
+    if p.create_deposit_txn {
+        auto_create_income_txn(conn, p.id, p.income_account_id, p.net_amount, &p.employer, &p.pay_date, &p.updated_at, p.update_balance).await?;
+    }
 
     // Reproject from min(old_date, new_date) for all affected accounts (income + contributions,
     // old and new). Runs unconditionally: snapshots may have been deleted or added, and accounts
@@ -390,4 +406,108 @@ pub async fn update_paycheck_cmd(
 pub async fn delete_paycheck_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
     let conn = db.conn().await?;
     delete_paycheck(&conn, id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libsql::Builder;
+
+    async fn setup_db() -> Connection {
+        let db = Builder::new_local(":memory:").build().await.unwrap();
+        let conn = db.connect().unwrap();
+        crate::migrations::run(&conn).await.unwrap();
+        conn
+    }
+
+    async fn insert_account(conn: &Connection, name: &str, ty: &str) -> i32 {
+        conn.execute(
+            "INSERT INTO account (name, type, is_active, include_in_fire_calculations, created_at) \
+             VALUES (?1, ?2, 1, 0, '2024-01-01')",
+            params![name, ty],
+        )
+        .await
+        .unwrap();
+        conn.last_insert_rowid() as i32
+    }
+
+    fn base_paycheck(income_account_id: Option<i32>, create_deposit_txn: bool) -> NewPaycheck {
+        NewPaycheck {
+            pay_date: "2024-01-15".to_string(),
+            employer: "Acme Corp".to_string(),
+            pay_period: "biweekly".to_string(),
+            gross_amount: 2000.0,
+            net_amount: 1500.0,
+            federal_tax: 300.0,
+            state_tax: 100.0,
+            local_tax: 0.0,
+            social_security_tax: 80.0,
+            medicare_tax: 20.0,
+            deductions: vec![],
+            employer_match: vec![],
+            income_account_id,
+            update_balance: false,
+            create_deposit_txn,
+            created_at: "2024-01-15T00:00:00".to_string(),
+        }
+    }
+
+    async fn count_txns(conn: &Connection) -> i64 {
+        let mut rows = conn.query("SELECT COUNT(*) FROM txn", ()).await.unwrap();
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn creates_deposit_txn_by_default() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        create_paycheck(&conn, &base_paycheck(Some(checking), true)).await.unwrap();
+        assert_eq!(count_txns(&conn).await, 1);
+    }
+
+    #[tokio::test]
+    async fn skips_deposit_txn_when_create_deposit_txn_is_false() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let paycheck = create_paycheck(&conn, &base_paycheck(Some(checking), false)).await.unwrap();
+        assert_eq!(count_txns(&conn).await, 0);
+        // The paycheck ↔ account association is preserved even though no txn was created.
+        assert_eq!(paycheck.income_account_id, Some(checking));
+    }
+
+    #[tokio::test]
+    async fn update_paycheck_respects_create_deposit_txn_false() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let created = create_paycheck(&conn, &base_paycheck(Some(checking), true)).await.unwrap();
+        assert_eq!(count_txns(&conn).await, 1);
+
+        update_paycheck(
+            &conn,
+            &UpdatePaycheck {
+                id: created.id,
+                pay_date: created.pay_date.clone(),
+                employer: created.employer.clone(),
+                pay_period: created.pay_period.clone(),
+                gross_amount: created.gross_amount,
+                net_amount: created.net_amount,
+                federal_tax: created.federal_tax,
+                state_tax: created.state_tax,
+                local_tax: created.local_tax,
+                social_security_tax: created.social_security_tax,
+                medicare_tax: created.medicare_tax,
+                deductions: created.deductions.clone(),
+                employer_match: created.employer_match.clone(),
+                income_account_id: created.income_account_id,
+                update_balance: false,
+                create_deposit_txn: false,
+                updated_at: "2024-01-16T00:00:00".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // The old deposit txn was cleared and no new one created.
+        assert_eq!(count_txns(&conn).await, 0);
+    }
 }

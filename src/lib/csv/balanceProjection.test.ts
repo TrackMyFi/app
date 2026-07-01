@@ -27,6 +27,16 @@ describe('projectRunningBalances', () => {
     expect(projectRunningBalances(rows, [true], 1000)).toEqual([800])
   })
 
+  it("adds an inbound ('in') transfer row for an asset account (this account is the destination)", () => {
+    const rows = [{ date: '2026-03-01', amount: 200, type: 'transfer', direction: 'in' as const }]
+    expect(projectRunningBalances(rows, [true], 1000)).toEqual([1200])
+  })
+
+  it("an inbound direction is ignored for a liability account (still debt-reducing)", () => {
+    const rows = [{ date: '2026-03-01', amount: 200, type: 'transfer', direction: 'in' as const }]
+    expect(projectRunningBalances(rows, [true], 1000, true)).toEqual([800])
+  })
+
   it('excluded rows return null and do not affect running total', () => {
     const rows = [
       { date: '2026-03-01', amount: 100, type: 'expense' },

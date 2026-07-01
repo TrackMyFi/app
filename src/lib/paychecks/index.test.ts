@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { contributionItems, paycheckBreakdown, paycheckTotals } from './index'
+import { contributionItems, findDuplicateDeposit, paycheckBreakdown, paycheckTotals, type ExistingTxnRef } from './index'
 import type { Paycheck } from '../types/Paycheck'
 
 describe('contributionItems', () => {
@@ -129,5 +129,42 @@ describe('paycheckBreakdown', () => {
   it('clamps withheld to zero when net somehow exceeds gross', () => {
     const paychecks = [make({ grossAmount: 1000, netAmount: 1200 })]
     expect(paycheckBreakdown(paychecks).totalWithheld).toBe(0)
+  })
+})
+
+describe('findDuplicateDeposit', () => {
+  const existingDeposit: ExistingTxnRef = {
+    id: 1,
+    amount: 1500,
+    date: '2026-05-21',
+    description: 'DIRECT DEP ACME CORP PAYROLL',
+    type: 'income',
+    paycheckId: null,
+  }
+
+  it('finds a same-amount deposit within the date window', () => {
+    expect(findDuplicateDeposit({ amount: 1500, date: '2026-05-20' }, [existingDeposit])).toEqual(existingDeposit)
+  })
+
+  it('returns null when the date is outside the ±3-day window', () => {
+    expect(findDuplicateDeposit({ amount: 1500, date: '2026-05-26' }, [existingDeposit])).toBeNull()
+  })
+
+  it('returns null when amounts differ', () => {
+    expect(findDuplicateDeposit({ amount: 900, date: '2026-05-21' }, [existingDeposit])).toBeNull()
+  })
+
+  it('ignores a transaction already linked to a paycheck (contribution or a prior save of the same paycheck)', () => {
+    const linked: ExistingTxnRef = { ...existingDeposit, paycheckId: 42 }
+    expect(findDuplicateDeposit({ amount: 1500, date: '2026-05-21' }, [linked])).toBeNull()
+  })
+
+  it('ignores non-income rows (e.g. an expense of the same amount)', () => {
+    const expense: ExistingTxnRef = { ...existingDeposit, type: 'expense' }
+    expect(findDuplicateDeposit({ amount: 1500, date: '2026-05-21' }, [expense])).toBeNull()
+  })
+
+  it('returns null when there is nothing to match', () => {
+    expect(findDuplicateDeposit({ amount: 1500, date: '2026-05-21' }, [])).toBeNull()
   })
 })

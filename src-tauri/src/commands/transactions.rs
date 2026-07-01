@@ -439,9 +439,11 @@ async fn balance_before(conn: &Connection, account_id: i32, date: &str) -> Resul
 /// introduced by an out-of-order transaction propagates forward through later
 /// generated snapshots but stops at the next manual snapshot.
 ///
-/// Call this only from the single-transaction command paths. Bulk import feeds
-/// rows in ascending date order, so each new snapshot already lands at the end of
-/// the chain and re-projecting per row would be needless O(n^2) work.
+/// Cheap to call repeatedly — snapshots whose value hasn't changed are skipped,
+/// so a single post-batch call (as `bulk_create_transactions_with_snapshots`
+/// does) is fine. What to avoid is calling this per *row* during a bulk walk:
+/// rows arrive in ascending date order, so each new snapshot already lands at
+/// the end of the chain and per-row re-projection would be needless O(n^2) work.
 ///
 /// When Turso sync is enabled, writes are forwarded over HTTP to the primary.
 /// This implementation collapses the previous ~3N round-trips (one SELECT + one
@@ -882,6 +884,16 @@ pub async fn bulk_create_transactions_with_snapshots(
     sql.push_str("COMMIT;\n");
 
     conn.execute_batch(&sql).await.map_err(|e| e.to_string())?;
+
+    // Ripple forward through any snapshots that already existed after this
+    // batch's date range — on the imported account itself (backfilled/
+    // out-of-order imports) or on a transfer counterpart account. The walk
+    // above only anchors new snapshots to the *prior* snapshot, so it can
+    // leave later pre-existing snapshots stale.
+    if let Some(min_date) = rows.iter().filter(|t| t.update_balance).map(|t| t.date.as_str()).min() {
+        let touched: Vec<Option<i32>> = account_ids.iter().map(|&id| Some(id)).collect();
+        reproject_accounts(conn, &touched, min_date).await?;
+    }
 
     Ok(rows.len() as i64)
 }
@@ -1367,5 +1379,53 @@ mod tests {
         for (i, (a, b)) in sums1.iter().zip(sums2.iter()).enumerate() {
             assert_eq!(a, b, "txn {i} differs:\n  row-by-row: {a:?}\n  batched:    {b:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn bulk_import_ripples_forward_into_later_existing_snapshot() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking").await;
+
+        // Existing transaction-generated snapshot dated after the backfill below.
+        bulk_create_transactions_with_snapshots(&conn, &[make_txn(acc, "income", 500.0, "2024-03-01")])
+            .await
+            .unwrap();
+
+        // Backfill an earlier row. In isolation this new row's own snapshot is
+        // correct, but the pre-existing 2024-03-01 snapshot now needs to shift
+        // by the same amount — that's what the post-batch reproject call fixes.
+        bulk_create_transactions_with_snapshots(&conn, &[make_txn(acc, "income", 100.0, "2024-01-15")])
+            .await
+            .unwrap();
+
+        let sums = read_txn_summaries(&conn).await;
+        assert_eq!(sums.len(), 2);
+        assert_eq!(sums[0].4, Some(100.0)); // 2024-01-15: 0 + 100
+        assert_eq!(sums[1].4, Some(600.0)); // 2024-03-01: rippled forward, 100 + 500
+    }
+
+    #[tokio::test]
+    async fn bulk_import_ripples_forward_into_transfer_counterpart_snapshot() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let savings = insert_account(&conn, "Savings", "savings").await;
+
+        // Savings already has a later transaction-generated snapshot.
+        bulk_create_transactions_with_snapshots(&conn, &[make_txn(savings, "income", 500.0, "2024-03-01")])
+            .await
+            .unwrap();
+
+        // Import a transfer into Checking dated earlier, touching Savings as the counterpart.
+        bulk_create_transactions_with_snapshots(&conn, &[make_transfer(checking, savings, 300.0, "2024-01-15")])
+            .await
+            .unwrap();
+
+        let sums = read_txn_summaries(&conn).await;
+        assert_eq!(sums.len(), 2);
+        // Transfer row (2024-01-15): checking -300, savings +300, both 0-based.
+        assert_eq!(sums[0].4, Some(-300.0));
+        assert_eq!(sums[0].5, Some(300.0));
+        // Savings' pre-existing 2024-03-01 income snapshot ripples forward: 300 + 500.
+        assert_eq!(sums[1].4, Some(800.0));
     }
 }

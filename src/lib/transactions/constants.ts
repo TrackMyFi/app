@@ -40,12 +40,21 @@ export const categoryItems = CATEGORIES.map((c) => ({
  * For a liability (debt owed), the effect of income/expense inverts: a purchase
  * (expense) raises what you owe, a refund (income) lowers it.
  *
- * Transfers are treated from the primary account's source perspective and always
- * decrease its running balance — which is also correct for an imported liability
- * payment, where the card is the receiving side and its debt drops by `amount`.
+ * Transfers default to the primary account's source perspective and decrease
+ * its running balance — correct for an imported liability payment (the card
+ * is the receiving side and its debt drops by `amount`) and for an asset
+ * account that is the true source. Pass `direction: 'in'` for a non-liability
+ * account that is actually the transfer's *destination* (an inbound
+ * asset-to-asset transfer, e.g. importing the receiving side's CSV first) —
+ * its balance rises by `amount` instead.
  */
-export function signedDelta(type: string, amount: number, isLiability = false): number {
-  if (type === 'transfer') return -amount
+export function signedDelta(
+  type: string,
+  amount: number,
+  isLiability = false,
+  direction: 'in' | 'out' = 'out',
+): number {
+  if (type === 'transfer') return !isLiability && direction === 'in' ? amount : -amount
   const sign = isLiability ? -1 : 1
   return type === 'income' ? sign * amount : sign * -amount
 }

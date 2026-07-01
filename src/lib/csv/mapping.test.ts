@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMapping, autoDetectMapping, detectDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from './mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, detectPaycheckDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from './mapping'
 
 const config: MappingConfig = {
   dateColumn: 'Posting Date',
@@ -131,6 +131,95 @@ describe('detectTransferCounterparts', () => {
     )
     // Only one existing transfer, so only one of the two rows is flagged.
     expect(detectTransferCounterparts(parsed, [existingTransfer], 5)).toEqual([true, false])
+  })
+
+  it('flags the counterpart when this account is already the stored source (destination imported second)', () => {
+    // Real event: $300 moved from Checking (10) to Savings (20). Savings was
+    // imported first; direction inference stored the canonical row with
+    // Checking as accountId (source) and Savings as transferAccountId
+    // (destination) regardless of which account the wizard happened to be
+    // importing at the time. Now Checking's own CSV is imported and should
+    // still recognize this existing row as its counterpart, even though
+    // Checking is on `accountId` rather than `transferAccountId` this time.
+    const canonicalRow: ExistingRef = {
+      accountId: 10,
+      date: '2026-05-20',
+      amount: 300,
+      description: 'TRANSFER TO SAVINGS',
+      type: 'transfer',
+      transferAccountId: 20,
+    }
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/21/2026', Amount: '-300.00', Description: 'ONLINE XFER SAVINGS' }],
+      config,
+    )
+    expect(detectTransferCounterparts(parsed, [canonicalRow], 10)).toEqual([true])
+  })
+})
+
+describe('detectPaycheckDuplicates', () => {
+  const existingPaycheck: ExistingRef = {
+    accountId: 5,
+    date: '2026-05-20',
+    amount: 1500,
+    description: 'Paycheck – Acme Corp',
+    type: 'income',
+    paycheckId: 12,
+  }
+
+  const depositRow = [
+    { 'Posting Date': '05/21/2026', Amount: '1500.00', Description: 'DIRECT DEP ACME CORP PAYROLL' },
+  ]
+
+  it('flags a same-amount deposit within the date window despite a different description', () => {
+    const parsed = applyMapping(depositRow, config)
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 5)).toEqual([true])
+  })
+
+  it('does not flag when the date is outside the ±3-day window', () => {
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/26/2026', Amount: '1500.00', Description: 'DIRECT DEP ACME CORP PAYROLL' }],
+      config,
+    )
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 5)).toEqual([false])
+  })
+
+  it('does not flag when amounts differ', () => {
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/21/2026', Amount: '900.00', Description: 'DIRECT DEP ACME CORP PAYROLL' }],
+      config,
+    )
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 5)).toEqual([false])
+  })
+
+  it('does not flag rows on a different account', () => {
+    const parsed = applyMapping(depositRow, config)
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 9)).toEqual([false])
+  })
+
+  it('does not flag an existing row with no paycheckId', () => {
+    const parsed = applyMapping(depositRow, config)
+    const existing: ExistingRef = { ...existingPaycheck, paycheckId: null }
+    expect(detectPaycheckDuplicates(parsed, [existing], 5)).toEqual([false])
+  })
+
+  it('does not flag a non-income parsed row (e.g. an expense of the same amount)', () => {
+    const parsed = applyMapping(
+      [{ 'Posting Date': '05/21/2026', Amount: '-1500.00', Description: 'Rent' }],
+      config,
+    )
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 5)).toEqual([false])
+  })
+
+  it('consumes each existing paycheck once', () => {
+    const parsed = applyMapping(
+      [
+        { 'Posting Date': '05/21/2026', Amount: '1500.00', Description: 'DIRECT DEP ACME CORP PAYROLL' },
+        { 'Posting Date': '05/21/2026', Amount: '1500.00', Description: 'ANOTHER DEPOSIT' },
+      ],
+      config,
+    )
+    expect(detectPaycheckDuplicates(parsed, [existingPaycheck], 5)).toEqual([true, false])
   })
 })
 
@@ -373,5 +462,57 @@ describe('applyMapping with transfer rules', () => {
     )
     expect(result[0].type).toBe('expense')
     expect(result[0].transferAccountId).toBeNull()
+  })
+
+  it("direction is 'out' for an expense-shaped (debit) transfer row, single amount column", () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '-1200.00', Description: 'PAYMENT THANK YOU' }],
+      transferConfig,
+    )
+    expect(result[0].direction).toBe('out')
+  })
+
+  it("direction is 'in' for an income-shaped (credit) transfer row, single amount column", () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Amount: '1200.00', Description: 'PAYMENT THANK YOU' }],
+      transferConfig,
+    )
+    expect(result[0].direction).toBe('in')
+  })
+
+  it("direction is 'out' for a debit-column transfer row, split amount mode", () => {
+    const splitTransferConfig: MappingConfig = {
+      ...transferConfig,
+      amountMode: 'split',
+      creditColumn: 'Credit',
+      debitColumn: 'Debit',
+    }
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Credit: '0', Debit: '1200.00', Description: 'PAYMENT THANK YOU' }],
+      splitTransferConfig,
+    )
+    expect(result[0].direction).toBe('out')
+  })
+
+  it("direction is 'in' for a credit-column transfer row, split amount mode", () => {
+    const splitTransferConfig: MappingConfig = {
+      ...transferConfig,
+      amountMode: 'split',
+      creditColumn: 'Credit',
+      debitColumn: 'Debit',
+    }
+    const result = applyMapping(
+      [{ 'Posting Date': '03/05/2026', Credit: '1200.00', Debit: '0', Description: 'PAYMENT THANK YOU' }],
+      splitTransferConfig,
+    )
+    expect(result[0].direction).toBe('in')
+  })
+
+  it('direction is undefined for non-transfer rows', () => {
+    const result = applyMapping(
+      [{ 'Posting Date': '03/01/2026', Amount: '-40.00', Description: 'Coffee' }],
+      transferConfig,
+    )
+    expect(result[0].direction).toBeUndefined()
   })
 })

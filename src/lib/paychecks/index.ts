@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon'
 import type { Paycheck } from '../types/Paycheck'
 
 export interface ContributionPreviewItem {
@@ -35,6 +36,45 @@ export function contributionItems(
     }
   }
   return items
+}
+
+export interface ExistingTxnRef {
+  id: number
+  amount: number
+  date: string
+  description: string
+  type: string
+  paycheckId: number | null
+}
+
+/** Default ± window (in days) for matching a paycheck deposit against a bank posting date. */
+export const PAYCHECK_DEPOSIT_TOLERANCE_DAYS = 3
+
+/**
+ * Find an existing, non-paycheck-linked income transaction on the deposit
+ * account that looks like it's already this paycheck's bank-side deposit
+ * (e.g. imported from a CSV before the paycheck was entered). Matches on
+ * amount + a date window, ignoring description, same approach as the CSV
+ * import wizard's duplicate detection.
+ *
+ * Only ever matches income rows with `paycheckId == null` — a transaction
+ * already linked to a paycheck (including the one being edited, and any
+ * pre-tax contribution rows) can never be flagged.
+ */
+export function findDuplicateDeposit(
+  candidate: { amount: number; date: string },
+  existing: ExistingTxnRef[],
+  toleranceDays = PAYCHECK_DEPOSIT_TOLERANCE_DAYS,
+): ExistingTxnRef | null {
+  const cDate = DateTime.fromISO(candidate.date)
+  const match = existing.find(
+    (t) =>
+      t.type === 'income' &&
+      t.paycheckId == null &&
+      Math.abs(t.amount - candidate.amount) < 0.005 &&
+      Math.abs(DateTime.fromISO(t.date).diff(cDate, 'days').days) <= toleranceDays,
+  )
+  return match ?? null
 }
 
 export function paycheckTotals(paychecks: Paycheck[]): {

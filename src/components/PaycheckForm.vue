@@ -4,7 +4,8 @@ import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { usePaychecksStore } from '../stores/paychecks'
 import { useAccountsStore } from '../stores/accounts'
-import { contributionItems } from '../lib/paychecks/index'
+import { contributionItems, findDuplicateDeposit, type ExistingTxnRef } from '../lib/paychecks/index'
+import { listTransactions } from '../lib/api/transactions'
 import { INVESTMENT_TYPES, isInvestment, isLiability } from '../lib/accountTypes'
 import { balancePreview, type PreviewLine } from '../lib/transactions/balancePreview'
 import { payPeriodItems } from '../lib/paychecks/constants'
@@ -23,6 +24,12 @@ const accountsStore = useAccountsStore()
 const toast = useToast()
 const saving = ref(false)
 const saveError = ref<string | null>(null)
+
+// Declared early: `resetForm` (below) resets these, and it can run
+// synchronously during the editing/copyFrom watcher's immediate first fire,
+// before later top-level statements in this file have executed.
+const existingIncomeTxns = ref<ExistingTxnRef[]>([])
+const createDepositTxn = ref(true)
 
 // ─── Save modes (split button) ───────────────────────────────────────────────
 // Most paychecks look like the last one, so bulk entry is common. The three
@@ -110,6 +117,7 @@ function resetForm() {
   form.medicareTax = 0
   form.deductions = []
   form.employerMatch = []
+  createDepositTxn.value = true
 }
 
 watch(
@@ -246,6 +254,48 @@ function defaultUpdateBalance(accountId: number | null): boolean {
 const updateBalance = ref(false)
 watch(() => form.incomeAccountId, (id) => { updateBalance.value = defaultUpdateBalance(id) })
 
+// ─── Duplicate deposit detection ─────────────────────────────────────────────
+// If a bank CSV was already imported and contains this paycheck's deposit,
+// don't create a second (redundant) income transaction for it. Pre-tax
+// contribution transactions are unaffected — they're never checked here.
+watch(
+  () => form.incomeAccountId,
+  async (id) => {
+    if (id == null) {
+      existingIncomeTxns.value = []
+      return
+    }
+    const page = await listTransactions({ accountIds: [id], limit: 1_000_000 })
+    existingIncomeTxns.value = page.rows.map((r) => ({
+      id: r.id,
+      amount: r.amount,
+      date: r.date,
+      description: r.description,
+      type: r.type,
+      paycheckId: r.paycheckId,
+    }))
+    // Editing an existing paycheck: restore whatever was decided last time
+    // (its own deposit txn is excluded from duplicateMatch below, so it can
+    // never self-flag) rather than re-defaulting to skip.
+    if (props.editing) {
+      createDepositTxn.value = existingIncomeTxns.value.some(
+        (t) => t.paycheckId === props.editing!.id && t.type === 'income',
+      )
+    }
+  },
+  { immediate: true },
+)
+
+const duplicateMatch = computed(() =>
+  findDuplicateDeposit({ amount: form.netAmount || 0, date: form.payDate }, existingIncomeTxns.value),
+)
+
+// New paycheck (not editing): default to skip the redundant deposit the first
+// time a match appears, but don't keep clobbering the user's own toggle.
+watch(duplicateMatch, (match, prevMatch) => {
+  if (match && !prevMatch && !props.editing) createDepositTxn.value = false
+})
+
 const liabilityIds = computed(
   () => new Set(accountsStore.accounts.filter((a) => isLiability(a.type)).map((a) => a.id)),
 )
@@ -311,6 +361,7 @@ async function save(mode: SaveMode = 'close') {
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
         updateBalance: updateBalance.value,
+        createDepositTxn: createDepositTxn.value,
         updatedAt: now,
       })
       toast.add({ title: 'Paycheck updated', color: 'success' })
@@ -330,6 +381,7 @@ async function save(mode: SaveMode = 'close') {
         employerMatch: form.employerMatch,
         incomeAccountId: form.incomeAccountId,
         updateBalance: updateBalance.value,
+        createDepositTxn: createDepositTxn.value,
         createdAt: now,
       })
       toast.add({ title: 'Paycheck added', color: 'success' })
@@ -381,6 +433,22 @@ async function save(mode: SaveMode = 'close') {
               placeholder="None (optional)"
               class="w-full"
             />
+          </div>
+
+          <div v-if="duplicateMatch" class="rounded-lg border border-warning/30 bg-warning/10 p-3 space-y-2">
+            <div class="flex items-start gap-2">
+              <UIcon name="i-ph-warning" class="text-warning text-xl shrink-0 mt-0.5" />
+              <div class="min-w-0">
+                <p class="font-semibold text-sm">Possible duplicate deposit</p>
+                <p class="text-xs text-muted">
+                  An existing transaction already looks like this deposit: {{ money(duplicateMatch.amount) }} on
+                  {{ DateTime.fromISO(duplicateMatch.date).toLocaleString(DateTime.DATE_MED) }}
+                  ("{{ duplicateMatch.description }}"). No new deposit transaction will be created for this paycheck
+                  unless you override below.
+                </p>
+              </div>
+            </div>
+            <UCheckbox v-model="createDepositTxn" label="Create a deposit transaction anyway" />
           </div>
 
         </div>

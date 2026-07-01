@@ -29,6 +29,15 @@ export interface ParsedTransaction {
   type: 'income' | 'expense' | 'transfer'
   category: string
   transferAccountId: number | null
+  /**
+   * Only meaningful when `type === 'transfer'`. 'out' means the raw row was
+   * expense-shaped (money left the currently-imported account — it's the
+   * true source). 'in' means it was income-shaped (money arrived — the
+   * currently-imported account is really the destination, and the caller
+   * should swap accountId/transferAccountId before storing). Left `undefined`
+   * for non-transfer rows.
+   */
+  direction?: 'in' | 'out'
 }
 
 export interface ExistingRef {
@@ -38,6 +47,7 @@ export interface ExistingRef {
   description: string
   type?: string
   transferAccountId?: number | null
+  paycheckId?: number | null
 }
 
 export interface CategoryRuleInput {
@@ -142,36 +152,36 @@ export function applyMapping(
 
     const matchedTransferRule = transferRules.find((r) => descLower.includes(r.keyword.toLowerCase()))
 
+    // The row's natural (non-transfer) amount/direction, computed once and
+    // reused both for plain income/expense rows and — when a transfer rule
+    // matches — to infer which side of the transfer the currently-imported
+    // account is really on (see `ParsedTransaction.direction`).
+    const natural: { amount: number; type: 'income' | 'expense' } =
+      config.amountMode === 'split'
+        ? resolveSplit(row, config)
+        : (() => {
+            const signed = parseAmount(row[config.amountColumn] ?? '0')
+            const isExpense = config.amountSign === 'negative-is-expense' ? signed < 0 : signed > 0
+            return { amount: Math.abs(signed), type: isExpense ? 'expense' : 'income' }
+          })()
+
     if (matchedTransferRule) {
-      let amount: number
-      if (config.amountMode === 'split') {
-        const { amount: a } = resolveSplit(row, config)
-        amount = a
-      } else {
-        amount = Math.abs(parseAmount(row[config.amountColumn] ?? '0'))
-      }
       return {
         date,
-        amount,
+        amount: natural.amount,
         description,
         type: 'transfer' as const,
         category: 'uncategorized',
         transferAccountId: matchedTransferRule.transferAccountId,
+        direction: natural.type === 'expense' ? ('out' as const) : ('in' as const),
       }
     }
 
-    if (config.amountMode === 'split') {
-      const { amount, type } = resolveSplit(row, config)
-      return { date, amount, description, type, category, transferAccountId: null }
-    }
-
-    const signed = parseAmount(row[config.amountColumn] ?? '0')
-    const isExpense = config.amountSign === 'negative-is-expense' ? signed < 0 : signed > 0
     return {
       date,
-      amount: Math.abs(signed),
+      amount: natural.amount,
       description,
-      type: isExpense ? 'expense' : 'income',
+      type: natural.type,
       category,
       transferAccountId: null,
     }
@@ -199,14 +209,19 @@ export const TRANSFER_DATE_TOLERANCE_DAYS = 3
 
 /**
  * Return a parallel array: true where the parsed row looks like the counterpart
- * of an existing transfer whose *other* side is `accountId`.
+ * of an existing transfer touching `accountId` on either side.
  *
- * A transfer between two of your accounts is stored as a single row on one
- * account (with `transferAccountId` pointing at the other). When you later
- * import the other account's statement, the same event shows up with a
- * different description and often a slightly different date, so it can't be
- * matched on the exact date|amount|description key. Here we match on amount +
- * a date window instead, ignoring the description.
+ * A transfer between two of your accounts is stored as a single canonical row
+ * — source account as `accountId`, destination as `transferAccountId` — but
+ * which of your two accounts ends up as which depends only on which one was
+ * imported first (see `direction` on `ParsedTransaction`), not on import
+ * order. So when you later import the *other* account's statement, the same
+ * event shows up with a different description and often a slightly different
+ * date, and the existing canonical row may have `accountId` on either side of
+ * it. It can't be matched on the exact date|amount|description key, so we
+ * match on amount + a date window instead, ignoring the description. This is
+ * a best-effort heuristic: two unrelated transfers of the same amount within
+ * the window would also match.
  */
 export function detectTransferCounterparts(
   parsed: ParsedTransaction[],
@@ -214,16 +229,50 @@ export function detectTransferCounterparts(
   accountId: number,
   toleranceDays = TRANSFER_DATE_TOLERANCE_DAYS,
 ): boolean[] {
-  // Existing transfers whose other side is the account being imported into.
-  // Their primary accountId is necessarily a different account.
+  // Existing transfers touching this account, on either side.
   const counterparts = existing.filter(
-    (e) => e.type === 'transfer' && e.transferAccountId === accountId,
+    (e) => e.type === 'transfer' && (e.transferAccountId === accountId || e.accountId === accountId),
   )
   const consumed = new Array(counterparts.length).fill(false)
 
   return parsed.map((p) => {
     const pDate = DateTime.fromISO(p.date)
     const matchIdx = counterparts.findIndex(
+      (c, i) =>
+        !consumed[i] &&
+        Math.abs(c.amount - p.amount) < 0.005 &&
+        Math.abs(DateTime.fromISO(c.date).diff(pDate, 'days').days) <= toleranceDays,
+    )
+    if (matchIdx === -1) return false
+    consumed[matchIdx] = true
+    return true
+  })
+}
+
+/**
+ * Return a parallel array: true where a parsed income row looks like the
+ * deposit for an existing paycheck-generated transaction on this account.
+ *
+ * Paycheck income txns carry a synthetic description ("Paycheck – Employer")
+ * that never matches the bank's own description text, so `detectDuplicates`
+ * can't catch them. Match on amount + a date window instead, same approach
+ * as `detectTransferCounterparts`.
+ */
+export function detectPaycheckDuplicates(
+  parsed: ParsedTransaction[],
+  existing: ExistingRef[],
+  accountId: number,
+  toleranceDays = TRANSFER_DATE_TOLERANCE_DAYS,
+): boolean[] {
+  const candidates = existing.filter(
+    (e) => e.accountId === accountId && e.paycheckId != null,
+  )
+  const consumed = new Array(candidates.length).fill(false)
+
+  return parsed.map((p) => {
+    if (p.type !== 'income') return false
+    const pDate = DateTime.fromISO(p.date)
+    const matchIdx = candidates.findIndex(
       (c, i) =>
         !consumed[i] &&
         Math.abs(c.amount - p.amount) < 0.005 &&

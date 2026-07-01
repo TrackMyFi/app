@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { DateTime } from 'luxon'
 import { parseCsv } from '../lib/csv/parse'
-import { applyMapping, autoDetectMapping, detectDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from '../lib/csv/mapping'
+import { applyMapping, autoDetectMapping, detectDuplicates, detectPaycheckDuplicates, detectTransferCounterparts, parseAmount, type ExistingRef, type MappingConfig } from '../lib/csv/mapping'
 import { bulkCreateTransactions, bulkCreateTransactionsWithSnapshots, listTransactions } from '../lib/api/transactions'
 import * as mappingApi from '../lib/api/importMappings'
 import * as categoryRulesApi from '../lib/api/categoryRules'
@@ -132,8 +132,17 @@ const transferDupes = computed(() =>
     : detectTransferCounterparts(parsed.value, existingRefs.value, accountId.value),
 )
 
+const paycheckDupes = computed(() =>
+  accountId.value == null
+    ? []
+    : detectPaycheckDuplicates(parsed.value, existingRefs.value, accountId.value),
+)
+
 const dupes = computed(() =>
-  parsed.value.map((_, i) => Boolean(exactDupes.value[i]) || Boolean(transferDupes.value[i])),
+  parsed.value.map(
+    (_, i) =>
+      Boolean(exactDupes.value[i]) || Boolean(transferDupes.value[i]) || Boolean(paycheckDupes.value[i]),
+  ),
 )
 
 function rowClass(row: { index: number }) {
@@ -302,6 +311,7 @@ watch(accountId, async (newId) => {
     description: r.description,
     type: r.type,
     transferAccountId: r.transferAccountId,
+    paycheckId: r.paycheckId,
   }))
 })
 
@@ -354,35 +364,39 @@ async function confirmImport() {
   if (accountId.value == null) return
   const now = DateTime.now().toISO()!
 
+  // A transfer row always needs to land with the true source as accountId and
+  // the true destination as transferAccountId, regardless of which account we
+  // happened to import into. Liability accounts assume every matched transfer
+  // is an incoming payment (the card is always the destination). Asset
+  // accounts derive it from the row's own credit/debit direction so import
+  // order doesn't matter (see `ParsedTransaction.direction`).
   const selectedRows = parsed.value
     .map((p, i) => ({ p, i }))
     .filter(({ i }) => include.value[i] === 'import')
-    .map(({ p, i }) => ({
-      accountId: accountId.value!,
-      transferAccountId: p.transferAccountId ?? null,
-      amount: p.amount,
-      description: p.description,
-      date: p.date,
-      type: p.type,
-      category: p.type === 'transfer' ? 'uncategorized' : (rowCategories.value[i] ?? p.category),
-      isContribution: false,
-      isWithdrawal: false,
-      importSource: 'csv',
-      createdAt: now,
-    }))
+    .map(({ p, i }) => {
+      const isLiabTransfer = isLiabilityAccount.value && p.type === 'transfer' && p.transferAccountId != null
+      const isInboundAssetTransfer =
+        !isLiabilityAccount.value && p.type === 'transfer' && p.direction === 'in' && p.transferAccountId != null
+      const shouldSwap = isLiabTransfer || isInboundAssetTransfer
+      const rowAccountId = accountId.value!
+      const rowTransferAccountId = p.transferAccountId ?? null
+      return {
+        accountId: shouldSwap ? rowTransferAccountId! : rowAccountId,
+        transferAccountId: shouldSwap ? rowAccountId : rowTransferAccountId,
+        amount: p.amount,
+        description: p.description,
+        date: p.date,
+        type: p.type,
+        category: p.type === 'transfer' ? 'uncategorized' : (rowCategories.value[i] ?? p.category),
+        isContribution: false,
+        isWithdrawal: false,
+        importSource: 'csv',
+        createdAt: now,
+      }
+    })
 
   if (!generateSnapshots.value) {
-    await bulkCreateTransactions(
-      selectedRows.map((r) => {
-        const isLiabTransfer = isLiabilityAccount.value && r.type === 'transfer' && r.transferAccountId != null
-        return {
-          ...r,
-          accountId: isLiabTransfer ? r.transferAccountId! : r.accountId,
-          transferAccountId: isLiabTransfer ? r.accountId : r.transferAccountId,
-          updateBalance: false,
-        }
-      }),
-    )
+    await bulkCreateTransactions(selectedRows.map((r) => ({ ...r, updateBalance: false })))
   } else {
     importing.value = true
     try {
@@ -395,16 +409,7 @@ async function confirmImport() {
       }
       const sorted = [...selectedRows]
         .sort((a, b) => a.date.localeCompare(b.date))
-        .map((row) => {
-          const isLiabTransfer =
-            isLiabilityAccount.value && row.type === 'transfer' && row.transferAccountId != null
-          return {
-            ...row,
-            accountId: isLiabTransfer ? row.transferAccountId! : row.accountId,
-            transferAccountId: isLiabTransfer ? row.accountId : row.transferAccountId,
-            updateBalance: true,
-          }
-        })
+        .map((row) => ({ ...row, updateBalance: true }))
       await bulkCreateTransactionsWithSnapshots(sorted)
       await accountsStore.load()
     } catch (e: any) {
@@ -713,13 +718,21 @@ async function confirmImport() {
             >
               <span class="text-xs text-amber-600 shrink-0">(transfer dup)</span>
             </UTooltip>
+            <UTooltip
+              v-else-if="paycheckDupes[row.index]"
+              text="Looks like an already-recorded paycheck deposit — unchecked to avoid double-counting."
+            >
+              <span class="text-xs text-amber-600 shrink-0">(paycheck dup)</span>
+            </UTooltip>
           </div>
         </template>
         <template #type-cell="{ row }">
           <template v-if="row.original.type === 'transfer'">
             <!-- Liability transfers (e.g. card payments) flow INTO this account from
-                 the other side, so show the other account as the source. -->
-            <template v-if="isLiabilityAccount">
+                 the other side, so show the other account as the source. Asset
+                 transfers show the same "arrow" direction the row's own credit/debit
+                 sign implies. -->
+            <template v-if="isLiabilityAccount || row.original.direction === 'in'">
               {{ accountName(row.original.transferAccountId!) }} → transfer
             </template>
             <template v-else>

@@ -36,6 +36,8 @@ export interface NewPaycheck {
   employerMatch: EmployerMatchInput[]
   incomeAccountId?: number | null
   updateBalance: boolean
+  /** Whether to auto-create the deposit transaction on incomeAccountId. Defaults to true. */
+  createDepositTxn: boolean
   createdAt: string
 }
 
@@ -55,6 +57,7 @@ export interface UpdatePaycheck {
   employerMatch: EmployerMatchInput[]
   incomeAccountId?: number | null
   updateBalance: boolean
+  createDepositTxn: boolean
   updatedAt: string
 }
 

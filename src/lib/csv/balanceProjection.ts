@@ -4,6 +4,7 @@ export interface ProjectionRow {
   date: string
   amount: number
   type: string
+  direction?: 'in' | 'out'
 }
 
 /**
@@ -31,7 +32,7 @@ export function projectRunningBalances(
   const balanceAt = new Map<number, number>()
   let running = baseBalance
   for (const { row, i } of sorted) {
-    running += signedDelta(row.type, row.amount, isLiability)
+    running += signedDelta(row.type, row.amount, isLiability, row.direction)
     balanceAt.set(i, running)
   }
 
