@@ -33,6 +33,22 @@ export const categoryItems = CATEGORIES.map((c) => ({
   value: c,
 }))
 
+// Shared semantic color mapping so every chart/list that breaks spend down by
+// category agrees on what each bucket looks like.
+export const CATEGORY_DOT_COLOR: Record<Category, string> = {
+  savings: 'bg-info',
+  fixed: 'bg-warning',
+  discretionary: 'bg-error',
+  uncategorized: 'bg-inverted/45',
+}
+
+export const CATEGORY_TEXT_COLOR: Record<Category, string> = {
+  savings: 'text-info',
+  fixed: 'text-warning',
+  discretionary: 'text-error',
+  uncategorized: 'text-muted',
+}
+
 /**
  * Signed effect of a transaction on its PRIMARY account's balance.
  *

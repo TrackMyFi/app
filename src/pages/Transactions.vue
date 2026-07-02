@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
 import { DateTime } from 'luxon'
+import { useRoute } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
 import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
 import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
+import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
 import { useReveal } from '../composables/useReveal'
 import * as api from '../lib/api/transactions'
 import TransactionForm from '../components/TransactionForm.vue'
@@ -23,6 +25,7 @@ const store = useTransactionsStore()
 const accountsStore = useAccountsStore()
 const toast = useToast()
 const { error, run, retry } = usePageData()
+const route = useRoute()
 
 // ─── Figures tick into place ────────────────────────────────────────────────
 // A deliberate check-in deserves to feel alive: when a scope's data lands the
@@ -296,27 +299,6 @@ const activeMedian = computed(() => {
 // baseline is meaningful (not just the one other month the user has entered).
 const showComparison = computed(() => (activeMedian.value?.periodCount ?? 0) >= 2)
 
-function pctVsMedian(current: number, med: number): number | null {
-  if (med === 0) return null
-  return (current - med) / Math.abs(med)
-}
-
-// Favorable direction: income/savings/net → higher is better; expense → lower is better.
-function changeColor(field: 'income' | 'expense' | 'savings' | 'net', pct: number | null): string {
-  if (pct == null || Math.abs(pct) < 0.005) return 'text-muted'
-  const favorable = field === 'expense' ? pct < 0 : pct > 0
-  return favorable ? 'text-success' : 'text-error'
-}
-
-// A calm directional cue instead of a raw percentage delta: an arrow that says
-// "above / below / on par with a typical period", paired with the median value
-// itself. Raw "% vs median" produced absurd figures (+5102%) when the baseline
-// was near-zero; the median value is always legible.
-function trendIcon(pct: number | null): string {
-  if (pct == null || Math.abs(pct) < 0.005) return 'i-ph-minus'
-  return pct > 0 ? 'i-ph-arrow-up' : 'i-ph-arrow-down'
-}
-
 function medianRate(totals: { income: number; savings: number }): string {
   if (totals.income <= 0) return '—'
   return (totals.savings / totals.income * 100).toFixed(1) + '%'
@@ -402,8 +384,29 @@ function directionLabel(t: Transaction): string {
   return 'Transfer'
 }
 
+// Arriving from Expenses' merchant/category drill-down seeds the filters and
+// scope, so the table shows exactly what fed the figure that was clicked —
+// same expense-type filter, same time period, plus the search/category term.
+// Note: this deliberately does NOT clear the query afterward — App.vue keys the
+// routed component on `route.fullPath` (to force a remount after background
+// sync catch-up), so a post-mount `router.replace` here would trigger a second
+// remount and wipe the filters state we just set.
+function seedFiltersFromRoute() {
+  const { search, category, types: typesParam, period, date } = route.query
+
+  if (typeof search === 'string') searchTerms.value = [search]
+  if (typeof category === 'string') categories.value = [category]
+  if (typeof typesParam === 'string') types.value = [typesParam]
+  if (period === 'month' || period === 'year' || period === 'all') scope.value = period
+  if (typeof date === 'string') {
+    const dt = DateTime.fromISO(date)
+    if (dt.isValid) selectedDate.value = dt.startOf('month')
+  }
+}
+
 onMounted(() => run(async () => {
   await accountsStore.load()
+  seedFiltersFromRoute()
   await applyFilters()
 }))
 </script>

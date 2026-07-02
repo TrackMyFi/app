@@ -133,34 +133,39 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
 }
 
 // Build the WHERE clause + positional params from a filter.
-fn build_where(f: &TransactionFilter, params: &mut Vec<Value>) -> String {
+/// `prefix` qualifies every `txn` column (e.g. `"txn"` or a query's own alias like
+/// `"t"`) so the generated WHERE clause stays unambiguous when the caller's query
+/// joins in other tables that share column names — `account` also has a `type`
+/// column, and an unqualified `type IN (...)` clause fails with a SQLite
+/// "ambiguous column name" error as soon as `period_stats`'s account joins are present.
+fn build_where(prefix: &str, f: &TransactionFilter, params: &mut Vec<Value>) -> String {
     let mut clauses: Vec<String> = Vec::new();
     if !f.account_ids.is_empty() {
         let ph = (0..f.account_ids.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
-        clauses.push(format!("(account_id IN ({ph}) OR transfer_account_id IN ({ph}))"));
+        clauses.push(format!("({prefix}.account_id IN ({ph}) OR {prefix}.transfer_account_id IN ({ph}))"));
         for &id in &f.account_ids { params.push(Value::Integer(id as i64)); }
         for &id in &f.account_ids { params.push(Value::Integer(id as i64)); }
     }
     if !f.types.is_empty() {
         let ph = (0..f.types.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
-        clauses.push(format!("type IN ({ph})"));
+        clauses.push(format!("{prefix}.type IN ({ph})"));
         for t in &f.types { params.push(Value::Text(t.clone())); }
     }
     if !f.categories.is_empty() {
         let ph = (0..f.categories.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
-        clauses.push(format!("category IN ({ph})"));
+        clauses.push(format!("{prefix}.category IN ({ph})"));
         for c in &f.categories { params.push(Value::Text(c.clone())); }
     }
     if let Some(s) = &f.start_date {
-        clauses.push("date >= ?".into());
+        clauses.push(format!("{prefix}.date >= ?"));
         params.push(Value::Text(s.clone()));
     }
     if let Some(e) = &f.end_date {
-        clauses.push("date <= ?".into());
+        clauses.push(format!("{prefix}.date <= ?"));
         params.push(Value::Text(e.clone()));
     }
     if !f.search_terms.is_empty() {
-        let sub = f.search_terms.iter().map(|_| "description LIKE ?").collect::<Vec<_>>().join(" OR ");
+        let sub = f.search_terms.iter().map(|_| format!("{prefix}.description LIKE ?")).collect::<Vec<_>>().join(" OR ");
         clauses.push(format!("({sub})"));
         for term in &f.search_terms { params.push(Value::Text(format!("%{term}%"))); }
     }
@@ -214,7 +219,7 @@ pub async fn list_transactions(
 ) -> Result<TransactionPage, String> {
     // page rows
     let mut row_params: Vec<Value> = Vec::new();
-    let where_sql = build_where(f, &mut row_params);
+    let where_sql = build_where("txn", f, &mut row_params);
     // SQLite treats LIMIT -1 as "no limit"; use that when the caller passes null
     // so annual queries (which set limit: null) aren't silently capped at 200 rows.
     let limit = f.limit.unwrap_or(-1);
@@ -235,7 +240,7 @@ pub async fn list_transactions(
 
     // totals over the full filter (transfers excluded)
     let mut agg_params: Vec<Value> = Vec::new();
-    let agg_where = build_where(f, &mut agg_params);
+    let agg_where = build_where("txn", f, &mut agg_params);
     let agg_sql = format!(
         "SELECT \
            COUNT(*), \
@@ -923,7 +928,7 @@ pub async fn period_stats(
         offset: None,
     };
     let mut params: Vec<Value> = Vec::new();
-    let where_sql = build_where(&base, &mut params);
+    let where_sql = build_where("t", &base, &mut params);
 
     let sql = format!(
         "SELECT t.type, t.amount, t.category, t.is_contribution, t.is_withdrawal, \

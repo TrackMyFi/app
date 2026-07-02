@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
-import { CATEGORY_LABELS } from '../lib/transactions/constants'
+import { CATEGORY_LABELS, CATEGORY_DOT_COLOR } from '../lib/transactions/constants'
 import { classifyFlow } from '../lib/transactions/flow'
 import { useReveal } from '../composables/useReveal'
 import type { Transaction } from '../lib/types/Transaction'
@@ -26,13 +26,6 @@ const SEGMENT_COLOR: Record<string, string> = {
   fixed:         'bg-warning',
   discretionary: 'bg-error',
   uncategorized: 'bg-inverted/35',
-}
-
-const DOT_COLOR: Record<string, string> = {
-  savings:       'bg-info',
-  fixed:         'bg-warning',
-  discretionary: 'bg-error',
-  uncategorized: 'bg-inverted/45',
 }
 
 const totals = computed(() => {
@@ -146,7 +139,7 @@ function pctText(n: number) {
     <!-- Legend: each bucket's share, scannable left-to-right. -->
     <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
       <div v-for="seg in segments" :key="seg.key" class="flex items-baseline gap-2">
-        <span class="size-2 rounded-full shrink-0 self-center" :class="DOT_COLOR[seg.key] ?? 'bg-muted'" />
+        <span class="size-2 rounded-full shrink-0 self-center" :class="CATEGORY_DOT_COLOR[seg.key] ?? 'bg-muted'" />
         <span class="text-xs text-muted">{{ seg.label }}</span>
         <span class="text-sm font-medium tabular-nums text-heading">{{ money(seg.amount * reveal) }}</span>
         <span class="text-xs text-dimmed tabular-nums">{{ pctText(seg.pct) }}</span>

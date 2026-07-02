@@ -20,6 +20,8 @@ declare module 'vue' {
     CurrencyInput: typeof import('./src/components/CurrencyInput.vue')['default']
     DateInput: typeof import('./src/components/DateInput.vue')['default']
     DeleteDataModal: typeof import('./src/components/DeleteDataModal.vue')['default']
+    ExpenseMerchantList: typeof import('./src/components/ExpenseMerchantList.vue')['default']
+    ExpenseOpportunities: typeof import('./src/components/ExpenseOpportunities.vue')['default']
     FiProgressCard: typeof import('./src/components/FiProgressCard.vue')['default']
     ForecastChart: typeof import('./src/components/ForecastChart.vue')['default']
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']

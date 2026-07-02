@@ -54,6 +54,7 @@ const links = [
   { label: 'Accounts', to: '/accounts', icon: 'i-ph-wallet' },
   { label: 'Assets', to: '/assets', icon: 'i-ph-wrench' },
   { label: 'Transactions', to: '/transactions', icon: 'i-ph-receipt' },
+  { label: 'Expenses', to: '/expenses', icon: 'i-ph-chart-pie-slice' },
   { label: 'Paychecks', to: '/paychecks', icon: 'i-ph-money' },
   { label: 'Contributions', to: '/contributions', icon: 'i-ph-piggy-bank' },
   { label: 'Budget', to: '/budget', icon: 'i-ph-calculator' },
