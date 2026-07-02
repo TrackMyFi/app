@@ -18,6 +18,11 @@ const newRuleCategory = ref('discretionary')
 const savingRule = ref(false)
 const removingRuleId = ref<number | null>(null)
 
+const editingRuleId = ref<number | null>(null)
+const editRuleKeyword = ref('')
+const editRuleCategory = ref('discretionary')
+const savingEditRuleId = ref<number | null>(null)
+
 onMounted(() => run(async () => {
   categoryRules.value = await categoryRulesApi.listCategoryRules()
 }))
@@ -53,9 +58,33 @@ async function removeCategoryRule(id: number) {
   }
 }
 
+function startEditRule(rule: CategoryRule) {
+  editingRuleId.value = rule.id
+  editRuleKeyword.value = rule.keyword
+  editRuleCategory.value = rule.category
+}
+
+function cancelEditRule() {
+  editingRuleId.value = null
+}
+
+async function saveEditRule(id: number) {
+  if (!editRuleKeyword.value.trim()) return
+  savingEditRuleId.value = id
+  try {
+    await categoryRulesApi.updateCategoryRule(id, editRuleKeyword.value.trim().toLowerCase(), editRuleCategory.value)
+    categoryRules.value = await categoryRulesApi.listCategoryRules()
+    editingRuleId.value = null
+  } catch (err) {
+    toast.add({ title: 'Failed to update rule', description: String(err), color: 'error' })
+  } finally {
+    savingEditRuleId.value = null
+  }
+}
+
 const ruleColumns = [
   { accessorKey: 'keyword', header: 'Keyword' },
-  { accessorKey: 'category', header: 'Category', cell: ({ row }: { row: { original: { category: string } } }) => labelForCategory(row.original.category) },
+  { accessorKey: 'category', header: 'Category' },
   { id: 'actions', header: '', meta: { class: { td: 'text-right' } } },
 ]
 </script>
@@ -76,12 +105,42 @@ const ruleColumns = [
 
       <UTable :data="categoryRules" :columns="ruleColumns" empty="No rules yet.">
         <template #keyword-cell="{ row }">
-          <span class="font-mono text-xs">{{ row.original.keyword }}</span>
+          <UInput
+            v-if="editingRuleId === row.original.id"
+            v-model="editRuleKeyword"
+            size="xs"
+            class="font-mono"
+            @keydown.enter="saveEditRule(row.original.id)"
+            @keydown.escape="cancelEditRule"
+          />
+          <span v-else class="font-mono text-xs">{{ row.original.keyword }}</span>
+        </template>
+        <template #category-cell="{ row }">
+          <USelect
+            v-if="editingRuleId === row.original.id"
+            v-model="editRuleCategory"
+            :items="categoryItems"
+            size="xs"
+          />
+          <span v-else>{{ labelForCategory(row.original.category) }}</span>
         </template>
         <template #actions-cell="{ row }">
-          <UButton size="xs" color="error" variant="ghost" :loading="removingRuleId === row.original.id" :disabled="removingRuleId !== null" @click="removeCategoryRule(row.original.id)">
-            Remove
-          </UButton>
+          <div v-if="editingRuleId === row.original.id" class="flex gap-2 justify-end">
+            <UButton size="xs" variant="ghost" color="neutral" :disabled="savingEditRuleId !== null" @click="cancelEditRule">
+              Cancel
+            </UButton>
+            <UButton size="xs" variant="soft" :loading="savingEditRuleId === row.original.id" :disabled="!editRuleKeyword.trim() || savingEditRuleId !== null" @click="saveEditRule(row.original.id)">
+              Save
+            </UButton>
+          </div>
+          <div v-else class="flex gap-2 justify-end">
+            <UButton size="xs" variant="ghost" :disabled="editingRuleId !== null || removingRuleId !== null" @click="startEditRule(row.original)">
+              Edit
+            </UButton>
+            <UButton size="xs" color="error" variant="ghost" :loading="removingRuleId === row.original.id" :disabled="removingRuleId !== null || editingRuleId !== null" @click="removeCategoryRule(row.original.id)">
+              Remove
+            </UButton>
+          </div>
         </template>
       </UTable>
 

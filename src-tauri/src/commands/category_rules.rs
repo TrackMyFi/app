@@ -35,6 +35,21 @@ pub async fn delete_category_rule(conn: &Connection, id: i32) -> Result<(), Stri
     Ok(())
 }
 
+pub async fn update_category_rule(
+    conn: &Connection,
+    id: i32,
+    keyword: String,
+    category: String,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE category_rules SET keyword = ?1, category = ?2 WHERE id = ?3",
+        params![keyword, category, id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn list_category_rules_cmd(db: State<'_, Db>) -> Result<Vec<CategoryRule>, String> {
     let conn = db.conn().await?;
@@ -63,4 +78,15 @@ pub async fn create_category_rule_cmd(
 pub async fn delete_category_rule_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
     let conn = db.conn().await?;
     delete_category_rule(&conn, id).await
+}
+
+#[tauri::command]
+pub async fn update_category_rule_cmd(
+    db: State<'_, Db>,
+    id: i32,
+    keyword: String,
+    category: String,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    update_category_rule(&conn, id, keyword, category).await
 }
