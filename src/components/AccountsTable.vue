@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { DateTime } from 'luxon'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useAccountsStore } from '../stores/accounts'
-import { labelForAccountType } from '../lib/accountTypes'
+import { labelForAccountType, isLiability } from '../lib/accountTypes'
+import { monthChange, yearToDateChange, type BalanceChange } from '../lib/balances/change'
 import type { Account } from '../lib/types/Account'
 
 const props = withDefaults(
@@ -49,6 +50,38 @@ function isStale(id: number) {
   return DateTime.now().diff(DateTime.fromISO(d), 'days').days > 30
 }
 
+const now = DateTime.now()
+
+const monthChangeMap = computed(() => new Map(props.accounts.map(a => {
+  const current = balanceMap.value.get(a.id)
+  return [a.id, current != null ? monthChange(store.allBalances, a.id, current, now) : null] as const
+})))
+
+const yearToDateChangeMap = computed(() => new Map(props.accounts.map(a => {
+  const current = balanceMap.value.get(a.id)
+  return [a.id, current != null ? yearToDateChange(store.allBalances, a.id, current, now) : null] as const
+})))
+
+function changeAmountLabel(change: BalanceChange | null) {
+  if (!change) return '—'
+  if (change.amount === 0) return money(0)
+  return change.amount > 0 ? `+${money(change.amount)}` : money(change.amount)
+}
+
+function changePercentLabel(change: BalanceChange | null) {
+  if (!change || change.percent == null) return null
+  const pct = change.percent * 100
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct.toFixed(1)}%`
+}
+
+/** Colors by net-worth impact: for a liability, a growing balance is bad (red), not good. */
+function changeColorClass(account: Account, change: BalanceChange | null) {
+  if (!change || change.amount === 0) return 'text-muted'
+  const helpsNetWorth = isLiability(account.type) ? change.amount < 0 : change.amount > 0
+  return helpsNetWorth ? 'text-success' : 'text-error'
+}
+
 function activate(account: Account) {
   if (props.interactive) emit('select', account)
 }
@@ -59,9 +92,11 @@ function activate(account: Account) {
     <p class="text-xs text-muted font-medium mb-2">{{ title }}</p>
     <div class="border border-default rounded-lg overflow-hidden">
       <!-- Column headers -->
-      <div class="grid grid-cols-[1fr_160px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
+      <div class="grid grid-cols-[1fr_140px_120px_120px_140px_52px] bg-elevated px-4 py-2 border-b border-default">
         <span class="text-xs font-semibold uppercase tracking-wider text-muted">Account</span>
         <span class="text-xs font-semibold uppercase tracking-wider text-muted">Type</span>
+        <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">1M Change</span>
+        <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">YTD Change</span>
         <span class="text-xs font-semibold uppercase tracking-wider text-muted text-right">Balance</span>
         <span />
       </div>
@@ -70,7 +105,7 @@ function activate(account: Account) {
       <div
         v-for="account in accounts"
         :key="account.id"
-        class="grid grid-cols-[1fr_160px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0"
+        class="grid grid-cols-[1fr_140px_120px_120px_140px_52px] items-center px-4 py-3 border-b border-default last:border-b-0"
         :class="interactive
           ? 'group cursor-pointer hover:bg-elevated/50 transition-colors focus-visible:outline-none focus-visible:bg-elevated/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40'
           : ''"
@@ -97,6 +132,16 @@ function activate(account: Account) {
         </div>
 
         <span class="text-sm text-muted">{{ labelForAccountType(account.type) }}</span>
+
+        <div class="text-right">
+          <p class="text-sm font-mono" :class="changeColorClass(account, monthChangeMap.get(account.id) ?? null)">{{ changeAmountLabel(monthChangeMap.get(account.id) ?? null) }}</p>
+          <p v-if="changePercentLabel(monthChangeMap.get(account.id) ?? null)" class="text-xs font-mono text-muted">{{ changePercentLabel(monthChangeMap.get(account.id) ?? null) }}</p>
+        </div>
+
+        <div class="text-right">
+          <p class="text-sm font-mono" :class="changeColorClass(account, yearToDateChangeMap.get(account.id) ?? null)">{{ changeAmountLabel(yearToDateChangeMap.get(account.id) ?? null) }}</p>
+          <p v-if="changePercentLabel(yearToDateChangeMap.get(account.id) ?? null)" class="text-xs font-mono text-muted">{{ changePercentLabel(yearToDateChangeMap.get(account.id) ?? null) }}</p>
+        </div>
 
         <div class="text-right">
           <p class="text-sm font-mono" :class="interactive ? 'font-semibold' : 'text-muted'">{{ balanceLabel(account.id) }}</p>

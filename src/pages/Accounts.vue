@@ -24,6 +24,7 @@ const { progress: reveal, play: playReveal } = useReveal()
 
 onMounted(() => run(async () => {
   await store.loadList()
+  await store.load()
   playReveal()
 }))
 
@@ -34,11 +35,14 @@ const latestBalanceMap = computed(() =>
   new Map(store.latestBalances.map(b => [b.accountId, b.balance]))
 )
 
+const byBalanceDesc = (a: Account, b: Account) =>
+  (latestBalanceMap.value.get(b.id) ?? 0) - (latestBalanceMap.value.get(a.id) ?? 0)
+
 const activeAccounts = computed(() => store.accounts.filter(a => a.isActive))
 const archivedAccounts = computed(() => store.accounts.filter(a => !a.isActive))
-const equityAccounts = computed(() => activeAccounts.value.filter(a => isEquity(a.type)))
-const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations && !isEquity(a.type)))
-const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations && !isEquity(a.type)))
+const equityAccounts = computed(() => activeAccounts.value.filter(a => isEquity(a.type)).sort(byBalanceDesc))
+const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations && !isEquity(a.type)).sort(byBalanceDesc))
+const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations && !isEquity(a.type)).sort(byBalanceDesc))
 
 const signedBalance = (a: Account) => {
   const b = latestBalanceMap.value.get(a.id) ?? 0

@@ -141,7 +141,7 @@ function formatBytes(bytes: number | null): string {
         <span class="i-ph-paperclip text-muted shrink-0" />
         <div class="flex-1 min-w-0">
           <p class="text-sm truncate">{{ att.originalName }}</p>
-          <p v-if="att.byteSize" class="text-xs text-muted">{{ formatBytes(att.byteSize) }}</p>
+          <p v-if="att.byteSize" class="text-xs text-muted">{{ formatBytes(Number(att.byteSize)) }}</p>
         </div>
         <UTooltip v-if="providerMismatch(att)"
                   :text="`Stored in '${att.provider}' — configure that storage provider to open`">

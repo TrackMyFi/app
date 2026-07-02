@@ -157,7 +157,7 @@ async function saveStorageSettings() {
               ? ` (${result.failed} failed: ${result.failedNames.join(', ')})`
               : ''
           toast.add({
-            title: `Migrated ${result.migrated} ${result.migrated === 1 ? 'attachment' : 'attachments'} to ${providerLabel(newProvider)}${failNote}`,
+            title: `Migrated ${result.migrated} ${Number(result.migrated) === 1 ? 'attachment' : 'attachments'} to ${providerLabel(newProvider)}${failNote}`,
             color: result.failed > 0 ? 'warning' : 'success',
           })
           return
