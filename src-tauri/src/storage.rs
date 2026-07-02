@@ -188,7 +188,13 @@ pub async fn build_object_store(
     conn: &libsql::Connection,
 ) -> Result<Arc<dyn ObjectStore>, String> {
     let cfg = read_storage_config_db(conn).await;
-    let creds = read_credentials()?.unwrap_or_default();
+    // Only touch the keychain when the provider actually needs credentials —
+    // a local-storage setup should never trigger keychain access (or prompts).
+    let creds = if cfg.provider == "local" {
+        StorageCredentials::default()
+    } else {
+        read_credentials()?.unwrap_or_default()
+    };
     let local_dir = local_attachments_dir(app)?;
     build_store_from_spec(&StoreSpec {
         provider: cfg.provider,

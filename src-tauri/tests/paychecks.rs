@@ -36,6 +36,8 @@ fn base_paycheck(employer: &str, pay_date: &str) -> NewPaycheck {
         deductions: vec![],
         employer_match: vec![],
         income_account_id: None,
+        update_balance: false,
+        create_deposit_txn: true,
         created_at: "2026-06-01T00:00:00Z".into(),
     }
 }
@@ -211,6 +213,8 @@ async fn update_paycheck_recreates_contributions() {
         ],
         employer_match: vec![],
         income_account_id: None,
+        update_balance: false,
+        create_deposit_txn: true,
         updated_at: "2026-06-16T00:00:00Z".into(),
     }).await.unwrap();
 
@@ -270,6 +274,8 @@ async fn update_nonexistent_paycheck_errors_with_no_orphaned_txns() {
         ],
         employer_match: vec![],
         income_account_id: None,
+        update_balance: false,
+        create_deposit_txn: true,
         updated_at: "2026-06-16T00:00:00Z".into(),
     }).await;
 
@@ -279,9 +285,10 @@ async fn update_nonexistent_paycheck_errors_with_no_orphaned_txns() {
 }
 
 #[tokio::test]
-async fn delete_nonexistent_paycheck_is_idempotent() {
+async fn delete_nonexistent_paycheck_errors() {
     let conn = setup().await;
-    // Deleting a non-existent paycheck silently succeeds (idempotent)
+    // delete_paycheck loads the row first (to heal balance snapshots afterward),
+    // so a non-existent id is an error rather than a silent no-op.
     let result = paychecks::delete_paycheck(&conn, 9999).await;
-    assert!(result.is_ok());
+    assert!(result.is_err());
 }

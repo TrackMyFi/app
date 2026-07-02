@@ -22,6 +22,7 @@ fn new_txn(account_id: i32, amount: f64, ty: &str) -> NewTransaction {
         r#type: ty.into(),
         category: "uncategorized".into(),
         is_contribution: false,
+        is_withdrawal: false,
         import_source: "manual".into(),
         update_balance: false,
         created_at: "2026-03-01".into(),
@@ -67,7 +68,7 @@ async fn transaction_crud_and_totals() {
     // filter by type
     let only_expense = transactions::list_transactions(
         &conn,
-        &TransactionFilter { r#type: Some("expense".into()), ..Default::default() },
+        &TransactionFilter { types: vec!["expense".into()], ..Default::default() },
     )
     .await
     .unwrap();
@@ -86,6 +87,7 @@ async fn transaction_crud_and_totals() {
             r#type: "income".into(),
             category: "savings".into(),
             is_contribution: false,
+            is_withdrawal: false,
             update_balance: false,
             updated_at: "2026-03-02".into(),
         },
@@ -128,7 +130,7 @@ async fn transfers_excluded_from_totals() {
 
     // filtering by either side returns the transfer
     let by_dest = transactions::list_transactions(&conn,
-        &TransactionFilter { account_id: Some(b), ..Default::default() }).await.unwrap();
+        &TransactionFilter { account_ids: vec![b], ..Default::default() }).await.unwrap();
     assert_eq!(by_dest.rows.len(), 1);
 }
 
@@ -304,7 +306,7 @@ async fn editing_amount_reapplies_linked_snapshot() {
     transactions::update_transaction(&conn, &UpdateTransaction {
         id, account_id: acct, transfer_account_id: None, amount: 100.0,
         description: "test".into(), date: "2026-03-01".into(), r#type: "expense".into(),
-        category: "uncategorized".into(), is_contribution: false,
+        category: "uncategorized".into(), is_contribution: false, is_withdrawal: false,
         update_balance: true, updated_at: "2026-03-02".into() }).await.unwrap();
     assert_eq!(latest_balance(&conn, acct).await, 900.0); // re-applied: 1000 - 100
     assert_eq!(balance_count(&conn).await, 2); // original seed + one generated (not stacked)
@@ -422,6 +424,7 @@ async fn bulk_create_with_snapshots_sequential_balances() {
             amount: 100.0, description: "expense 1".into(),
             date: "2026-01-02".into(), r#type: "expense".into(),
             category: "uncategorized".into(), is_contribution: false,
+            is_withdrawal: false,
             import_source: "csv".into(), update_balance: true,
             created_at: "2026-01-02".into(),
         },
@@ -430,6 +433,7 @@ async fn bulk_create_with_snapshots_sequential_balances() {
             amount: 200.0, description: "expense 2".into(),
             date: "2026-01-03".into(), r#type: "expense".into(),
             category: "uncategorized".into(), is_contribution: false,
+            is_withdrawal: false,
             import_source: "csv".into(), update_balance: true,
             created_at: "2026-01-03".into(),
         },
@@ -438,6 +442,7 @@ async fn bulk_create_with_snapshots_sequential_balances() {
             amount: 500.0, description: "income".into(),
             date: "2026-01-04".into(), r#type: "income".into(),
             category: "uncategorized".into(), is_contribution: false,
+            is_withdrawal: false,
             import_source: "csv".into(), update_balance: true,
             created_at: "2026-01-04".into(),
         },
@@ -554,7 +559,7 @@ async fn editing_past_transaction_amount_propagates_forward() {
     transactions::update_transaction_synced(&conn, &UpdateTransaction {
         id: mid, account_id: acct, transfer_account_id: None, amount: 90.0,
         description: "test".into(), date: "2026-06-14".into(), r#type: "expense".into(),
-        category: "uncategorized".into(), is_contribution: false,
+        category: "uncategorized".into(), is_contribution: false, is_withdrawal: false,
         update_balance: true, updated_at: "2026-06-16".into() }).await.unwrap();
 
     assert_eq!(balance_on(&conn, acct, "2026-06-14").await, 1010.0); // 1100 - 90

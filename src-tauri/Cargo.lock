@@ -5695,12 +5695,9 @@ name = "trackmyfi-app"
 version = "0.4.8"
 dependencies = [
  "bytes",
- "core-foundation 0.10.1",
- "core-foundation-sys",
  "keyring",
  "libsql",
  "object_store",
- "security-framework-sys",
  "serde",
  "serde_json",
  "tauri",

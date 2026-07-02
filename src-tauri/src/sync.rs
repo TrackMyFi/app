@@ -65,244 +65,153 @@ pub trait TokenStore: Send + Sync {
 
 pub struct KeyringStore;
 
-// On macOS we talk to Security.framework directly so we can build a permissive ACL
-// (see `allow_any_app`) that lets any app read the item without a per-binary prompt.
-// The keyring crate's default ACL — like SecAccessCreate's default — is tied to the
-// calling binary's code signature, which changes on every auto-update when the app
-// is self-signed, so "Always Allow" never sticks across updates.
+// On macOS we read and write keychain items by spawning Apple's `/usr/bin/security`
+// tool instead of calling Security.framework from our own process.
 //
-// Migration: the first get() after shipping this fix will prompt once (reading the
-// old item). We then delete the old entry and recreate it with the permissive ACL,
-// so every subsequent read — including after future updates — is prompt-free.
+// Why: since macOS Sierra every login-keychain item carries a PARTITION ID list —
+// a second access gate, separate from the classic ACL application list. It records
+// which signing identities may use the item silently: "teamid:XXX" for Developer ID
+// apps, "apple-tool:" for Apple's `security` CLI, or a bare "cdhash:..." for apps
+// signed without a team ID (our self-signed cert has none). A cdhash changes on
+// EVERY build, so items created by the app in-process are pinned to one release:
+// after each auto-update macOS shows the "enter the login keychain password" prompt
+// again, and "Always Allow" only whitelists the current build's hash. Empirically
+// (tested on macOS 15/26): the partition list cannot be stripped, pre-seeded, or
+// edited without the keychain password, and the modern data-protection keychain
+// kills self-signed binaries that claim its entitlements. The only stable identity
+// available to a self-signed app is Apple's own `security` tool: items it creates
+// get partition "apple-tool:", which every future invocation matches — so reads
+// and writes stay prompt-free across app updates forever.
+//
+// Access model: `-A` marks the item readable by any application without a prompt —
+// the same posture the previous in-process implementation deliberately configured.
+//
+// Migration: items written by the old in-process code are pinned to an old cdhash,
+// so the FIRST read after shipping this change prompts once more. "Always Allow"
+// then whitelists `apple-tool:` permanently, and get() rewrites the item so it is
+// CLI-owned from then on.
 #[cfg(target_os = "macos")]
 pub mod macos_keychain {
-    use core_foundation::{
-        base::TCFType,
-        boolean::CFBoolean,
-        data::CFData,
-        dictionary::CFMutableDictionary,
-        string::CFString,
-    };
-    use core_foundation_sys::{
-        array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef},
-        base::{CFRelease, OSStatus},
-        data::CFDataRef,
-        string::CFStringRef,
-    };
-    use security_framework_sys::{
-        base::{OpaqueSecAccessRef, SecAccessRef},
-        item::{
-            kSecAttrAccount, kSecAttrLabel, kSecAttrService, kSecClass,
-            kSecClassGenericPassword, kSecMatchLimit, kSecReturnData, kSecValueData,
-        },
-        keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemDelete},
-    };
-    use std::ffi::c_void;
-    use std::ptr;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
-    const ERR_NOT_FOUND: OSStatus = -25300; // errSecItemNotFound
+    const SECURITY: &str = "/usr/bin/security";
+    // `security` exits 44 (errSecItemNotFound) when no item matches.
+    const NOT_FOUND_EXIT: i32 = 44;
 
-    // Opaque SecACL handle (a toll-free CFType pointer).
-    type SecACLRef = *mut c_void;
+    /// Stored values are ASCII-armored as "hex:" + lowercase hex of the UTF-8 bytes.
+    /// `find-generic-password -w` prints the raw value only when it is printable
+    /// ASCII and silently switches to hex output otherwise; the prefix makes the
+    /// stored form unambiguous and lets arbitrary secrets (JSON, unicode) round-trip.
+    const HEX_PREFIX: &str = "hex:";
 
-    // CSSM_ACL_KEYCHAIN_PROMPT_SELECTOR: { uint16 version; uint16 flags; }.
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct CssmAclKeychainPromptSelector {
-        version: u16,
-        flags: u16,
-    }
-    // flags bit 0: require re-entering the keychain passphrase on access. We clear it.
-    const CSSM_ACL_KEYCHAIN_PROMPT_REQUIRE_PASSPHRASE: u16 = 0x0001;
-
-    // Security.framework constants/functions not yet exported by security_framework_sys.
-    #[link(name = "Security", kind = "framework")]
-    extern "C" {
-        static kSecMatchLimitOne: CFStringRef;
-        static kSecAttrAccess: CFStringRef;
-        // CAUTION: for SecAccessCreate a NULL applicationList yields the DEFAULT ACL,
-        // which trusts ONLY the calling binary — it does NOT mean "any app". (That is
-        // the exact opposite of SecACLSetSimpleContents below, where NULL *does* mean
-        // "any app".) We pass NULL here, then rewrite the ACL in `allow_any_app` to
-        // actually grant access to every application.
-        fn SecAccessCreate(
-            descriptor: CFStringRef,
-            application_list: *const c_void,
-            access: *mut SecAccessRef,
-        ) -> OSStatus;
-        // ACL editing API used to mirror `security add-generic-password -A`: make the
-        // item readable by ANY application with no Keychain prompt. Without this the
-        // ACL is bound to the calling binary's code signature, which changes on every
-        // self-signed auto-update — producing a password prompt on every update.
-        fn SecAccessCopyACLList(access: SecAccessRef, acl_list: *mut CFArrayRef) -> OSStatus;
-        fn SecACLCopySimpleContents(
-            acl: SecACLRef,
-            application_list: *mut CFArrayRef,
-            description: *mut CFStringRef,
-            prompt_selector: *mut CssmAclKeychainPromptSelector,
-        ) -> OSStatus;
-        fn SecACLSetSimpleContents(
-            acl: SecACLRef,
-            // NULL here = any application may access the item without prompting.
-            application_list: *const c_void,
-            description: CFStringRef,
-            prompt_selector: *const CssmAclKeychainPromptSelector,
-        ) -> OSStatus;
+    fn hex_encode(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+        bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
     }
 
-    /// Rewrite every ACL on `access` so ANY application can read the item without a
-    /// prompt — the real "allow any app" behavior: a NULL application list with the
-    /// passphrase-prompt flag cleared, mirroring `security add-generic-password -A`.
-    ///
-    /// Best-effort: a failure here only degrades to the old prompting behavior, so we
-    /// log and continue rather than failing the whole keychain write.
-    fn allow_any_app(access: SecAccessRef, descriptor: &CFString) {
-        let mut acl_list: CFArrayRef = ptr::null();
-        let status = unsafe { SecAccessCopyACLList(access, &mut acl_list) };
-        if status != 0 || acl_list.is_null() {
-            eprintln!("keychain: SecAccessCopyACLList failed ({status}); ACL left restrictive");
-            return;
+    fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
+        if s.len() % 2 != 0 {
+            return Err("invalid hex value in keychain item".into());
         }
-
-        let count = unsafe { CFArrayGetCount(acl_list) };
-        for i in 0..count {
-            let acl = unsafe { CFArrayGetValueAtIndex(acl_list, i) } as SecACLRef;
-
-            // Read the current contents so we preserve the prompt description/selector.
-            let mut app_list: CFArrayRef = ptr::null();
-            let mut prompt_desc: CFStringRef = ptr::null();
-            let mut selector = CssmAclKeychainPromptSelector { version: 0, flags: 0 };
-            let copy = unsafe {
-                SecACLCopySimpleContents(acl, &mut app_list, &mut prompt_desc, &mut selector)
-            };
-            // ACLs without "simple" contents (e.g. the one guarding ACL edits) return
-            // an error here; leave those untouched.
-            if copy != 0 {
-                continue;
-            }
-            if !app_list.is_null() {
-                unsafe { CFRelease(app_list as *const c_void) };
-            }
-
-            // Clear "require passphrase", then NULL app list = any app, no prompt.
-            selector.flags &= !CSSM_ACL_KEYCHAIN_PROMPT_REQUIRE_PASSPHRASE;
-            let desc = if prompt_desc.is_null() {
-                descriptor.as_concrete_TypeRef()
-            } else {
-                prompt_desc
-            };
-            let set = unsafe { SecACLSetSimpleContents(acl, ptr::null(), desc, &selector) };
-            if !prompt_desc.is_null() {
-                unsafe { CFRelease(prompt_desc as *const c_void) };
-            }
-            if set != 0 {
-                eprintln!("keychain: SecACLSetSimpleContents failed ({set}) on acl {i}");
-            }
-        }
-
-        unsafe { CFRelease(acl_list as *const c_void) };
-    }
-
-    // Cast a typed CF pointer to *const c_void for use as a CFDictionary key/value.
-    fn cv<T>(ptr: *const T) -> *const c_void {
-        ptr as *const c_void
+        (0..s.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&s[i..i + 2], 16)
+                    .map_err(|_| "invalid hex value in keychain item".to_string())
+            })
+            .collect()
     }
 
     pub fn get(service: &str, account: &str) -> Result<Option<String>, String> {
-        let svc = CFString::new(service);
-        let acct = CFString::new(account);
-        let cf_true = CFBoolean::true_value();
-
-        let mut q: CFMutableDictionary<*const c_void, *const c_void> =
-            CFMutableDictionary::from_CFType_pairs(&[]);
-        unsafe {
-            let limit_one = kSecMatchLimitOne;
-            q.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
-            q.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
-            q.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
-            q.add(&cv(kSecReturnData), &cv(cf_true.as_concrete_TypeRef()));
-            q.add(&cv(kSecMatchLimit), &cv(limit_one));
-        }
-
-        let mut raw: *const c_void = ptr::null();
-        match unsafe { SecItemCopyMatching(q.as_concrete_TypeRef(), &mut raw) } {
-            0 => {
-                // SecItemCopyMatching creates the CFData; wrap_under_create_rule takes ownership
-                // (calls CFRelease when the Rust wrapper drops).
-                let data = unsafe { CFData::wrap_under_create_rule(raw as CFDataRef) };
-                String::from_utf8(data.bytes().to_vec())
-                    .map(Some)
-                    .map_err(|e| e.to_string())
+        let out = Command::new(SECURITY)
+            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+            .output()
+            .map_err(|e| format!("could not run security tool: {e}"))?;
+        if !out.status.success() {
+            if out.status.code() == Some(NOT_FOUND_EXIT) {
+                return Ok(None);
             }
-            ERR_NOT_FOUND => Ok(None),
-            code => Err(format!("keychain read failed ({code})")),
+            return Err(format!(
+                "keychain read failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        let mut raw = String::from_utf8(out.stdout).map_err(|e| e.to_string())?;
+        if raw.ends_with('\n') {
+            raw.pop();
+        }
+        match raw.strip_prefix(HEX_PREFIX) {
+            Some(hex) => {
+                let value = String::from_utf8(hex_decode(hex)?).map_err(|e| e.to_string())?;
+                Ok(Some(value))
+            }
+            None => {
+                // Legacy item written by the old in-process code (raw, cdhash-pinned).
+                // Rewrite it once so it becomes CLI-owned and prefix-encoded; every
+                // read after this — including after future app updates — is silent.
+                let _ = set(service, account, &raw);
+                Ok(Some(raw))
+            }
         }
     }
 
+    /// `service` and `account` must be plain identifiers (no whitespace/quotes) —
+    /// they are interpolated into a `security -i` command line. All call sites use
+    /// the fixed constants defined in this crate.
     pub fn set(service: &str, account: &str, password: &str) -> Result<(), String> {
-        // Remove any existing entry first — it may have the old per-binary ACL.
+        // Recreate rather than update in place: a fresh item is born with the
+        // apple-tool: partition and the -A any-app ACL regardless of what owned
+        // the old one. (Deletion is not gated by the partition list.)
         let _ = delete(service, account);
 
-        // Create a SecAccess, then make it permissive. SecAccessCreate's default ACL
-        // trusts only THIS binary, whose signature changes on every self-signed
-        // update — the root cause of the repeating Keychain prompt. allow_any_app
-        // rewrites the ACL so any application can read it without prompting.
-        let svc_desc = CFString::new(service);
-        let mut access: SecAccessRef = ptr::null_mut();
-        let acc_status = unsafe {
-            SecAccessCreate(svc_desc.as_concrete_TypeRef(), ptr::null(), &mut access)
-        };
-        if acc_status != 0 {
-            return Err(format!("SecAccessCreate failed ({acc_status})"));
-        }
-        allow_any_app(access, &svc_desc);
-
-        let svc = CFString::new(service);
-        let acct = CFString::new(account);
-        let data = CFData::from_buffer(password.as_bytes());
-
-        let mut attrs: CFMutableDictionary<*const c_void, *const c_void> =
-            CFMutableDictionary::from_CFType_pairs(&[]);
-
-        let status = unsafe {
-            let acc_key = kSecAttrAccess;
-            attrs.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
-            attrs.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
-            attrs.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
-            attrs.add(&cv(kSecAttrLabel), &cv(svc.as_concrete_TypeRef()));
-            attrs.add(&cv(kSecValueData), &cv(data.as_concrete_TypeRef()));
-            // kSecAttrAccess links the permissive SecAccess to this item.
-            attrs.add(&cv(acc_key), &(access as *const OpaqueSecAccessRef as *const c_void));
-
-            let s = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
-            // attrs retains the SecAccess; release our create-rule reference.
-            CFRelease(access as *const OpaqueSecAccessRef as *const c_void);
-            s
-        };
-        // `attrs` and `data` drop here, releasing their CF references.
-
-        if status != 0 {
-            Err(format!("keychain write failed ({status})"))
-        } else {
+        let payload = format!("{HEX_PREFIX}{}", hex_encode(password.as_bytes()));
+        // -i reads subcommands from stdin, keeping the secret out of argv (visible
+        // via ps); -X passes it as hex, so no CLI quoting rules apply to the value.
+        let line = format!(
+            "add-generic-password -A -s {service} -a {account} -l {service} -X {}\n",
+            hex_encode(payload.as_bytes())
+        );
+        let mut child = Command::new(SECURITY)
+            .arg("-i")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("could not run security tool: {e}"))?;
+        child
+            .stdin
+            .take()
+            .expect("stdin was piped")
+            .write_all(line.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if out.status.success() {
             Ok(())
+        } else {
+            Err(format!(
+                "keychain write failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 
     pub fn delete(service: &str, account: &str) -> Result<(), String> {
-        let svc = CFString::new(service);
-        let acct = CFString::new(account);
-
-        let mut q: CFMutableDictionary<*const c_void, *const c_void> =
-            CFMutableDictionary::from_CFType_pairs(&[]);
-        unsafe {
-            q.add(&cv(kSecClass), &cv(kSecClassGenericPassword));
-            q.add(&cv(kSecAttrService), &cv(svc.as_concrete_TypeRef()));
-            q.add(&cv(kSecAttrAccount), &cv(acct.as_concrete_TypeRef()));
-        }
-
-        match unsafe { SecItemDelete(q.as_concrete_TypeRef()) } {
-            0 | ERR_NOT_FOUND => Ok(()),
-            code => Err(format!("keychain delete failed ({code})")),
+        let out = Command::new(SECURITY)
+            .args(["delete-generic-password", "-s", service, "-a", account])
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not run security tool: {e}"))?;
+        if out.status.success() || out.status.code() == Some(NOT_FOUND_EXIT) {
+            Ok(())
+        } else {
+            Err(format!(
+                "keychain delete failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
         }
     }
 }
@@ -310,15 +219,7 @@ pub mod macos_keychain {
 #[cfg(target_os = "macos")]
 impl TokenStore for KeyringStore {
     fn get(&self) -> Result<Option<String>, String> {
-        match macos_keychain::get(KEYCHAIN_SERVICE, KEYCHAIN_USER)? {
-            Some(token) => {
-                // Migrate: delete the old item (which may have a restrictive per-binary ACL)
-                // and recreate it with the permissive ACL. After this, future reads never prompt.
-                let _ = macos_keychain::set(KEYCHAIN_SERVICE, KEYCHAIN_USER, &token);
-                Ok(Some(token))
-            }
-            None => Ok(None),
-        }
+        macos_keychain::get(KEYCHAIN_SERVICE, KEYCHAIN_USER)
     }
     fn set(&self, token: &str) -> Result<(), String> {
         macos_keychain::set(KEYCHAIN_SERVICE, KEYCHAIN_USER, token)
@@ -718,6 +619,51 @@ pub fn restart_app(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Touches the REAL login keychain (a throwaway service name), so it is
+    /// ignored by default. Run explicitly with:
+    /// `cargo test macos_keychain_round_trip -- --ignored`
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn macos_keychain_round_trip() {
+        const SVC: &str = "com.trackmyfi.desktop.keychain-test";
+        const ACCT: &str = "round-trip";
+
+        // Missing item reads as None; deleting a missing item is Ok.
+        macos_keychain::delete(SVC, ACCT).unwrap();
+        assert_eq!(macos_keychain::get(SVC, ACCT).unwrap(), None);
+
+        // Values with JSON, unicode, and hex-lookalike content round-trip exactly.
+        for value in [
+            r#"{"accessKeyId": "AK IA+/=", "secret": "s3\\cr\"et"}"#,
+            "café ünïcode ✓",
+            "deadbeef00",
+            "eyJhbGciOiJFZERTQSJ9.fake.jwt-token",
+        ] {
+            macos_keychain::set(SVC, ACCT, value).unwrap();
+            assert_eq!(macos_keychain::get(SVC, ACCT).unwrap().as_deref(), Some(value));
+        }
+
+        // Legacy raw items (written without the hex: prefix) still read back.
+        std::process::Command::new("/usr/bin/security")
+            .args(["add-generic-password", "-U", "-A", "-s", SVC, "-a", ACCT, "-w", "legacy-raw-token"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            macos_keychain::get(SVC, ACCT).unwrap().as_deref(),
+            Some("legacy-raw-token")
+        );
+        // ...and that read migrated the item to the prefixed form on disk.
+        let out = std::process::Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", SVC, "-a", ACCT, "-w"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("hex:"));
+
+        macos_keychain::delete(SVC, ACCT).unwrap();
+        assert_eq!(macos_keychain::get(SVC, ACCT).unwrap(), None);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("trackmyfi_test_{name}.json"))

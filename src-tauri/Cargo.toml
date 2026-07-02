@@ -37,15 +37,12 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-window-state = "2"
 
-# On macOS we bypass the keyring crate and call Security.framework directly so
-# we can create items with SecAccessCreate(NULL), which lets any app read the
-# item without a per-binary ACL prompt. This survives app updates: "Always Allow"
-# with the keyring crate's default ACL is tied to the calling binary's code hash,
-# which changes on every update when using a self-signed certificate.
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework-sys = "2"
-core-foundation = "0.10"
-core-foundation-sys = "0.8"
+# On macOS we bypass the keyring crate and shell out to /usr/bin/security
+# (see sync.rs::macos_keychain). Items created in-process are partition-pinned
+# to the creating binary's cdhash, which changes on every self-signed update
+# and re-triggers the keychain password prompt; items created by Apple's
+# security tool carry the stable "apple-tool:" partition instead, so no
+# macOS-specific keychain dependency is needed at all.
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }

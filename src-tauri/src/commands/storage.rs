@@ -32,7 +32,10 @@ pub async fn get_storage_config_cmd(
     let local_path = local_attachments_dir(&app)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "unavailable".into());
-    let has_credentials = read_credentials().map(|c| c.is_some()).unwrap_or(false);
+    // Skip the keychain read entirely for local storage — the page is opened on
+    // every Settings visit, and has_credentials only matters for cloud providers.
+    let has_credentials = cfg.provider != "local"
+        && read_credentials().map(|c| c.is_some()).unwrap_or(false);
     let needs_credentials = cfg.provider != "local" && !has_credentials;
     Ok(StorageInfo {
         provider: cfg.provider,
