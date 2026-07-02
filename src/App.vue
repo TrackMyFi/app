@@ -44,56 +44,54 @@ onMounted(async () => {
 
 onUnmounted(() => unlistenRefresh?.())
 
-function isActive(to: string) {
-  if (to === '/') return route.path === '/'
-  return route.path.startsWith(to)
-}
-
-const links = [
-  { label: 'Dashboard', to: '/', icon: 'i-ph-squares-four' },
-  { label: 'Accounts', to: '/accounts', icon: 'i-ph-wallet' },
-  { label: 'Assets', to: '/assets', icon: 'i-ph-wrench' },
-  { label: 'Transactions', to: '/transactions', icon: 'i-ph-receipt' },
-  { label: 'Expenses', to: '/expenses', icon: 'i-ph-chart-pie-slice' },
-  { label: 'Paychecks', to: '/paychecks', icon: 'i-ph-money' },
-  { label: 'Contributions', to: '/contributions', icon: 'i-ph-piggy-bank' },
-  { label: 'Budget', to: '/budget', icon: 'i-ph-calculator' },
-  { label: 'Forecast', to: '/forecast', icon: 'i-ph-trend-up' },
-  { label: 'Settings', to: '/settings', icon: 'i-ph-gear' },
+const navItems = [
+  [
+    { label: 'Dashboard', icon: 'i-ph-squares-four', to: '/' },
+    { label: 'Accounts', icon: 'i-ph-wallet', to: '/accounts' },
+    { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
+    { label: 'Transactions', icon: 'i-ph-receipt', to: '/transactions' },
+    { label: 'Expenses', icon: 'i-ph-chart-pie-slice', to: '/expenses' },
+    { label: 'Paychecks', icon: 'i-ph-money', to: '/paychecks' },
+    { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
+    { label: 'Budget', icon: 'i-ph-calculator', to: '/budget' },
+    { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
+  ],
+  [
+    {
+      value: 'settings',
+      label: 'Settings',
+      icon: 'i-ph-gear',
+      children: [
+        { label: 'FIRE Profile', icon: 'i-ph-target', to: '/settings/profile' },
+        { label: 'Category Rules', icon: 'i-ph-tag', to: '/settings/category-rules' },
+        { label: 'Vendor Rules', icon: 'i-ph-storefront', to: '/settings/vendor-rules' },
+        { label: 'Data & Sync', icon: 'i-ph-cloud-arrow-up', to: '/settings/sync' },
+        { label: 'General', icon: 'i-ph-gear', to: '/settings/general' },
+      ],
+    },
+  ],
 ]
+
+// Expands the Settings group by default when landing directly on one of its
+// sub-pages (deep link, refresh, or the "complete your profile" prompts).
+const navDefaultValue = route.path.startsWith('/settings') ? ['settings'] : []
 </script>
 
 <template>
   <UApp>
     <div class="flex h-screen">
       <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 flex flex-col">
-        <div class="space-y-1 flex-1">
-          <div class="flex items-center gap-2 px-3 py-3 mb-2">
-            <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
-            <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
-          </div>
-          <template v-for="l in links" :key="l.label">
-            <div v-if="l.label === 'Settings'" class="border-t border-default mx-2 my-1" />
-            <RouterLink
-              v-if="l.to"
-              :to="l.to"
-              :class="[
-                'flex items-center gap-2 rounded px-3 py-2',
-                isActive(l.to)
-                  ? 'bg-primary/10 text-primary font-medium'
-                  : 'hover:bg-elevated',
-              ]"
-            >
-              <UIcon :name="l.icon" /> {{ l.label }}
-            </RouterLink>
-            <span
-              v-else
-              class="flex items-center gap-2 rounded px-3 py-2 text-muted opacity-50 cursor-not-allowed"
-            >
-              <UIcon :name="l.icon" /> {{ l.label }}
-            </span>
-          </template>
+        <div class="flex items-center gap-2 px-3 py-3 mb-2">
+          <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
+          <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
         </div>
+        <UNavigationMenu
+          :items="navItems"
+          orientation="vertical"
+          color="primary"
+          :default-value="navDefaultValue"
+          class="flex-1"
+        />
         <UpdateNotifier />
       </nav>
       <main class="flex-1 overflow-auto">

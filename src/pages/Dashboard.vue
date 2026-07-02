@@ -175,7 +175,7 @@ const coastHint = computed(() => {
         {{ fmtDelta(moMDeltas.netWorth) }} this month
       </p>
       <p v-if="!fiDate && netWorth > 0" class="text-sm text-muted mt-1">
-        Complete your FIRE profile in <router-link to="/settings" class="text-primary underline">Settings</router-link> to project your FI date.
+        Complete your FIRE profile in <router-link to="/settings/profile" class="text-primary underline">Settings</router-link> to project your FI date.
       </p>
     </div>
 

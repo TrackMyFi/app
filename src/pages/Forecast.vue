@@ -240,7 +240,7 @@ const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.
       <span class="i-ph-chart-line-up text-4xl text-muted block mx-auto mb-3" />
       <div class="font-semibold text-heading mb-1">No FIRE profile configured</div>
       <p class="text-sm text-muted mb-4">Set up your income, target expenses, and return assumptions to see projections.</p>
-      <UButton to="/settings" color="neutral" variant="outline">Go to Settings</UButton>
+      <UButton to="/settings/profile" color="neutral" variant="outline">Go to Settings</UButton>
     </div>
 
     <template v-else>

@@ -12,7 +12,12 @@ const routes = [
   { path: '/contributions', name: 'contributions', component: () => import('./pages/Contributions.vue') },
   { path: '/budget', name: 'budget', component: () => import('./pages/Budget.vue') },
   { path: '/forecast', name: 'forecast', component: () => import('./pages/Forecast.vue') },
-  { path: '/settings', name: 'settings', component: () => import('./pages/Settings.vue') },
+  { path: '/settings', redirect: '/settings/profile' },
+  { path: '/settings/profile', name: 'settings-profile', component: () => import('./pages/settings/FireProfile.vue') },
+  { path: '/settings/category-rules', name: 'settings-category-rules', component: () => import('./pages/settings/CategoryRules.vue') },
+  { path: '/settings/vendor-rules', name: 'settings-vendor-rules', component: () => import('./pages/settings/VendorRules.vue') },
+  { path: '/settings/sync', name: 'settings-sync', component: () => import('./pages/settings/DataSync.vue') },
+  { path: '/settings/general', name: 'settings-general', component: () => import('./pages/settings/General.vue') },
 ]
 
 export const router = createRouter({ history: createWebHashHistory(), routes })

@@ -347,7 +347,7 @@ async function save() {
         <span class="text-warning">
           {{ storageStore.providerLabel }} credentials aren't set up on this device yet —
           uploads will fail until you add them in
-          <router-link to="/settings" class="underline">Settings → Attachment Storage</router-link>.
+          <router-link to="/settings/sync" class="underline">Settings → Attachment Storage</router-link>.
         </span>
       </div>
 
