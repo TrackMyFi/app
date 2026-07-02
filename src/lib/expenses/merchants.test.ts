@@ -94,4 +94,42 @@ describe('groupByMerchant', () => {
     expect(netflix.share).toBeCloseTo(0.25)
     expect(hulu.share).toBeCloseTo(0.75)
   })
+
+  it('merges noisy description variants into one vendor when a rule matches', () => {
+    const groups = groupByMerchant([
+      tx({ description: 'PIZZA HUT 029908 HEBRON KY NULL', amount: 20 }),
+      tx({ description: 'PIZZA HUT 029908 HEBRON KY', amount: 15 }),
+    ], accounts, [{ keyword: 'pizza hut', vendorName: 'Pizza Hut' }])
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ displayName: 'Pizza Hut', total: 35, count: 2, searchTerm: 'pizza hut' })
+  })
+
+  it('rescues an otherwise-generic description via a rule', () => {
+    const groups = groupByMerchant([
+      tx({ description: 'DEBIT CARD PURCHASE KYGOV KY TAXPMNT', amount: 40 }),
+    ], accounts, [{ keyword: 'kygov', vendorName: 'KY State Taxes' }])
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ displayName: 'KY State Taxes', total: 40 })
+  })
+
+  it('prefers the longest matching keyword when multiple rules match', () => {
+    const groups = groupByMerchant([
+      tx({ description: 'AMAZON MKTPL*0U36P84J3 SEATTLE WA', amount: 30 }),
+    ], accounts, [
+      { keyword: 'amazon', vendorName: 'Amazon (general)' },
+      { keyword: 'amazon mktpl', vendorName: 'Amazon Marketplace' },
+    ])
+
+    expect(groups[0].displayName).toBe('Amazon Marketplace')
+  })
+
+  it('preserves vendor name casing as the user typed it', () => {
+    const groups = groupByMerchant([
+      tx({ description: 'sq *blue bottle coffee #123', amount: 6 }),
+    ], accounts, [{ keyword: 'blue bottle', vendorName: 'Blue Bottle Coffee Co.' }])
+
+    expect(groups[0].displayName).toBe('Blue Bottle Coffee Co.')
+  })
 })

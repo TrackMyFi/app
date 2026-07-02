@@ -106,6 +106,16 @@ pub struct CategoryRule {
 #[derive(Serialize, Deserialize, TS, Clone)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]
+pub struct VendorRule {
+    pub id: i32,
+    pub keyword: String,
+    pub vendor_name: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
 pub struct PaycheckDeduction {
     pub label: String,
     pub amount: f64,

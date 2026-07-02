@@ -1,5 +1,5 @@
 import { classifyFlow } from '../transactions/flow'
-import { coreText, normalizeKey, isGenericKey, displayName } from './merchants'
+import { resolveVendor, type VendorRuleInput } from './merchants'
 import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
@@ -66,13 +66,14 @@ export function detectRecurring(
   transactions: Transaction[],
   accounts: AccountLookup,
   options: RecurringOptions,
+  vendorRules: VendorRuleInput[] = [],
 ): RecurringCharge[] {
   const monthsWindow = options.monthsWindow ?? 4
   const minMonths = options.minMonths ?? 3
   const maxVariance = options.maxVariance ?? 0.15
   const windowKeys = trailingMonthKeys(options.asOf, monthsWindow)
 
-  interface Group { searchTerm: string; byMonth: Map<string, number> }
+  interface Group { displayName: string; searchTerm: string; byMonth: Map<string, number> }
   const groups = new Map<string, Group>()
 
   for (const t of transactions) {
@@ -83,13 +84,13 @@ export function detectRecurring(
     if (flow.isSavings || flow.outflow <= 0) continue
     if (flow.bucket !== 'discretionary') continue
 
-    const key = normalizeKey(t.description)
-    if (isGenericKey(key)) continue
+    const resolved = resolveVendor(t.description, vendorRules)
+    if (resolved.isGeneric) continue
 
-    let g = groups.get(key)
+    let g = groups.get(resolved.key)
     if (!g) {
-      g = { searchTerm: coreText(t.description), byMonth: new Map() }
-      groups.set(key, g)
+      g = { displayName: resolved.displayName, searchTerm: resolved.searchTerm, byMonth: new Map() }
+      groups.set(resolved.key, g)
     }
     g.byMonth.set(monthKey, (g.byMonth.get(monthKey) ?? 0) + flow.outflow)
   }
@@ -103,7 +104,7 @@ export function detectRecurring(
     const monthlyAmount = mean(amounts)
     result.push({
       key,
-      displayName: displayName(g.searchTerm),
+      displayName: g.displayName,
       searchTerm: g.searchTerm,
       monthlyAmount,
       monthsSeen: g.byMonth.size,

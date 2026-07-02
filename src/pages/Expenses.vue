@@ -6,11 +6,12 @@ import { useAccountsStore } from '../stores/accounts'
 import { usePageData } from '../composables/usePageData'
 import { useReveal } from '../composables/useReveal'
 import * as api from '../lib/api/transactions'
+import * as vendorRulesApi from '../lib/api/vendorRules'
 import { classifyFlow } from '../lib/transactions/flow'
 import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
 import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
 import { CATEGORY_LABELS, CATEGORY_TEXT_COLOR } from '../lib/transactions/constants'
-import { groupByMerchant } from '../lib/expenses/merchants'
+import { groupByMerchant, type VendorRuleInput } from '../lib/expenses/merchants'
 import { detectRecurring } from '../lib/expenses/recurring'
 import { detectCategorySpikes, type OpportunityItem } from '../lib/expenses/opportunities'
 import MonthPicker from '../components/MonthPicker.vue'
@@ -58,6 +59,12 @@ const annualPeriodStats = ref<PeriodStats[]>([])
 // currently viewing "this month".
 const recurringWindowTransactions = ref<Transaction[]>([])
 const hasAnyTransactions = ref(true)
+const vendorRules = ref<VendorRuleInput[]>([])
+
+async function loadVendorRules() {
+  const rules = await vendorRulesApi.listVendorRules()
+  vendorRules.value = rules.map((r) => ({ keyword: r.keyword, vendorName: r.vendorName }))
+}
 
 async function applyFilters() {
   let startDate: string | null = null
@@ -96,7 +103,7 @@ async function probeHasAnyTransactions() {
 
 onMounted(() => run(async () => {
   await accountsStore.load()
-  await Promise.all([probeHasAnyTransactions(), loadRecurringWindow()])
+  await Promise.all([probeHasAnyTransactions(), loadRecurringWindow(), loadVendorRules()])
   await applyFilters()
 }))
 
@@ -140,12 +147,17 @@ function trendPctFor(bucket: 'fixed' | 'discretionary'): number | null {
 
 // ─── Top merchants ──────────────────────────────────────────────────────────────
 
-const merchantGroups = computed(() => groupByMerchant(scopeTransactions.value, accountsStore.accounts))
+const merchantGroups = computed(() => groupByMerchant(scopeTransactions.value, accountsStore.accounts, vendorRules.value))
 
 // ─── Savings opportunities ──────────────────────────────────────────────────────
 
 const recurringCharges = computed(() =>
-  detectRecurring(recurringWindowTransactions.value, accountsStore.accounts, { asOf: DateTime.now().toISODate()! })
+  detectRecurring(
+    recurringWindowTransactions.value,
+    accountsStore.accounts,
+    { asOf: DateTime.now().toISODate()! },
+    vendorRules.value,
+  )
 )
 
 const categorySpikes = computed(() => {

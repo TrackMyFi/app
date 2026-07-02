@@ -79,6 +79,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "storage_config",
         sql: include_str!("../migrations/0014_storage_config.sql"),
     },
+    Migration {
+        version: 15,
+        name: "vendor_rules",
+        sql: include_str!("../migrations/0015_vendor_rules.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {

@@ -9,3 +9,4 @@ pub mod import_mappings;
 pub mod paychecks;
 pub mod storage;
 pub mod transactions;
+pub mod vendor_rules;

@@ -72,15 +72,71 @@ export function isGenericKey(key: string): boolean {
   return GENERIC_KEYS.has(key)
 }
 
-/** Title-cased, human-readable name for a normalized description. */
-export function displayName(description: string): string {
-  const core = coreText(description) || description.trim()
-  return core
+/** Capitalizes the first letter of each space-separated word. */
+export function titleCaseWords(s: string): string {
+  return s
     .toLowerCase()
     .split(' ')
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
+}
+
+/** Title-cased, human-readable name for a normalized description. */
+export function displayName(description: string): string {
+  const core = coreText(description) || description.trim()
+  return titleCaseWords(core)
+}
+
+/** A user-defined "description contains X → vendor is Y" override. */
+export interface VendorRuleInput {
+  keyword: string
+  vendorName: string
+}
+
+interface ResolvedVendor {
+  key: string
+  displayName: string
+  /** Literal substring of the original description — safe to use as a Transactions search filter. */
+  searchTerm: string
+  isGeneric: boolean
+}
+
+/**
+ * Applies user-defined vendor rules on top of the heuristic normalizer above.
+ * Rules take priority over the regex-based cleanup — they exist precisely to
+ * correct cases the heuristics get wrong or leave too noisy. When more than
+ * one rule's keyword matches, the longest keyword wins, so a specific rule
+ * (e.g. "amazon mktpl") isn't shadowed by a broader one (e.g. "amazon")
+ * regardless of the order the rules happen to be stored in.
+ */
+export function resolveVendor(description: string, rules: VendorRuleInput[]): ResolvedVendor {
+  const descLower = description.toLowerCase()
+  let matched: VendorRuleInput | undefined
+  for (const r of rules) {
+    if (!r.keyword) continue
+    if (descLower.includes(r.keyword.toLowerCase())) {
+      if (!matched || r.keyword.length > matched.keyword.length) matched = r
+    }
+  }
+
+  if (matched) {
+    const vendorName = matched.vendorName.trim()
+    return {
+      key: `VENDOR::${vendorName.toUpperCase()}`,
+      displayName: vendorName,
+      searchTerm: matched.keyword,
+      isGeneric: false,
+    }
+  }
+
+  const key = normalizeKey(description)
+  return {
+    key: key || OTHER_MERCHANT_KEY,
+    displayName: displayName(description),
+    searchTerm: coreText(description),
+    isGeneric: isGenericKey(key),
+  }
 }
 
 export interface MerchantGroup {
@@ -100,10 +156,16 @@ export const OTHER_MERCHANT_KEY = '__OTHER__'
 
 /**
  * Groups real spending (expenses; excludes savings/contributions and transfers,
- * which carry no merchant identity) by best-effort merchant name.
+ * which carry no merchant identity) by best-effort merchant name. Pass
+ * `vendorRules` (user-defined "description contains X → vendor is Y"
+ * overrides) to correct or merge cases the heuristic normalizer gets wrong.
  */
-export function groupByMerchant(transactions: Transaction[], accounts: AccountLookup): MerchantGroup[] {
-  interface Bucket { total: number; count: number; searchTerm: string; byCategory: Map<FlowBucket, number> }
+export function groupByMerchant(
+  transactions: Transaction[],
+  accounts: AccountLookup,
+  vendorRules: VendorRuleInput[] = [],
+): MerchantGroup[] {
+  interface Bucket { total: number; count: number; displayName: string; searchTerm: string; byCategory: Map<FlowBucket, number> }
   const groups = new Map<string, Bucket>()
   let grandTotal = 0
 
@@ -111,12 +173,18 @@ export function groupByMerchant(transactions: Transaction[], accounts: AccountLo
     const flow = classifyFlow(t, accounts)
     if (flow.isSavings || flow.outflow <= 0 || !flow.bucket) continue
 
-    const key = normalizeKey(t.description) || OTHER_MERCHANT_KEY
-    const effectiveKey = isGenericKey(key) ? OTHER_MERCHANT_KEY : key
+    const resolved = resolveVendor(t.description, vendorRules)
+    const effectiveKey = resolved.isGeneric ? OTHER_MERCHANT_KEY : resolved.key
 
     let g = groups.get(effectiveKey)
     if (!g) {
-      g = { total: 0, count: 0, searchTerm: coreText(t.description), byCategory: new Map() }
+      g = {
+        total: 0,
+        count: 0,
+        displayName: effectiveKey === OTHER_MERCHANT_KEY ? 'Other purchases' : resolved.displayName,
+        searchTerm: effectiveKey === OTHER_MERCHANT_KEY ? '' : resolved.searchTerm,
+        byCategory: new Map(),
+      }
       groups.set(effectiveKey, g)
     }
     g.total += flow.outflow
@@ -130,8 +198,8 @@ export function groupByMerchant(transactions: Transaction[], accounts: AccountLo
     const dominant = [...g.byCategory.entries()].sort((a, b) => b[1] - a[1])[0][0]
     result.push({
       key,
-      displayName: key === OTHER_MERCHANT_KEY ? 'Other purchases' : displayName(g.searchTerm),
-      searchTerm: key === OTHER_MERCHANT_KEY ? '' : g.searchTerm,
+      displayName: g.displayName,
+      searchTerm: g.searchTerm,
       category: dominant,
       total: g.total,
       count: g.count,
