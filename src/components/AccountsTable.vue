@@ -10,6 +10,7 @@ import type { Account } from '../lib/types/Account'
 const props = withDefaults(
   defineProps<{
     title: string
+    subtitle?: string
     accounts: Account[]
     menuItems: (account: Account) => DropdownMenuItem[][]
     interactive?: boolean
@@ -89,7 +90,10 @@ function activate(account: Account) {
 
 <template>
   <section>
-    <p class="text-xs text-muted font-medium mb-2">{{ title }}</p>
+    <div class="mb-2 account-table-heading">
+      <p class="text-xs text-muted font-medium">{{ title }}</p>
+      <p v-if="subtitle" class="text-xs text-dimmed">{{ subtitle }}</p>
+    </div>
     <div class="border border-default rounded-lg overflow-hidden">
       <!-- Column headers -->
       <div class="grid grid-cols-[1fr_140px_120px_120px_140px_52px] bg-elevated px-4 py-2 border-b border-default">

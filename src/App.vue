@@ -7,6 +7,7 @@ import { useSyncStore } from './stores/sync'
 import { useFireProfileStore } from './stores/fireProfile'
 import { useUpdaterStore } from './stores/updater'
 import UpdateNotifier from './components/UpdateNotifier.vue'
+import AccountsNavPanel from './components/AccountsNavPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -49,12 +50,33 @@ const navItems = [
     { label: 'Dashboard', icon: 'i-ph-squares-four', to: '/' },
     { label: 'Accounts', icon: 'i-ph-wallet', to: '/accounts' },
     { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
-    { label: 'Transactions', icon: 'i-ph-receipt', to: '/transactions' },
-    { label: 'Expenses', icon: 'i-ph-chart-pie-slice', to: '/expenses' },
-    { label: 'Paychecks', icon: 'i-ph-money', to: '/paychecks' },
-    { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
-    { label: 'Budget', icon: 'i-ph-calculator', to: '/budget' },
-    { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
+    {
+      value: 'spending',
+      label: 'Spending',
+      icon: 'i-ph-receipt',
+      children: [
+        { label: 'Transactions', icon: 'i-ph-receipt', to: '/transactions' },
+        { label: 'Expenses', icon: 'i-ph-chart-pie-slice', to: '/expenses' },
+      ],
+    },
+    {
+      value: 'income',
+      label: 'Income',
+      icon: 'i-ph-money',
+      children: [
+        { label: 'Paychecks', icon: 'i-ph-money', to: '/paychecks' },
+        { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
+      ],
+    },
+    {
+      value: 'planning',
+      label: 'Planning',
+      icon: 'i-ph-calculator',
+      children: [
+        { label: 'Budget', icon: 'i-ph-calculator', to: '/budget' },
+        { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
+      ],
+    },
   ],
   [
     {
@@ -72,16 +94,22 @@ const navItems = [
   ],
 ]
 
-// Expands the Settings group by default when landing directly on one of its
-// sub-pages (deep link, refresh, or the "complete your profile" prompts).
-const navDefaultValue = route.path.startsWith('/settings') ? ['settings'] : []
+// Expands the group whose page the user landed directly on (deep link,
+// refresh, or an internal redirect like the "complete your profile" prompt).
+const navDefaultValue = (() => {
+  if (route.path.startsWith('/settings')) return ['settings']
+  if (route.path === '/transactions' || route.path === '/expenses') return ['spending']
+  if (route.path === '/paychecks' || route.path === '/contributions') return ['income']
+  if (route.path === '/budget' || route.path === '/forecast') return ['planning']
+  return []
+})()
 </script>
 
 <template>
   <UApp>
     <div class="flex h-screen">
-      <nav v-if="route.name !== 'onboarding'" class="w-56 border-r border-default p-3 flex flex-col">
-        <div class="flex items-center gap-2 px-3 py-3 mb-2">
+      <nav v-if="route.name !== 'onboarding'" class="w-64 border-r border-default p-3 flex flex-col h-screen">
+        <div class="flex items-center gap-2 px-3 py-3 mb-2 shrink-0">
           <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
           <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
         </div>
@@ -90,8 +118,9 @@ const navDefaultValue = route.path.startsWith('/settings') ? ['settings'] : []
           orientation="vertical"
           color="primary"
           :default-value="navDefaultValue"
-          class="flex-1"
+          class="shrink-0"
         />
+        <AccountsNavPanel />
         <UpdateNotifier />
       </nav>
       <main class="flex-1 overflow-auto">

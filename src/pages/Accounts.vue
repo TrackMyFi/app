@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { useAccountsStore } from '../stores/accounts'
-import { isLiability, isEquity } from '../lib/accountTypes'
+import { groupAccounts, netWorth } from '../lib/accounts/groups'
 import AccountForm from '../components/AccountForm.vue'
 import AccountsTable from '../components/AccountsTable.vue'
 import StatCard from '../components/StatCard.vue'
@@ -34,33 +34,23 @@ const fmt = (n: number) =>
 const latestBalanceMap = computed(() =>
   new Map(store.latestBalances.map(b => [b.accountId, b.balance]))
 )
-
-const byBalanceDesc = (a: Account, b: Account) =>
-  (latestBalanceMap.value.get(b.id) ?? 0) - (latestBalanceMap.value.get(a.id) ?? 0)
+const balanceOf = (id: number) => latestBalanceMap.value.get(id) ?? 0
 
 const activeAccounts = computed(() => store.accounts.filter(a => a.isActive))
 const archivedAccounts = computed(() => store.accounts.filter(a => !a.isActive))
-const equityAccounts = computed(() => activeAccounts.value.filter(a => isEquity(a.type)).sort(byBalanceDesc))
-const fireAccounts = computed(() => activeAccounts.value.filter(a => a.includeInFireCalculations && !isEquity(a.type)).sort(byBalanceDesc))
-const nonFireAccounts = computed(() => activeAccounts.value.filter(a => !a.includeInFireCalculations && !isEquity(a.type)).sort(byBalanceDesc))
 
-const signedBalance = (a: Account) => {
-  const b = latestBalanceMap.value.get(a.id) ?? 0
-  return isLiability(a.type) ? -b : b
-}
+// Same categorization shown in the sidebar: Budget accounts are the ones you
+// routinely reconcile day to day; Tracking accounts are FIRE accounts you
+// just watch grow toward net worth. Equity covers real estate/mortgages.
+const groups = computed(() => groupAccounts(store.accounts, balanceOf))
+const groupByKey = (key: 'budget' | 'tracking' | 'equity') =>
+  computed(() => groups.value.find(g => g.key === key))
 
-const netWorth = computed(() =>
-  activeAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
-)
-const fireTotal = computed(() =>
-  fireAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
-)
-const nonFireTotal = computed(() =>
-  nonFireAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
-)
-const equityTotal = computed(() =>
-  equityAccounts.value.reduce((s, a) => s + signedBalance(a), 0)
-)
+const budgetGroup = groupByKey('budget')
+const trackingGroup = groupByKey('tracking')
+const equityGroup = groupByKey('equity')
+
+const netWorthValue = computed(() => netWorth(store.accounts, balanceOf))
 
 function navigate(account: Account) {
   router.push({ name: 'account-detail', params: { id: account.id } })
@@ -156,18 +146,18 @@ function archivedMenuItems(account: Account) {
     </div>
 
     <!-- Stats -->
-    <div :class="['grid gap-4 mb-8', equityAccounts.length > 0 ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3']">
+    <div :class="['grid gap-4 mb-8', equityGroup ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3']">
       <div class="tmfi-rise">
-        <StatCard label="Net Worth" :value="fmt(netWorth * reveal)" hero />
+        <StatCard label="Net Worth" :value="fmt(netWorthValue * reveal)" hero />
       </div>
       <div class="tmfi-rise" :style="{ animationDelay: '55ms' }">
-        <StatCard label="FIRE Accounts" :value="fmt(fireTotal * reveal)" />
+        <StatCard label="Budget" hint="Day-to-day accounts" :value="fmt((budgetGroup?.total ?? 0) * reveal)" />
       </div>
       <div class="tmfi-rise" :style="{ animationDelay: '110ms' }">
-        <StatCard label="Non-FIRE Accounts" :value="fmt(nonFireTotal * reveal)" />
+        <StatCard label="Tracking" hint="FIRE accounts" :value="fmt((trackingGroup?.total ?? 0) * reveal)" />
       </div>
-      <div v-if="equityAccounts.length > 0" class="tmfi-rise" :style="{ animationDelay: '165ms' }">
-        <StatCard label="Equity" :value="fmt(equityTotal * reveal)" />
+      <div v-if="equityGroup" class="tmfi-rise" :style="{ animationDelay: '165ms' }">
+        <StatCard label="Equity" :value="fmt((equityGroup?.total ?? 0) * reveal)" />
       </div>
     </div>
 
@@ -185,26 +175,28 @@ function archivedMenuItems(account: Account) {
       <p class="text-sm text-muted">Restore an account from the list below to see it here.</p>
     </div>
 
-    <!-- FIRE Accounts -->
+    <!-- Budget Accounts -->
     <AccountsTable
-      v-if="fireAccounts.length > 0"
+      v-if="budgetGroup"
       class="tmfi-rise block mb-8"
       :style="{ animationDelay: '210ms' }"
-      title="FIRE Accounts"
-      :accounts="fireAccounts"
+      title="Budget Accounts"
+      subtitle="Day-to-day spending & cash accounts"
+      :accounts="budgetGroup.accounts"
       interactive
       :busy-id="busyAccountId"
       :menu-items="activeMenuItems"
       @select="navigate"
     />
 
-    <!-- Non-FIRE Accounts -->
+    <!-- Tracking Accounts -->
     <AccountsTable
-      v-if="nonFireAccounts.length > 0"
+      v-if="trackingGroup"
       class="tmfi-rise block mb-8"
       :style="{ animationDelay: '260ms' }"
-      title="Non-FIRE Accounts"
-      :accounts="nonFireAccounts"
+      title="Tracking Accounts"
+      subtitle="FIRE accounts — long-term growth, not routinely budgeted"
+      :accounts="trackingGroup.accounts"
       interactive
       :busy-id="busyAccountId"
       :menu-items="activeMenuItems"
@@ -213,11 +205,12 @@ function archivedMenuItems(account: Account) {
 
     <!-- Equity -->
     <AccountsTable
-      v-if="equityAccounts.length > 0"
+      v-if="equityGroup"
       class="tmfi-rise block mb-8"
       :style="{ animationDelay: '310ms' }"
       title="Equity"
-      :accounts="equityAccounts"
+      subtitle="Real estate & mortgages"
+      :accounts="equityGroup.accounts"
       interactive
       :busy-id="busyAccountId"
       :menu-items="activeMenuItems"
@@ -237,7 +230,7 @@ function archivedMenuItems(account: Account) {
       <AccountsTable
         v-if="showArchived"
         title="Archived"
-        class="[&>p]:sr-only"
+        class="[&_.account-table-heading]:sr-only"
         :accounts="archivedAccounts"
         :busy-id="busyAccountId"
         :menu-items="archivedMenuItems"

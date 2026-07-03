@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AccountBalanceChart: typeof import('./src/components/AccountBalanceChart.vue')['default']
     AccountForm: typeof import('./src/components/AccountForm.vue')['default']
+    AccountsNavPanel: typeof import('./src/components/AccountsNavPanel.vue')['default']
     AccountsTable: typeof import('./src/components/AccountsTable.vue')['default']
     AssetEventDetail: typeof import('./src/components/AssetEventDetail.vue')['default']
     AssetEventForm: typeof import('./src/components/AssetEventForm.vue')['default']
