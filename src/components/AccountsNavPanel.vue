@@ -24,7 +24,7 @@ const fmt = (n: number) =>
 </script>
 
 <template>
-  <div class="flex-1 min-h-0 flex flex-col mt-2 pt-3 border-t border-default">
+  <div class="flex-1 min-h-0 flex flex-col mt-3 pt-5">
     <div class="flex-1 min-h-0 overflow-y-auto px-1">
       <p v-if="groups.length === 0" class="px-2 text-xs text-muted">No accounts yet</p>
 

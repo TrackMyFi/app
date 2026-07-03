@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useRouter, useRoute } from 'vue-router'
 import { frontendReady } from './lib/api/sync'
@@ -45,79 +45,72 @@ onMounted(async () => {
 
 onUnmounted(() => unlistenRefresh?.())
 
-const navItems = [
-  [
-    { label: 'Dashboard', icon: 'i-ph-squares-four', to: '/' },
-    { label: 'Accounts', icon: 'i-ph-wallet', to: '/accounts' },
-    { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
-    {
-      value: 'spending',
-      label: 'Spending',
-      icon: 'i-ph-receipt',
-      children: [
-        { label: 'Transactions', icon: 'i-ph-receipt', to: '/transactions' },
-        { label: 'Expenses', icon: 'i-ph-chart-pie-slice', to: '/expenses' },
-      ],
-    },
-    {
-      value: 'income',
-      label: 'Income',
-      icon: 'i-ph-money',
-      children: [
-        { label: 'Paychecks', icon: 'i-ph-money', to: '/paychecks' },
-        { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
-      ],
-    },
-    {
-      value: 'planning',
-      label: 'Planning',
-      icon: 'i-ph-calculator',
-      children: [
-        { label: 'Budget', icon: 'i-ph-calculator', to: '/budget' },
-        { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
-      ],
-    },
-  ],
-  [
-    {
-      value: 'settings',
-      label: 'Settings',
-      icon: 'i-ph-gear',
-      children: [
-        { label: 'FIRE Profile', icon: 'i-ph-target', to: '/settings/profile' },
-        { label: 'Category Rules', icon: 'i-ph-tag', to: '/settings/category-rules' },
-        { label: 'Vendor Rules', icon: 'i-ph-storefront', to: '/settings/vendor-rules' },
-        { label: 'Data & Sync', icon: 'i-ph-cloud-arrow-up', to: '/settings/sync' },
-        { label: 'General', icon: 'i-ph-gear', to: '/settings/general' },
-      ],
-    },
-  ],
+type NavContext = 'budget' | 'tracking'
+
+const contextTabs = [
+  { label: 'Budget', value: 'budget' },
+  { label: 'Tracking', value: 'tracking' },
 ]
 
-// Expands the group whose page the user landed directly on (deep link,
-// refresh, or an internal redirect like the "complete your profile" prompt).
-const navDefaultValue = (() => {
-  if (route.path.startsWith('/settings')) return ['settings']
-  if (route.path === '/transactions' || route.path === '/expenses') return ['spending']
-  if (route.path === '/paychecks' || route.path === '/contributions') return ['income']
-  if (route.path === '/budget' || route.path === '/forecast') return ['planning']
-  return []
-})()
+const budgetPages = [
+  { label: 'Accounts', icon: 'i-ph-wallet', to: '/accounts' },
+  { label: 'Transactions', icon: 'i-ph-receipt', to: '/transactions' },
+  { label: 'Expenses', icon: 'i-ph-chart-pie-slice', to: '/expenses' },
+  { label: 'Paychecks', icon: 'i-ph-money', to: '/paychecks' },
+  { label: 'Budget', icon: 'i-ph-calculator', to: '/budget' },
+]
+
+const trackingPages = [
+  { label: 'Progress', icon: 'i-ph-gauge', to: '/' },
+  { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
+  { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
+  { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
+]
+
+// Which context tab owns each page — used to auto-follow navigation so the
+// tab always reflects where you are. Settings has no owner: it sits outside
+// the Budget/Tracking split, so visiting it leaves the active tab untouched.
+function contextForPath(path: string): NavContext | null {
+  if (path.startsWith('/accounts')) return 'budget'
+  if (path === '/transactions' || path === '/expenses' || path === '/paychecks' || path === '/budget') return 'budget'
+  if (path === '/' || path === '/assets' || path === '/contributions' || path === '/forecast') return 'tracking'
+  return null
+}
+
+const activeContext = ref<NavContext>(contextForPath(route.path) ?? 'tracking')
+
+watch(() => route.path, path => {
+  const context = contextForPath(path)
+  if (context) activeContext.value = context
+})
+
+const navItems = computed(() => [activeContext.value === 'budget' ? budgetPages : trackingPages])
 </script>
 
 <template>
   <UApp>
     <div class="flex h-screen">
       <nav v-if="route.name !== 'onboarding'" class="w-64 border-r border-default p-3 flex flex-col h-screen">
-        <div class="flex items-center gap-2 px-3 py-3 mb-2 shrink-0">
-          <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
-          <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
+        <div class="flex items-center justify-between pl-3 py-3 mb-2 shrink-0">
+          <div class="flex items-center gap-2">
+            <img src="/logo-icon.svg" alt="TrackMyFI" class="w-6 h-6" />
+            <span class="font-semibold text-sm tracking-tight">TrackMyFI</span>
+          </div>
+          <UButton to="/settings/profile" icon="i-ph-gear" variant="ghost" color="neutral" size="sm" aria-label="Settings" />
         </div>
+        <UTabs
+          v-model="activeContext"
+          :items="contextTabs"
+          color="neutral"
+          variant="pill"
+          size="sm"
+          :content="false"
+          class="shrink-0 mb-2"
+        />
         <UNavigationMenu
           :items="navItems"
           orientation="vertical"
           color="primary"
-          :default-value="navDefaultValue"
           class="shrink-0"
         />
         <AccountsNavPanel />
