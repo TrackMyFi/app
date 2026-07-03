@@ -2,6 +2,7 @@ pub mod commands;
 pub mod db;
 pub mod migrations;
 pub mod models;
+pub mod simplefin;
 pub mod storage;
 pub mod sync;
 
@@ -85,6 +86,7 @@ pub fn run() {
                 lock: tokio::sync::Mutex::new(()),
             });
             app.manage(sync::RefreshGate::new());
+            app.manage(simplefin::SimpleFinShared::new());
 
             // Background sync (only meaningful in synced mode; the calls no-op otherwise).
             let handle = app.handle().clone();
@@ -102,6 +104,22 @@ pub fn run() {
                 loop {
                     tick.tick().await;
                     let _ = sync::do_sync(&handle).await;
+                }
+            });
+
+            // SimpleFIN daily bank sync. `maybe_sync` no-ops unless connected
+            // AND due (24h after the last success, 6h backoff after failures),
+            // so ticking every 30 minutes stays well within SimpleFIN's
+            // ~once-a-day polling guidance while catching up promptly after
+            // the app has been closed for days.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(
+                    simplefin::SCHEDULER_TICK_SECS,
+                ));
+                loop {
+                    tick.tick().await; // first tick fires immediately (startup catch-up)
+                    simplefin::maybe_sync(&handle).await;
                 }
             });
 
@@ -173,6 +191,11 @@ pub fn run() {
             commands::budget::get_budget_month_target_cmd,
             commands::budget::set_budget_month_target_cmd,
             commands::budget::get_budget_paycheck_summary_cmd,
+            simplefin::simplefin_get_status,
+            simplefin::simplefin_connect,
+            simplefin::simplefin_link_account,
+            simplefin::simplefin_sync_now,
+            simplefin::simplefin_disconnect,
             sync::get_sync_status,
             sync::sync_now,
             sync::save_sync_config,

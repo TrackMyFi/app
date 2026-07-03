@@ -37,6 +37,11 @@ const money = (n: number) =>
     <dt class="text-gray-500">Category</dt>
     <dd class="col-span-2">{{ transaction.category }}</dd>
 
+    <template v-if="transaction.vendorCategory">
+      <dt class="text-gray-500">Vendor category</dt>
+      <dd class="col-span-2">{{ transaction.vendorCategory }}</dd>
+    </template>
+
     <dt class="text-gray-500">Account</dt>
     <dd class="col-span-2">
       {{ accountName(transaction.accountId) }}

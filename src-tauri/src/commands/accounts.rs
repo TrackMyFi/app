@@ -40,6 +40,7 @@ fn row_to_account(row: &libsql::Row) -> Result<Account, String> {
         is_active: row.get::<i64>(4).map_err(|e| e.to_string())? != 0,
         include_in_fire_calculations: row.get::<i64>(5).map_err(|e| e.to_string())? != 0,
         created_at: row.get(6).map_err(|e| e.to_string())?,
+        simplefin_id: row.get(7).map_err(|e| e.to_string())?,
     })
 }
 
@@ -50,6 +51,7 @@ fn row_to_balance(row: &libsql::Row) -> Result<AccountBalance, String> {
         balance: row.get(2).map_err(|e| e.to_string())?,
         recorded_at: row.get(3).map_err(|e| e.to_string())?,
         linked_transaction_id: row.get(4).map_err(|e| e.to_string())?,
+        source: row.get(5).map_err(|e| e.to_string())?,
     })
 }
 
@@ -66,7 +68,7 @@ fn row_to_month_summary(row: &libsql::Row) -> Result<BalanceMonthSummary, String
 pub async fn list_accounts(conn: &Connection) -> Result<Vec<Account>, String> {
     let mut rows = conn
         .query(
-            "SELECT id, name, type, institution, is_active, include_in_fire_calculations, created_at \
+            "SELECT id, name, type, institution, is_active, include_in_fire_calculations, created_at, simplefin_id \
              FROM account ORDER BY created_at",
             (),
         )
@@ -186,7 +188,7 @@ pub async fn list_account_balances(
 ) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id, b.source \
              FROM account_balance b \
              LEFT JOIN txn t \
                ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \
@@ -205,7 +207,7 @@ pub async fn list_account_balances(
 pub async fn list_all_balances(conn: &Connection) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id, b.source \
              FROM account_balance b \
              LEFT JOIN txn t \
                ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \
@@ -224,7 +226,7 @@ pub async fn list_all_balances(conn: &Connection) -> Result<Vec<AccountBalance>,
 pub async fn list_latest_balances(conn: &Connection) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id, b.source \
              FROM account_balance b \
              INNER JOIN ( \
                SELECT account_id, MAX(recorded_at) AS max_date \
@@ -279,7 +281,7 @@ pub async fn list_balances_for_month(
 ) -> Result<Vec<AccountBalance>, String> {
     let mut rows = conn
         .query(
-            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id \
+            "SELECT b.id, b.account_id, b.balance, b.recorded_at, t.id, b.source \
              FROM account_balance b \
              LEFT JOIN txn t \
                ON t.generated_balance_id = b.id OR t.generated_balance_to_id = b.id \

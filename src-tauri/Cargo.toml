@@ -29,6 +29,10 @@ tokio = { version = "1", features = ["sync", "time", "fs"] }
 object_store = { version = "0.11", features = ["aws", "gcp"] }
 bytes = "1"
 uuid = { version = "1", features = ["v4"] }
+# SimpleFIN Bridge sync: HTTPS client, setup-token decoding, unix-time → date.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 # Self-updates: check a GitHub Releases manifest, download, and relaunch.
 # Desktop-only; the plugins are registered behind `#[cfg(desktop)]` in lib.rs.

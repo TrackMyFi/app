@@ -4,12 +4,12 @@ import type { Account } from '../types/Account'
 import type { AccountBalance } from '../types/AccountBalance'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '2026-01-01' },
-  { id: 2, name: 'Old 401k', type: '401k', institution: null, isActive: false, includeInFireCalculations: true, createdAt: '2026-01-01' },
+  { id: 1, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '2026-01-01', simplefinId: null },
+  { id: 2, name: 'Old 401k', type: '401k', institution: null, isActive: false, includeInFireCalculations: true, createdAt: '2026-01-01', simplefinId: null },
 ]
 const balances: AccountBalance[] = [
-  { id: 1, accountId: 1, balance: 1000, recordedAt: '2026-01-01', linkedTransactionId: null },
-  { id: 2, accountId: 2, balance: 5000, recordedAt: '2026-01-01', linkedTransactionId: null }, // belongs to archived account
+  { id: 1, accountId: 1, balance: 1000, recordedAt: '2026-01-01', linkedTransactionId: null, source: 'manual' },
+  { id: 2, accountId: 2, balance: 5000, recordedAt: '2026-01-01', linkedTransactionId: null, source: 'manual' }, // belongs to archived account
 ]
 
 describe('activeFireInputs', () => {

@@ -16,6 +16,7 @@ const routes = [
   { path: '/settings/profile', name: 'settings-profile', component: () => import('./pages/settings/FireProfile.vue') },
   { path: '/settings/category-rules', name: 'settings-category-rules', component: () => import('./pages/settings/CategoryRules.vue') },
   { path: '/settings/vendor-rules', name: 'settings-vendor-rules', component: () => import('./pages/settings/VendorRules.vue') },
+  { path: '/settings/bank-sync', name: 'settings-bank-sync', component: () => import('./pages/settings/BankSync.vue') },
   { path: '/settings/sync', name: 'settings-sync', component: () => import('./pages/settings/DataSync.vue') },
   { path: '/settings/general', name: 'settings-general', component: () => import('./pages/settings/General.vue') },
 ]

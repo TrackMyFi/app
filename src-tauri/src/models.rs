@@ -39,6 +39,8 @@ pub struct Account {
     pub is_active: bool,
     pub include_in_fire_calculations: bool,
     pub created_at: String,
+    /// SimpleFIN account id this account is linked to, when bank sync is set up.
+    pub simplefin_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]
@@ -50,6 +52,8 @@ pub struct AccountBalance {
     pub balance: f64,
     pub recorded_at: String,
     pub linked_transaction_id: Option<i32>,
+    /// "manual" for user-entered/txn-generated snapshots, "simplefin" for synced ones.
+    pub source: String,
 }
 
 #[derive(Serialize, TS, Clone)]
@@ -79,6 +83,10 @@ pub struct Transaction {
     pub generated_balance_id: Option<i32>,
     pub generated_balance_to_id: Option<i32>,
     pub paycheck_id: Option<i32>,
+    /// Category supplied by the bank/bridge (SimpleFIN), separate from `category`.
+    pub vendor_category: Option<String>,
+    /// SimpleFIN transaction id, set only on synced transactions (dedup key).
+    pub simplefin_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

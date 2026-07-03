@@ -12,7 +12,7 @@ function txn(p: Partial<Transaction>): Transaction {
     id: 1, accountId: 1, transferAccountId: null, amount: 0, description: '',
     date: '2026-01-01', type: 'expense', category: '', isContribution: false, isWithdrawal: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
-    paycheckId: null, createdAt: '', updatedAt: '', ...p,
+    paycheckId: null, vendorCategory: null, simplefinId: null, createdAt: '', updatedAt: '', ...p,
   }
 }
 

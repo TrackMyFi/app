@@ -10,6 +10,7 @@ const account = (overrides: Partial<Account>): Account => ({
   isActive: true,
   includeInFireCalculations: false,
   createdAt: '2026-01-01',
+  simplefinId: null,
   ...overrides,
 })
 

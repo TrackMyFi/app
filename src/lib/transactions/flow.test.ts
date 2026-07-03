@@ -4,16 +4,16 @@ import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '' },
-  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '' },
-  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '' },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null },
+  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '', simplefinId: null },
+  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null },
 ]
 
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 100, description: '', date: '2026-05-01',
     type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
-    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, createdAt: '', updatedAt: '',
+    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
 }
