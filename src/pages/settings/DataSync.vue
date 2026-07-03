@@ -205,13 +205,13 @@ async function clearStorageSettings() {
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
     <PageError v-if="error" :message="error" @retry="retry" />
 
-    <div v-else class="space-y-8">
+    <div v-else class="space-y-8 max-w-3xl">
       <section class="space-y-3">
         <h2 class="text-xl font-bold">Cloud Sync (Turso)</h2>
         <p class="text-sm text-muted">

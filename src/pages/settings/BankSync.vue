@@ -150,7 +150,7 @@ async function disconnect() {
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
@@ -159,7 +159,7 @@ async function disconnect() {
     <div v-else class="space-y-8">
       <section class="space-y-3">
         <h2 class="text-xl font-bold">Bank Sync (SimpleFIN)</h2>
-        <p class="text-sm text-muted">
+        <p class="text-sm text-muted max-w-3xl">
           Optional. Pulls account balances and transactions from your banks once a day
           through <span class="font-mono">SimpleFIN Bridge</span>. The access credential is
           stored in your OS keychain; imported data is flagged with its source so it's easy

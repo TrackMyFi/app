@@ -70,13 +70,13 @@ async function onSubmit() {
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
     <PageError v-if="error" :message="error" @retry="retry" />
 
-    <section v-else class="space-y-4">
+    <section v-else class="space-y-4 max-w-3xl">
       <h2 class="text-xl font-bold">FIRE Profile</h2>
       <UForm :state="form" @submit="onSubmit" class="space-y-4">
         <div class="grid grid-cols-2 gap-3">

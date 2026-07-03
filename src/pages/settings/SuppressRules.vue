@@ -118,7 +118,7 @@ const columns = [
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
@@ -126,7 +126,7 @@ const columns = [
 
     <section v-else class="space-y-3">
       <h2 class="text-xl font-bold">Suppress Rules</h2>
-      <p class="text-sm text-muted">
+      <p class="text-sm text-muted max-w-3xl">
         Keywords matched against transaction descriptions (first matching rule
         wins). Matches are kept in the database — they still count toward account
         balances — but are hidden from the transactions list, totals, and charts.

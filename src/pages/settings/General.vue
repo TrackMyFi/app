@@ -29,11 +29,11 @@ const showDeleteModal = ref(false)
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
-    <div class="space-y-8">
+    <div class="space-y-8 max-w-3xl">
       <section class="space-y-3">
         <h2 class="text-xl font-bold">Updates</h2>
         <div class="border border-default rounded-lg p-4 space-y-3">

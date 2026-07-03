@@ -131,7 +131,7 @@ function money(n: number): string {
 </script>
 
 <template>
-  <div class="p-6 max-w-3xl">
+  <div class="p-6 max-w-7xl">
     <h1 class="text-2xl font-bold mb-4">Settings</h1>
     <SettingsNav />
 
@@ -139,7 +139,7 @@ function money(n: number): string {
 
     <section v-else class="space-y-3">
       <h2 class="text-xl font-bold">Vendor Rules</h2>
-      <p class="text-sm text-muted">
+      <p class="text-sm text-muted max-w-3xl">
         Keywords matched against transaction descriptions on the Expenses page.
         When a description contains the keyword, its vendor name is used instead
         of the auto-detected one — handy for messy or inconsistent bank descriptions.
