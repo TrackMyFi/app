@@ -652,6 +652,21 @@ pub async fn delete_transaction(conn: &Connection, id: i32) -> Result<(), String
     Ok(())
 }
 
+/// Delete only the txn row, leaving any generated balance snapshots in place.
+///
+/// Used by the SimpleFIN duplicate review when removing the manual/CSV side of
+/// a duplicate pair: SimpleFIN never backfills historical daily balances, so
+/// the manual transaction's generated snapshot may be the only balance data
+/// point for that date. Once the owning transaction is gone, [`reproject_account`]
+/// no longer finds a txn pointing at the snapshot and treats it as a manual
+/// anchor — its stored value doesn't change, so no reprojection is needed here.
+pub async fn delete_transaction_keep_snapshot(conn: &Connection, id: i32) -> Result<(), String> {
+    conn.execute("DELETE FROM txn WHERE id = ?1", params![id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Insert many transactions in one batch. Never materializes balance snapshots,
 /// and forces import_source = "csv".
 ///
@@ -1119,6 +1134,12 @@ pub async fn delete_transaction_cmd(db: State<'_, Db>, id: i32) -> Result<(), St
 }
 
 #[tauri::command]
+pub async fn delete_transaction_keep_snapshot_cmd(db: State<'_, Db>, id: i32) -> Result<(), String> {
+    let conn = db.conn().await?;
+    delete_transaction_keep_snapshot(&conn, id).await
+}
+
+#[tauri::command]
 pub async fn bulk_create_transactions_cmd(
     db: State<'_, Db>,
     transactions: Vec<NewTransaction>,
@@ -1386,6 +1407,53 @@ mod tests {
         for (i, (a, b)) in sums1.iter().zip(sums2.iter()).enumerate() {
             assert_eq!(a, b, "txn {i} differs:\n  row-by-row: {a:?}\n  batched:    {b:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn delete_keep_snapshot_leaves_snapshot_as_manual_anchor() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking").await;
+
+        // Two balance-updating transactions: snapshots at 100 then 150.
+        let t1 = make_txn(acc, "income", 100.0, "2024-01-15");
+        let t2 = make_txn(acc, "income", 50.0, "2024-02-01");
+        let id1 = create_transaction_synced(&conn, &t1).await.unwrap();
+        create_transaction_synced(&conn, &t2).await.unwrap();
+
+        delete_transaction_keep_snapshot(&conn, id1).await.unwrap();
+
+        // The txn row is gone but both snapshots survive with their values.
+        let mut rows = conn
+            .query(
+                "SELECT balance FROM account_balance WHERE account_id = ?1 \
+                 ORDER BY recorded_at ASC, id ASC",
+                params![acc],
+            )
+            .await
+            .unwrap();
+        let mut balances = Vec::new();
+        while let Some(r) = rows.next().await.unwrap() {
+            balances.push(r.get::<f64>(0).unwrap());
+        }
+        assert_eq!(balances, vec![100.0, 150.0]);
+
+        // A full reprojection now treats the orphaned snapshot as a manual
+        // anchor: it keeps its value and the later generated snapshot still
+        // builds on it (100 + 50), instead of collapsing to 50.
+        reproject_account(&conn, acc, "0001-01-01").await.unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT balance FROM account_balance WHERE account_id = ?1 \
+                 ORDER BY recorded_at ASC, id ASC",
+                params![acc],
+            )
+            .await
+            .unwrap();
+        let mut balances = Vec::new();
+        while let Some(r) = rows.next().await.unwrap() {
+            balances.push(r.get::<f64>(0).unwrap());
+        }
+        assert_eq!(balances, vec![100.0, 150.0]);
     }
 
     #[tokio::test]

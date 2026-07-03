@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { SimpleFinDuplicateCandidate } from '../types/SimpleFinDuplicateCandidate'
 import type { SimpleFinStatus } from '../types/SimpleFinStatus'
 import type { SimpleFinSyncSummary } from '../types/SimpleFinSyncSummary'
 
@@ -14,6 +15,10 @@ export const linkSimpleFinAccount = (simplefinId: string, accountId: number | nu
   invoke<void>('simplefin_link_account', { simplefinId, accountId })
 
 export const syncSimpleFinNow = () => invoke<SimpleFinSyncSummary>('simplefin_sync_now')
+
+/** Candidate SimpleFIN-vs-manual/CSV duplicate pairs for the review UI. */
+export const listSimpleFinDuplicates = () =>
+  invoke<SimpleFinDuplicateCandidate[]>('simplefin_duplicate_candidates')
 
 export const disconnectSimpleFin = () => invoke<void>('simplefin_disconnect')
 

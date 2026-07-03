@@ -69,6 +69,10 @@ export const updateTransaction = (transaction: UpdateTransaction) =>
   invoke<void>('update_transaction_cmd', { transaction })
 export const deleteTransaction = (id: number) =>
   invoke<void>('delete_transaction_cmd', { id })
+/** Delete only the txn row, leaving any generated balance snapshots in place
+ *  as manual anchors. Used by the SimpleFIN duplicate review. */
+export const deleteTransactionKeepSnapshot = (id: number) =>
+  invoke<void>('delete_transaction_keep_snapshot_cmd', { id })
 export const bulkCreateTransactions = (transactions: NewTransaction[]) =>
   invoke<number>('bulk_create_transactions_cmd', { transactions })
 export const bulkCreateTransactionsWithSnapshots = (transactions: NewTransaction[]) =>

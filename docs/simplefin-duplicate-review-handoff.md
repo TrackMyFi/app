@@ -1,5 +1,20 @@
 # Handoff: SimpleFIN vs. manual/CSV duplicate review
 
+> **Status: IMPLEMENTED (2026-07-03).** On-demand candidate query
+> (`duplicate_candidates` / `simplefin_duplicate_candidates` in
+> `src-tauri/src/simplefin.rs`, greedy one-to-one matching, ±3-day window,
+> bucket classification included), keep-snapshot delete variant
+> (`delete_transaction_keep_snapshot` in
+> `src-tauri/src/commands/transactions.rs` — no reprojection, orphaned
+> snapshot becomes a manual anchor), review modal
+> (`src/components/SimpleFinDuplicateReview.vue`) opened from a
+> "Review possible duplicates" button on the Bank Sync settings page.
+> Bucket resolutions as designed: ordinary → delete the non-SimpleFIN row
+> keeping its snapshot; net-deposit → same, but default-unchecked in the UI;
+> contribution → reversed, the SimpleFIN row is deleted via the normal
+> delete path. No schema change needed; the optional `dismissed_pairs`
+> polish and bulk-delete command were not built.
+
 Scoped in a planning session (no code written). This covers the problem, the design
 that was rejected and why, the design that was agreed on, and the concrete pieces
 needed to build it.

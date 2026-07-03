@@ -35,6 +35,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SettingsNav: typeof import('./src/components/SettingsNav.vue')['default']
+    SimpleFinDuplicateReview: typeof import('./src/components/SimpleFinDuplicateReview.vue')['default']
     StatCard: typeof import('./src/components/StatCard.vue')['default']
     TransactionChart: typeof import('./src/components/TransactionChart.vue')['default']
     TransactionDetail: typeof import('./src/components/TransactionDetail.vue')['default']

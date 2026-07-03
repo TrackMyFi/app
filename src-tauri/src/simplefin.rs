@@ -48,6 +48,11 @@ pub const SCHEDULER_TICK_SECS: u64 = 1800; // 30 minutes
 /// ± window (days) for matching the two sides of a transfer across accounts.
 /// Mirrors TRANSFER_DATE_TOLERANCE_DAYS in src/lib/csv/mapping.ts.
 const TRANSFER_DATE_TOLERANCE_DAYS: f64 = 3.0;
+/// ± window (days) for matching a SimpleFIN transaction against a manual/CSV
+/// one in the duplicate review — SimpleFIN's posted date can lag a manually
+/// entered purchase date by a day or two for card transactions. A judgment
+/// call (it happens to equal OVERLAP_DAYS, but isn't derived from it).
+const DUPLICATE_DATE_TOLERANCE_DAYS: f64 = 3.0;
 
 /// Managed state: serializes concurrent syncs (scheduler tick vs. manual click).
 pub struct SimpleFinShared {
@@ -225,6 +230,33 @@ pub struct SimpleFinSyncSummary {
     #[ts(type = "number")]
     pub transfers_detected: i64,
     pub bridge_errors: Vec<String>,
+}
+
+/// One candidate duplicate pair for the post-import review: a SimpleFIN-imported
+/// transaction and a non-SimpleFIN one (manual/CSV/paycheck) on the same account
+/// that look like the same real-world event.
+#[derive(Serialize, Clone, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct SimpleFinDuplicateCandidate {
+    pub account_id: i32,
+    pub account_name: String,
+    pub amount: f64,
+    /// "income" | "expense" (transfers are excluded from matching).
+    pub txn_type: String,
+    pub simplefin_txn_id: i32,
+    pub simplefin_date: String,
+    pub simplefin_description: String,
+    pub other_txn_id: i32,
+    pub other_date: String,
+    pub other_description: String,
+    pub other_import_source: String,
+    /// Resolution bucket: "ordinary" (delete the non-SimpleFIN row, keep its
+    /// snapshot), "net_deposit" (paycheck-linked deposit — higher stakes,
+    /// user opts in), or "contribution" (paycheck-linked row on an investment
+    /// account — resolution is reversed: delete the SimpleFIN row, which can
+    /// never carry is_contribution/paycheck_id).
+    pub bucket: String,
 }
 
 // ---- small helpers ----
@@ -768,6 +800,84 @@ pub(crate) async fn collapse_transfer_pairs(conn: &Connection) -> Result<i64, St
     Ok(collapsed)
 }
 
+/// Find candidate duplicate pairs for the on-demand review: same account, same
+/// type, matching amount (± float tolerance), dates within a small window, one
+/// side SimpleFIN-imported and the other not.
+///
+/// Description is deliberately NOT matched — a hand-typed "Starbucks" vs.
+/// SimpleFIN's "STARBUCKS #123 SEATTLE WA" is the same purchase. The query's
+/// job is recall; both descriptions are shown side by side in the review UI so
+/// the human eye handles precision (false positives get unchecked, nothing is
+/// deleted without the user submitting).
+///
+/// Transfers are excluded entirely: the app stores a transfer as one canonical
+/// row while SimpleFIN reports two independent ordinary rows, so the shapes
+/// don't line up for pair-matching (and `collapse_transfer_pairs` already
+/// handles the SimpleFIN side).
+pub(crate) async fn duplicate_candidates(
+    conn: &Connection,
+) -> Result<Vec<SimpleFinDuplicateCandidate>, String> {
+    // Candidates ordered by date proximity so the greedy pass below pairs each
+    // row with its closest match first (same technique as collapse_transfer_pairs).
+    let mut rows = conn
+        .query(
+            "SELECT s.id, s.date, s.description, m.id, m.date, m.description, \
+             m.import_source, m.paycheck_id, s.amount, s.type, a.id, a.name, a.type \
+             FROM txn s \
+             JOIN txn m ON m.account_id = s.account_id \
+               AND m.simplefin_id IS NULL \
+               AND m.type = s.type \
+               AND ABS(m.amount - s.amount) < 0.005 \
+               AND ABS(julianday(m.date) - julianday(s.date)) <= ?1 \
+             JOIN account a ON a.id = s.account_id \
+             WHERE s.simplefin_id IS NOT NULL \
+               AND s.type IN ('income', 'expense') \
+             ORDER BY ABS(julianday(m.date) - julianday(s.date)) ASC, s.id ASC, m.id ASC",
+            params![DUPLICATE_DATE_TOLERANCE_DAYS],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut candidates: Vec<SimpleFinDuplicateCandidate> = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        let paycheck_id: Option<i32> = r.get(7).map_err(|e| e.to_string())?;
+        let account_type: String = r.get(12).map_err(|e| e.to_string())?;
+        let bucket = match paycheck_id {
+            Some(_) if is_investment_account_type(&account_type) => "contribution",
+            Some(_) => "net_deposit",
+            None => "ordinary",
+        };
+        candidates.push(SimpleFinDuplicateCandidate {
+            simplefin_txn_id: r.get(0).map_err(|e| e.to_string())?,
+            simplefin_date: r.get(1).map_err(|e| e.to_string())?,
+            simplefin_description: r.get(2).map_err(|e| e.to_string())?,
+            other_txn_id: r.get(3).map_err(|e| e.to_string())?,
+            other_date: r.get(4).map_err(|e| e.to_string())?,
+            other_description: r.get(5).map_err(|e| e.to_string())?,
+            other_import_source: r.get(6).map_err(|e| e.to_string())?,
+            amount: r.get(8).map_err(|e| e.to_string())?,
+            txn_type: r.get(9).map_err(|e| e.to_string())?,
+            account_id: r.get(10).map_err(|e| e.to_string())?,
+            account_name: r.get(11).map_err(|e| e.to_string())?,
+            bucket: bucket.to_string(),
+        });
+    }
+
+    // Greedy one-to-one matching: each transaction appears in at most one pair.
+    let mut used_sfin = std::collections::HashSet::new();
+    let mut used_other = std::collections::HashSet::new();
+    candidates.retain(|c| {
+        if used_sfin.contains(&c.simplefin_txn_id) || used_other.contains(&c.other_txn_id) {
+            return false;
+        }
+        used_sfin.insert(c.simplefin_txn_id);
+        used_other.insert(c.other_txn_id);
+        true
+    });
+
+    Ok(candidates)
+}
+
 // ---- sync orchestration ----
 
 /// The single funnel all SimpleFIN sync triggers call.
@@ -933,6 +1043,16 @@ pub async fn simplefin_link_account(
 #[tauri::command]
 pub async fn simplefin_sync_now(app: AppHandle) -> Result<SimpleFinSyncSummary, String> {
     run_sync(&app).await
+}
+
+/// List candidate SimpleFIN-vs-manual/CSV duplicate pairs for the review UI.
+/// Read-only — resolution happens through the transaction delete commands.
+#[tauri::command]
+pub async fn simplefin_duplicate_candidates(
+    app: AppHandle,
+) -> Result<Vec<SimpleFinDuplicateCandidate>, String> {
+    let conn = app.state::<Db>().conn().await?;
+    duplicate_candidates(&conn).await
 }
 
 /// Remove the access URL from the keychain and reset sync state. Imported data
@@ -1118,6 +1238,154 @@ mod tests {
     }
 
     const DAY: i64 = 86_400;
+
+    /// Insert a non-SimpleFIN txn row directly (manual/CSV/paycheck shapes).
+    async fn insert_local_txn(
+        conn: &Connection,
+        account_id: i32,
+        ty: &str,
+        amount: f64,
+        date: &str,
+        description: &str,
+        import_source: &str,
+        paycheck_id: Option<i32>,
+    ) -> i32 {
+        conn.execute(
+            "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
+             type, category, is_contribution, is_withdrawal, import_source, paycheck_id, \
+             created_at, updated_at) \
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'uncategorized', 0, 0, ?6, ?7, \
+             '2024-01-01T00:00:00', '2024-01-01T00:00:00')",
+            params![account_id, amount, description, date, ty, import_source, paycheck_id],
+        )
+        .await
+        .unwrap();
+        conn.last_insert_rowid() as i32
+    }
+
+    #[tokio::test]
+    async fn duplicate_candidates_matches_across_description_drift() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+
+        let ts = 1_700_000_000;
+        // Manual entry dated a day before the bank's posted date, hand-typed
+        // description — must still match (amount + type + date window only).
+        let manual = insert_local_txn(
+            &conn, acc, "expense", 42.50, &ts_to_date(ts - DAY), "Starbucks", "manual", None,
+        )
+        .await;
+        let set = demo_set(
+            "1500.00",
+            ts,
+            vec![demo_txn("TRN-1", "-42.50", ts, "STARBUCKS #123 SEATTLE WA")],
+        );
+        import_account_set(&conn, &set).await.unwrap();
+
+        let cands = duplicate_candidates(&conn).await.unwrap();
+        assert_eq!(cands.len(), 1);
+        let c = &cands[0];
+        assert_eq!(c.other_txn_id, manual);
+        assert_eq!(c.bucket, "ordinary");
+        assert_eq!(c.amount, 42.50);
+        assert_eq!(c.txn_type, "expense");
+        assert_eq!(c.simplefin_description, "STARBUCKS #123 SEATTLE WA");
+        assert_eq!(c.other_description, "Starbucks");
+        assert_eq!(c.account_name, "Checking");
+    }
+
+    #[tokio::test]
+    async fn duplicate_candidates_respects_type_date_and_amount_bounds() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+
+        let ts = 1_700_000_000;
+        // Same amount but opposite type: never a duplicate.
+        insert_local_txn(&conn, acc, "income", 42.50, &ts_to_date(ts), "refund", "manual", None)
+            .await;
+        // Same amount/type but 5 days out: outside the window.
+        insert_local_txn(
+            &conn, acc, "expense", 42.50, &ts_to_date(ts + 5 * DAY), "later", "manual", None,
+        )
+        .await;
+        // Same type/date but different amount.
+        insert_local_txn(&conn, acc, "expense", 43.00, &ts_to_date(ts), "close", "manual", None)
+            .await;
+        // A manual transfer row is excluded even with matching amount/date.
+        insert_local_txn(&conn, acc, "transfer", 42.50, &ts_to_date(ts), "move", "manual", None)
+            .await;
+
+        let set = demo_set("1500.00", ts, vec![demo_txn("TRN-1", "-42.50", ts, "CHARGE")]);
+        import_account_set(&conn, &set).await.unwrap();
+
+        assert!(duplicate_candidates(&conn).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_candidates_classifies_paycheck_buckets() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let k401 = insert_account(&conn, "401k", "401k", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        conn.execute(
+            "INSERT INTO paycheck (pay_date, employer, pay_period, gross_amount, net_amount, \
+             created_at, updated_at) VALUES (?1, 'Acme', 'biweekly', 3500.0, 2500.0, \
+             '2024-01-01T00:00:00', '2024-01-01T00:00:00')",
+            params![ts_to_date(ts)],
+        )
+        .await
+        .unwrap();
+        // Paycheck net deposit on checking, and a contribution row on the 401k.
+        insert_local_txn(
+            &conn, checking, "income", 2500.0, &ts_to_date(ts), "Paycheck – Acme", "paycheck",
+            Some(1),
+        )
+        .await;
+        insert_local_txn(
+            &conn, k401, "income", 500.0, &ts_to_date(ts), "401k deduction", "paycheck", Some(1),
+        )
+        .await;
+
+        let set = demo_set2(
+            vec![demo_txn("TRN-DEP", "2500.00", ts, "ACME PAYROLL")],
+            vec![demo_txn("TRN-CONTRIB", "500.00", ts + DAY, "EMPLOYEE CONTRIBUTION")],
+        );
+        import_account_set(&conn, &set).await.unwrap();
+
+        let mut cands = duplicate_candidates(&conn).await.unwrap();
+        cands.sort_by(|a, b| a.account_id.cmp(&b.account_id));
+        assert_eq!(cands.len(), 2);
+        assert_eq!(cands[0].account_id, checking);
+        assert_eq!(cands[0].bucket, "net_deposit");
+        assert_eq!(cands[1].account_id, k401);
+        assert_eq!(cands[1].bucket, "contribution");
+    }
+
+    #[tokio::test]
+    async fn duplicate_candidates_pairs_greedily_one_to_one() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+
+        let ts = 1_700_000_000;
+        // Two manual rows that both match the single imported one; the
+        // closer-dated row wins and the other is not paired at all.
+        let same_day =
+            insert_local_txn(&conn, acc, "expense", 20.0, &ts_to_date(ts), "gas", "manual", None)
+                .await;
+        insert_local_txn(
+            &conn, acc, "expense", 20.0, &ts_to_date(ts + 2 * DAY), "gas again", "csv", None,
+        )
+        .await;
+
+        let set = demo_set("1500.00", ts, vec![demo_txn("TRN-1", "-20.00", ts, "SHELL OIL")]);
+        import_account_set(&conn, &set).await.unwrap();
+
+        let cands = duplicate_candidates(&conn).await.unwrap();
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].other_txn_id, same_day);
+        assert_eq!(cands[0].other_import_source, "manual");
+    }
 
     #[tokio::test]
     async fn transfer_pair_collapses_and_flags_contribution() {

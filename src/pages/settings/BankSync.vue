@@ -8,6 +8,7 @@ import { createAccount } from '../../lib/api/accounts'
 import type { SimpleFinRemoteAccount } from '../../lib/types/SimpleFinRemoteAccount'
 import PageError from '../../components/PageError.vue'
 import SettingsNav from '../../components/SettingsNav.vue'
+import SimpleFinDuplicateReview from '../../components/SimpleFinDuplicateReview.vue'
 import { usePageData } from '../../composables/usePageData'
 
 const toast = useToast()
@@ -20,6 +21,7 @@ const setupToken = ref('')
 const busy = ref(false)
 const message = ref('')
 const linkBusy = ref<string | null>(null)
+const reviewOpen = ref(false)
 
 onMounted(() =>
   run(async () => {
@@ -264,10 +266,19 @@ async function disconnect() {
 
           <div class="flex gap-2">
             <UButton :loading="busy" @click="syncNow">Sync now</UButton>
+            <UButton v-if="linkedCount" variant="soft" @click="reviewOpen = true">
+              Review possible duplicates
+            </UButton>
             <UButton color="error" variant="soft" :loading="busy" @click="disconnect">
               Disconnect
             </UButton>
           </div>
+          <p v-if="linkedCount" class="text-xs text-muted">
+            Tracked an account by hand before linking it? Bank sync may have imported
+            transactions you already entered — use the duplicate review to clean them up.
+          </p>
+
+          <SimpleFinDuplicateReview v-model:open="reviewOpen" @resolved="accountsStore.loadList()" />
         </template>
 
         <p v-if="message" class="text-sm text-error" aria-live="polite">{{ message }}</p>
