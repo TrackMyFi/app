@@ -112,8 +112,11 @@ async function syncNow() {
   message.value = ''
   try {
     const s = await simplefin.syncNow()
+    const transfers = s.transfersDetected > 0
+      ? `, ${s.transfersDetected} ${s.transfersDetected === 1 ? 'transfer' : 'transfers'} detected`
+      : ''
     toast.add({
-      title: `Synced ${s.accountsSynced} ${s.accountsSynced === 1 ? 'account' : 'accounts'}: ${s.transactionsAdded} new ${s.transactionsAdded === 1 ? 'transaction' : 'transactions'}, ${s.snapshotsAdded} balance ${s.snapshotsAdded === 1 ? 'snapshot' : 'snapshots'}`,
+      title: `Synced ${s.accountsSynced} ${s.accountsSynced === 1 ? 'account' : 'accounts'}: ${s.transactionsAdded} new ${s.transactionsAdded === 1 ? 'transaction' : 'transactions'}, ${s.snapshotsAdded} balance ${s.snapshotsAdded === 1 ? 'snapshot' : 'snapshots'}${transfers}`,
       color: 'success',
     })
     await accountsStore.loadList()

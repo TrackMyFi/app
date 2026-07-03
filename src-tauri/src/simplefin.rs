@@ -45,6 +45,9 @@ const OVERLAP_DAYS: i64 = 3;
 const FIRST_SYNC_LOOKBACK_DAYS: i64 = 90;
 /// How often the background scheduler re-checks whether a sync is due.
 pub const SCHEDULER_TICK_SECS: u64 = 1800; // 30 minutes
+/// ± window (days) for matching the two sides of a transfer across accounts.
+/// Mirrors TRANSFER_DATE_TOLERANCE_DAYS in src/lib/csv/mapping.ts.
+const TRANSFER_DATE_TOLERANCE_DAYS: f64 = 3.0;
 
 /// Managed state: serializes concurrent syncs (scheduler tick vs. manual click).
 pub struct SimpleFinShared {
@@ -218,6 +221,9 @@ pub struct SimpleFinSyncSummary {
     pub transactions_added: i64,
     #[ts(type = "number")]
     pub snapshots_added: i64,
+    /// Cross-account income/expense pairs collapsed into canonical transfers.
+    #[ts(type = "number")]
+    pub transfers_detected: i64,
     pub bridge_errors: Vec<String>,
 }
 
@@ -598,14 +604,20 @@ async fn import_account_set(
 
             // No generated balance snapshots for synced transactions — the
             // bridge's own balance snapshot is the authoritative anchor.
+            // The NOT EXISTS guard skips ids consumed by a transfer collapse:
+            // the deleted counterpart row's id is no longer in the unique
+            // simplefin_id index, so OR IGNORE alone would re-import it from
+            // the overlap window.
             let inserted = conn
                 .execute(
                     "INSERT OR IGNORE INTO txn (account_id, transfer_account_id, amount, \
                      description, date, type, category, is_contribution, is_withdrawal, \
                      import_source, generated_balance_id, generated_balance_to_id, \
                      vendor_category, simplefin_id, created_at, updated_at) \
-                     VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 0, 0, 'simplefin', NULL, NULL, \
-                     ?7, ?8, ?9, ?9)",
+                     SELECT ?1, NULL, ?2, ?3, ?4, ?5, ?6, 0, 0, 'simplefin', NULL, NULL, \
+                     ?7, ?8, ?9, ?9 \
+                     WHERE NOT EXISTS \
+                     (SELECT 1 FROM txn WHERE simplefin_counterpart_id = ?8)",
                     params![
                         link.account_id,
                         amount,
@@ -635,7 +647,125 @@ async fn import_account_set(
             .await?;
     }
 
+    summary.transfers_detected = collapse_transfer_pairs(conn).await?;
+
     Ok((summary, cache))
+}
+
+/// Mirrors INVESTMENT_TYPES in src/lib/accountTypes.ts.
+fn is_investment_account_type(t: &str) -> bool {
+    matches!(
+        t,
+        "brokerage" | "401k" | "roth_401k" | "mixed_401k" | "traditional_ira" | "roth_ira"
+            | "hsa" | "crypto"
+    )
+}
+
+/// Collapse SimpleFIN-imported transfer pairs into the app's canonical
+/// single-row transfer model.
+///
+/// SimpleFIN's protocol has no cross-account linkage, so a real transfer
+/// between two linked accounts always arrives as two independent rows: an
+/// expense on the source account and an income on the destination. This pass
+/// matches such pairs by amount (± float tolerance) and a date window,
+/// deliberately ignoring description (the two sides almost never share
+/// wording). On a match the source (expense) row survives — the canonical
+/// model is `account_id` = source, `transfer_account_id` = destination — and
+/// the destination row is deleted, its SimpleFIN id preserved in
+/// `simplefin_counterpart_id` so the import's NOT EXISTS guard blocks its
+/// re-import from the overlap window.
+///
+/// A transfer into an investment account is additionally flagged as a
+/// contribution — but only when the source is NOT itself an investment
+/// account: moving money between two investment accounts (e.g. a rollover)
+/// is not new principal, and counting it would inflate the contribution rate
+/// feeding the FIRE forecast.
+///
+/// Scans all SimpleFIN rows (not just this sync's) so a counterpart that
+/// arrives days later — or history predating this feature — still collapses.
+/// Rows a user has wired into the balance chain (generated snapshots) or that
+/// belong to a paycheck are left alone. This is a best-effort heuristic: two
+/// unrelated same-amount transactions across accounts within the window will
+/// also match.
+pub(crate) async fn collapse_transfer_pairs(conn: &Connection) -> Result<i64, String> {
+    struct Pair {
+        expense_id: i32,
+        income_id: i32,
+        income_sfin_id: String,
+        is_contribution: bool,
+    }
+
+    // Candidates ordered by date proximity so the greedy pass below pairs each
+    // row with its closest match first.
+    let mut rows = conn
+        .query(
+            "SELECT e.id, i.id, i.simplefin_id, ea.type, ia.type \
+             FROM txn e \
+             JOIN txn i ON i.type = 'income' \
+               AND i.import_source = 'simplefin' \
+               AND i.simplefin_id IS NOT NULL \
+               AND i.account_id <> e.account_id \
+               AND ABS(i.amount - e.amount) < 0.005 \
+               AND ABS(julianday(i.date) - julianday(e.date)) <= ?1 \
+             JOIN account ea ON ea.id = e.account_id \
+             JOIN account ia ON ia.id = i.account_id \
+             WHERE e.type = 'expense' \
+               AND e.import_source = 'simplefin' \
+               AND e.simplefin_id IS NOT NULL \
+               AND e.paycheck_id IS NULL AND i.paycheck_id IS NULL \
+               AND e.generated_balance_id IS NULL AND e.generated_balance_to_id IS NULL \
+               AND i.generated_balance_id IS NULL AND i.generated_balance_to_id IS NULL \
+             ORDER BY ABS(julianday(i.date) - julianday(e.date)) ASC, e.id ASC, i.id ASC",
+            params![TRANSFER_DATE_TOLERANCE_DAYS],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut candidates: Vec<Pair> = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        let src_type: String = r.get(3).map_err(|e| e.to_string())?;
+        let dst_type: String = r.get(4).map_err(|e| e.to_string())?;
+        candidates.push(Pair {
+            expense_id: r.get(0).map_err(|e| e.to_string())?,
+            income_id: r.get(1).map_err(|e| e.to_string())?,
+            income_sfin_id: r.get(2).map_err(|e| e.to_string())?,
+            is_contribution: is_investment_account_type(&dst_type)
+                && !is_investment_account_type(&src_type),
+        });
+    }
+
+    // Greedy one-to-one matching: each row participates in at most one pair.
+    let mut used_expenses = std::collections::HashSet::new();
+    let mut used_incomes = std::collections::HashSet::new();
+    let updated_at = now_iso();
+    let mut collapsed = 0i64;
+
+    for p in candidates {
+        if used_expenses.contains(&p.expense_id) || used_incomes.contains(&p.income_id) {
+            continue;
+        }
+        used_expenses.insert(p.expense_id);
+        used_incomes.insert(p.income_id);
+
+        // The surviving row's category no longer means anything (transfers are
+        // cash-flow neutral); reset it like the CSV importer does.
+        conn.execute(
+            "UPDATE txn SET type = 'transfer', \
+             transfer_account_id = (SELECT account_id FROM txn WHERE id = ?1), \
+             category = 'uncategorized', is_contribution = ?2, \
+             simplefin_counterpart_id = ?3, updated_at = ?4 \
+             WHERE id = ?5",
+            params![p.income_id, p.is_contribution, p.income_sfin_id, updated_at.clone(), p.expense_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM txn WHERE id = ?1", params![p.income_id])
+            .await
+            .map_err(|e| e.to_string())?;
+        collapsed += 1;
+    }
+
+    Ok(collapsed)
 }
 
 // ---- sync orchestration ----
@@ -930,6 +1060,211 @@ mod tests {
             category: None,
             extra: None,
         }
+    }
+
+    /// Two linked accounts, each with its own transactions.
+    fn demo_set2(txns_a: Vec<SfinTxn>, txns_b: Vec<SfinTxn>) -> SfinAccountSet {
+        SfinAccountSet {
+            errors: vec![],
+            accounts: vec![
+                SfinAccount {
+                    id: "ACT-1".into(),
+                    name: Some("Checking".into()),
+                    org: None,
+                    currency: Some(serde_json::json!("USD")),
+                    balance: NumOrStr::S("1000.00".into()),
+                    balance_date: 1_700_000_000,
+                    transactions: txns_a,
+                },
+                SfinAccount {
+                    id: "ACT-2".into(),
+                    name: Some("Other".into()),
+                    org: None,
+                    currency: Some(serde_json::json!("USD")),
+                    balance: NumOrStr::S("5000.00".into()),
+                    balance_date: 1_700_000_000,
+                    transactions: txns_b,
+                },
+            ],
+        }
+    }
+
+    // Reads (account_id, transfer_account_id, amount, type, is_contribution,
+    // simplefin_id, simplefin_counterpart_id) for all txns, ordered by id.
+    async fn read_all_txns(
+        conn: &Connection,
+    ) -> Vec<(i32, Option<i32>, f64, String, bool, Option<String>, Option<String>)> {
+        let mut rows = conn
+            .query(
+                "SELECT account_id, transfer_account_id, amount, type, is_contribution, \
+                 simplefin_id, simplefin_counterpart_id FROM txn ORDER BY id",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(r) = rows.next().await.unwrap() {
+            out.push((
+                r.get::<i32>(0).unwrap(),
+                r.get::<Option<i32>>(1).unwrap(),
+                r.get::<f64>(2).unwrap(),
+                r.get::<String>(3).unwrap(),
+                r.get::<i64>(4).unwrap() != 0,
+                r.get::<Option<String>>(5).unwrap(),
+                r.get::<Option<String>>(6).unwrap(),
+            ));
+        }
+        out
+    }
+
+    const DAY: i64 = 86_400;
+
+    #[tokio::test]
+    async fn transfer_pair_collapses_and_flags_contribution() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let brokerage = insert_account(&conn, "Brokerage", "brokerage", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        let set = demo_set2(
+            vec![demo_txn("TRN-OUT", "-500.00", ts, "TRANSFER TO VANGUARD")],
+            // Destination reports the deposit a day later with unrelated wording.
+            vec![demo_txn("TRN-IN", "500.00", ts + DAY, "ACH ELECTRONIC FUNDS")],
+        );
+        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(summary.transactions_added, 2);
+        assert_eq!(summary.transfers_detected, 1);
+
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 1, "pair should collapse to a single row");
+        let t = &txns[0];
+        assert_eq!(t.0, checking); // source side survives
+        assert_eq!(t.1, Some(brokerage));
+        assert_eq!(t.2, 500.0);
+        assert_eq!(t.3, "transfer");
+        assert!(t.4, "transfer into an investment account is a contribution");
+        assert_eq!(t.5.as_deref(), Some("TRN-OUT"));
+        assert_eq!(t.6.as_deref(), Some("TRN-IN"));
+
+        // Re-import (overlap window): the source dedupes on simplefin_id, the
+        // deleted counterpart is blocked by simplefin_counterpart_id.
+        let (again, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(again.transactions_added, 0);
+        assert_eq!(again.transfers_detected, 0);
+        assert_eq!(read_all_txns(&conn).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn transfer_to_non_investment_is_not_a_contribution() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        insert_account(&conn, "Savings", "savings", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        let set = demo_set2(
+            vec![demo_txn("TRN-OUT", "-250.00", ts, "ONLINE TRANSFER")],
+            vec![demo_txn("TRN-IN", "250.00", ts, "TRANSFER FROM CHECKING")],
+        );
+        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(summary.transfers_detected, 1);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 1);
+        assert_eq!(txns[0].3, "transfer");
+        assert!(!txns[0].4, "asset-to-asset move is not a contribution");
+    }
+
+    #[tokio::test]
+    async fn investment_to_investment_transfer_is_not_a_contribution() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Brokerage", "brokerage", "ACT-1").await;
+        insert_account(&conn, "Roth IRA", "roth_ira", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        let set = demo_set2(
+            vec![demo_txn("TRN-OUT", "-7000.00", ts, "WITHDRAWAL")],
+            vec![demo_txn("TRN-IN", "7000.00", ts + DAY, "CONTRIBUTION")],
+        );
+        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(summary.transfers_detected, 1);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns[0].3, "transfer");
+        assert!(!txns[0].4, "rollover between investment accounts is not new principal");
+    }
+
+    #[tokio::test]
+    async fn unrelated_rows_do_not_collapse() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        insert_account(&conn, "Savings", "savings", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        let set = demo_set2(
+            vec![
+                // Amount differs from every income on the other side.
+                demo_txn("TRN-A", "-99.99", ts, "GROCERIES"),
+                // Amount matches but the date is outside the ±3 day window.
+                demo_txn("TRN-B", "-500.00", ts, "RENT"),
+            ],
+            vec![demo_txn("TRN-C", "500.00", ts + 5 * DAY, "PAYROLL")],
+        );
+        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(summary.transfers_detected, 0);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 3);
+        assert!(txns.iter().all(|t| t.3 != "transfer"));
+    }
+
+    #[tokio::test]
+    async fn counterpart_arriving_on_a_later_sync_still_collapses() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        insert_account(&conn, "Savings", "savings", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        // First sync: only the source side has posted.
+        let set1 = demo_set2(vec![demo_txn("TRN-OUT", "-300.00", ts, "TRANSFER OUT")], vec![]);
+        let (s1, _) = import_account_set(&conn, &set1).await.unwrap();
+        assert_eq!(s1.transfers_detected, 0);
+        assert_eq!(read_all_txns(&conn).await.len(), 1);
+
+        // Next sync: the destination side arrives (plus the source re-fetched
+        // via the overlap window).
+        let set2 = demo_set2(
+            vec![demo_txn("TRN-OUT", "-300.00", ts, "TRANSFER OUT")],
+            vec![demo_txn("TRN-IN", "300.00", ts + 2 * DAY, "DEPOSIT")],
+        );
+        let (s2, _) = import_account_set(&conn, &set2).await.unwrap();
+        assert_eq!(s2.transactions_added, 1);
+        assert_eq!(s2.transfers_detected, 1);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 1);
+        assert_eq!(txns[0].3, "transfer");
+    }
+
+    #[tokio::test]
+    async fn greedy_matching_pairs_each_row_once() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        insert_account(&conn, "Savings", "savings", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        // Two same-amount expenses but only one matching income: exactly one
+        // pair collapses, the other expense stays an expense.
+        let set = demo_set2(
+            vec![
+                demo_txn("TRN-A", "-100.00", ts, "TRANSFER"),
+                demo_txn("TRN-B", "-100.00", ts + DAY, "STORE PURCHASE"),
+            ],
+            vec![demo_txn("TRN-IN", "100.00", ts, "DEPOSIT")],
+        );
+        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        assert_eq!(summary.transfers_detected, 1);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 2);
+        // The closest-dated expense (TRN-A, same day) won the pairing.
+        let transfer = txns.iter().find(|t| t.3 == "transfer").unwrap();
+        assert_eq!(transfer.5.as_deref(), Some("TRN-A"));
+        assert!(txns.iter().any(|t| t.3 == "expense" && t.5.as_deref() == Some("TRN-B")));
     }
 
     #[tokio::test]
