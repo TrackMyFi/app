@@ -4,4 +4,9 @@ export type Account = { id: number, name: string, type: string, institution: str
 /**
  * SimpleFIN account id this account is linked to, when bank sync is set up.
  */
-simplefinId: string | null, };
+simplefinId: string | null, 
+/**
+ * Count transfers INTO this account as spending (loan-style accounts where
+ * the payment is the expense's only footprint). Defaults on for mortgages.
+ */
+countPaymentsAsExpense: boolean, };

@@ -679,6 +679,10 @@ async fn import_account_set(
             .await?;
     }
 
+    // Suppress noise BEFORE transfer collapse: a suppressed fee/gain row must
+    // never be mistaken for one side of a same-amount transfer pair.
+    crate::commands::suppress_rules::apply_suppress_rules(conn).await?;
+
     summary.transfers_detected = collapse_transfer_pairs(conn).await?;
 
     Ok((summary, cache))
@@ -744,6 +748,7 @@ pub(crate) async fn collapse_transfer_pairs(conn: &Connection) -> Result<i64, St
              WHERE e.type = 'expense' \
                AND e.import_source = 'simplefin' \
                AND e.simplefin_id IS NOT NULL \
+               AND e.suppressed_as IS NULL AND i.suppressed_as IS NULL \
                AND e.paycheck_id IS NULL AND i.paycheck_id IS NULL \
                AND e.generated_balance_id IS NULL AND e.generated_balance_to_id IS NULL \
                AND i.generated_balance_id IS NULL AND i.generated_balance_to_id IS NULL \
@@ -832,6 +837,7 @@ pub(crate) async fn duplicate_candidates(
              JOIN account a ON a.id = s.account_id \
              WHERE s.simplefin_id IS NOT NULL \
                AND s.type IN ('income', 'expense') \
+               AND s.suppressed_as IS NULL AND m.suppressed_as IS NULL \
              ORDER BY ABS(julianday(m.date) - julianday(s.date)) ASC, s.id ASC, m.id ASC",
             params![DUPLICATE_DATE_TOLERANCE_DAYS],
         )

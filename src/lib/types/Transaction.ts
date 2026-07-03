@@ -8,4 +8,10 @@ vendorCategory: string | null,
 /**
  * SimpleFIN transaction id, set only on synced transactions (dedup key).
  */
-simplefinId: string | null, createdAt: string, updatedAt: string, };
+simplefinId: string | null, 
+/**
+ * Rule-derived noise kind ('investment_activity' | 'fee' | 'interest').
+ * When set, the transaction is excluded from cash-flow analytics and
+ * hidden from the default transactions list; balance math still sees it.
+ */
+suppressedAs: string | null, createdAt: string, updatedAt: string, };

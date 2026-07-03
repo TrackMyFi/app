@@ -1,4 +1,5 @@
 import type { Transaction } from '../types/Transaction'
+import type { Account } from '../types/Account'
 
 export type BudgetLineItem = {
   total: number
@@ -40,11 +41,26 @@ function sumSavings(txns: Transaction[]): number {
   return txns.reduce((acc, t) => acc + (t.isWithdrawal ? -t.amount : t.amount), 0)
 }
 
-export function buildBudgetMonth(txns: Transaction[], paycheckSummary: PaycheckSummary): BudgetMonthSummary {
+export function buildBudgetMonth(
+  txns: Transaction[],
+  paycheckSummary: PaycheckSummary,
+  accounts: Account[] = [],
+): BudgetMonthSummary {
+  // A transfer into a countPaymentsAsExpense account (mortgage, car loan) is
+  // that expense's only footprint — mirror classifyFlow and treat it as
+  // spending, defaulting to the fixed bucket.
+  const isPaymentExpense = (t: Transaction) =>
+    t.type === 'transfer' && !t.isContribution &&
+    (accounts.find((a) => a.id === t.transferAccountId)?.countPaymentsAsExpense ?? false)
+
   const savings = txns.filter((t) => t.isContribution === true)
   const nonPaycheckIncome = txns.filter((t) => t.type === 'income' && !t.isContribution && t.importSource !== 'paycheck')
-  const fixed = txns.filter((t) => t.type === 'expense' && t.category === 'fixed' && !t.isContribution)
-  const discretionary = txns.filter((t) => t.type === 'expense' && t.category === 'discretionary' && !t.isContribution)
+  const fixed = txns.filter((t) =>
+    (t.type === 'expense' && t.category === 'fixed' && !t.isContribution) ||
+    (isPaymentExpense(t) && t.category !== 'discretionary'))
+  const discretionary = txns.filter((t) =>
+    (t.type === 'expense' && t.category === 'discretionary' && !t.isContribution) ||
+    (isPaymentExpense(t) && t.category === 'discretionary'))
 
   const incomeItem: BudgetLineItem = { total: sumAmount(nonPaycheckIncome), transactions: nonPaycheckIncome }
   const savingsItem: BudgetLineItem = { total: sumSavings(savings), transactions: savings }

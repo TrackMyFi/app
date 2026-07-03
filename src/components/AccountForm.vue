@@ -3,7 +3,7 @@ import { reactive, ref, watch } from 'vue'
 import { useToast } from '@nuxt/ui/composables'
 import { DateTime } from 'luxon'
 import { useAccountsStore } from '../stores/accounts'
-import { accountTypeItems, defaultIncludeInFire, type AccountType } from '../lib/accountTypes'
+import { accountTypeItems, defaultIncludeInFire, defaultCountPaymentsAsExpense, isLiability, type AccountType } from '../lib/accountTypes'
 import type { Account } from '../lib/types/Account'
 import DateInput from './DateInput.vue'
 
@@ -20,16 +20,19 @@ const form = reactive({
   type: (props.account?.type ?? 'checking') as AccountType,
   institution: props.account?.institution ?? '',
   includeInFireCalculations: props.account?.includeInFireCalculations ?? true,
+  countPaymentsAsExpense: props.account?.countPaymentsAsExpense ?? false,
   createdAt: props.account?.createdAt ?? DateTime.now().toISODate()!,
 })
 
-// Auto-default the FIRE toggle from the account type ONLY when adding, so editing
-// an existing account never silently flips a user's stored choice.
+// Auto-default the FIRE and payment-as-expense toggles from the account type
+// ONLY when adding, so editing an existing account never silently flips a
+// user's stored choice.
 if (!isEdit) {
   watch(
     () => form.type,
     (newType) => {
       form.includeInFireCalculations = defaultIncludeInFire(newType)
+      form.countPaymentsAsExpense = defaultCountPaymentsAsExpense(newType)
     },
     { immediate: true },
   )
@@ -42,6 +45,7 @@ async function onSubmit() {
     type: form.type,
     institution: form.institution.trim() || null,
     includeInFireCalculations: form.includeInFireCalculations,
+    countPaymentsAsExpense: isLiability(form.type) && form.countPaymentsAsExpense,
     createdAt: form.createdAt,
   }
   saving.value = true
@@ -86,10 +90,21 @@ async function onSubmit() {
       <DateInput v-model="form.createdAt" class="w-full" />
     </UFormField>
     
-    <div class="pt-1.5">
+    <div class="pt-1.5 space-y-3">
       <div class="flex items-center justify-between rounded-lg border border-default px-4 py-3">
         <span class="text-sm font-medium">Include in FIRE calculations</span>
         <USwitch v-model="form.includeInFireCalculations" />
+      </div>
+      <div v-if="isLiability(form.type)" class="rounded-lg border border-default px-4 py-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium">Count payments as expenses</span>
+          <USwitch v-model="form.countPaymentsAsExpense" />
+        </div>
+        <p class="text-xs text-muted mt-1.5">
+          For loans and mortgages where no purchases are tracked — transfers into
+          this account count as fixed spending. Leave off for credit cards, whose
+          purchases are already recorded.
+        </p>
       </div>
     </div>
     

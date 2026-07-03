@@ -4,14 +4,14 @@ import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
 ]
 
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 10, description: '', date: '2026-05-01',
     type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
-    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, createdAt: '', updatedAt: '',
+    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
 }

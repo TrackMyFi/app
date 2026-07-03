@@ -12,6 +12,8 @@ export interface TransactionFilter {
   startDate?: string | null
   endDate?: string | null
   searchTerms?: string[]
+  /** Rule-suppressed rows are hidden by default; set true to include them. */
+  includeSuppressed?: boolean
   limit?: number | null
   offset?: number | null
 }

@@ -36,12 +36,13 @@ export interface TransactionFlow {
 
 type AccountLookup = Map<number, Account> | Account[]
 
+function lookupAccount(id: number | null, accounts: AccountLookup): Account | undefined {
+  if (id == null) return undefined
+  return accounts instanceof Map ? accounts.get(id) : accounts.find((a) => a.id === id)
+}
+
 function accountType(id: number | null, accounts: AccountLookup): string {
-  if (id == null) return ''
-  const acct = accounts instanceof Map
-    ? accounts.get(id)
-    : accounts.find((a) => a.id === id)
-  return acct?.type ?? ''
+  return lookupAccount(id, accounts)?.type ?? ''
 }
 
 /**
@@ -60,6 +61,13 @@ export function transferDirection(srcType: string, dstType: string): FlowDirecti
 
 export function classifyFlow(t: Transaction, accounts: AccountLookup): TransactionFlow {
   const isTransfer = t.type === 'transfer'
+
+  // Rule-suppressed noise (investment activity, fees inside a 401k, …) is real
+  // money movement within the account but not income or spending — fully
+  // neutral here; balance math still sees the row.
+  if (t.suppressedAs) {
+    return { direction: 'neutral', isTransfer, inflow: 0, outflow: 0, bucket: null, isSavings: false }
+  }
 
   // Visual direction is independent of the accounting buckets below.
   let direction: FlowDirection
@@ -87,10 +95,20 @@ export function classifyFlow(t: Transaction, accounts: AccountLookup): Transacti
     return { direction, isTransfer, inflow: 0, outflow: t.amount, bucket, isSavings: false }
   }
 
-  // Transfers are always cash-flow neutral — the economic event (income or expense)
+  // Transfers are normally cash-flow neutral — the economic event (income or expense)
   // is captured on the individual transactions themselves. Counting a credit card
   // payment as an expense would double-count every purchase already recorded against
-  // the card. The visual `direction` arrow in the table is still driven by the
+  // the card. Exception: a destination account flagged countPaymentsAsExpense (a
+  // mortgage, a car loan) records no purchases of its own, so the payment IS the
+  // expense — count the full amount as spending, defaulting to the fixed bucket
+  // (a loan payment is a fixed obligation).
+  const dest = lookupAccount(t.transferAccountId, accounts)
+  if (dest?.countPaymentsAsExpense) {
+    const bucket: FlowBucket = t.category === 'discretionary' ? 'discretionary' : 'fixed'
+    return { direction, isTransfer, inflow: 0, outflow: t.amount, bucket, isSavings: false }
+  }
+
+  // The visual `direction` arrow in the table is still driven by the
   // asset/liability classification above; only the accounting values are zeroed.
   return { direction, isTransfer, inflow: 0, outflow: 0, bucket: null, isSavings: false }
 }

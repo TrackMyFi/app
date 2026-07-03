@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildBudgetMonth } from './index'
 import type { Transaction, } from '../types/Transaction'
+import type { Account } from '../types/Account'
 import type { PaycheckSummary } from './index'
 
 function makeTxn(overrides: Partial<Transaction>): Transaction {
@@ -18,7 +19,7 @@ function makeTxn(overrides: Partial<Transaction>): Transaction {
     importSource: 'manual',
     generatedBalanceId: null,
     generatedBalanceToId: null,
-    paycheckId: null, vendorCategory: null, simplefinId: null,
+    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null,
     createdAt: '2025-01-01',
     updatedAt: '2025-01-01',
     ...overrides,
@@ -27,7 +28,29 @@ function makeTxn(overrides: Partial<Transaction>): Transaction {
 
 const zeroPaycheck: PaycheckSummary = { grossIncome: 0, netIncome: 0, taxes: 0 }
 
+const paymentAccounts: Account[] = [
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
+  { id: 9, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true },
+]
+
 describe('buildBudgetMonth', () => {
+  it('counts a transfer into a countPaymentsAsExpense account as fixed spending', () => {
+    const txns = [
+      makeTxn({ id: 1, amount: 1592.29, type: 'transfer', transferAccountId: 9, category: 'uncategorized' }),
+      makeTxn({ id: 2, amount: 500, type: 'transfer', transferAccountId: 1, category: 'uncategorized' }),
+    ]
+    const result = buildBudgetMonth(txns, zeroPaycheck, paymentAccounts)
+    expect(result.fixed.total).toBe(1592.29)
+    expect(result.fixed.transactions).toHaveLength(1)
+    expect(result.discretionary.total).toBe(0)
+  })
+
+  it('ignores transfers entirely when no accounts are provided', () => {
+    const txns = [makeTxn({ id: 1, amount: 1592.29, type: 'transfer', transferAccountId: 9 })]
+    const result = buildBudgetMonth(txns, zeroPaycheck)
+    expect(result.fixed.total).toBe(0)
+  })
+
   it('returns all zeros and empty arrays for an empty transaction list', () => {
     const result = buildBudgetMonth([], zeroPaycheck)
     expect(result.income.total).toBe(0)

@@ -74,6 +74,7 @@ async function onLinkChange(remote: SimpleFinRemoteAccount, value: string) {
         type: remote.balance < 0 ? 'liability' : 'checking',
         institution: remote.org ?? null,
         includeInFireCalculations: false,
+        countPaymentsAsExpense: false,
         createdAt: new Date().toISOString().slice(0, 10),
       })
       await simplefin.link(remote.id, id)

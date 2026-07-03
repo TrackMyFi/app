@@ -51,7 +51,7 @@ async fn account_and_balance_roundtrip() {
             name: "Brokerage".into(),
             r#type: "brokerage".into(),
             institution: Some("Fidelity".into()),
-            include_in_fire_calculations: true,
+            include_in_fire_calculations: true, count_payments_as_expense: false,
             created_at: "2026-01-01".into(),
         },
     )
@@ -110,7 +110,7 @@ async fn account_and_balance_roundtrip() {
             name: "Brokerage (edited)".into(),
             r#type: "roth_ira".into(),
             institution: None,
-            include_in_fire_calculations: false,
+            include_in_fire_calculations: false, count_payments_as_expense: false,
             created_at: "2025-12-15".into(),
         },
     )

@@ -41,6 +41,9 @@ pub struct Account {
     pub created_at: String,
     /// SimpleFIN account id this account is linked to, when bank sync is set up.
     pub simplefin_id: Option<String>,
+    /// Count transfers INTO this account as spending (loan-style accounts where
+    /// the payment is the expense's only footprint). Defaults on for mortgages.
+    pub count_payments_as_expense: bool,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]
@@ -87,6 +90,10 @@ pub struct Transaction {
     pub vendor_category: Option<String>,
     /// SimpleFIN transaction id, set only on synced transactions (dedup key).
     pub simplefin_id: Option<String>,
+    /// Rule-derived noise kind ('investment_activity' | 'fee' | 'interest').
+    /// When set, the transaction is excluded from cash-flow analytics and
+    /// hidden from the default transactions list; balance math still sees it.
+    pub suppressed_as: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -118,6 +125,19 @@ pub struct VendorRule {
     pub id: i32,
     pub keyword: String,
     pub vendor_name: String,
+    pub created_at: String,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct SuppressRule {
+    pub id: i32,
+    pub keyword: String,
+    /// 'investment_activity' | 'fee' | 'interest'
+    pub kind: String,
+    /// Scope the rule to one account; None applies to all accounts.
+    pub account_id: Option<i32>,
     pub created_at: String,
 }
 

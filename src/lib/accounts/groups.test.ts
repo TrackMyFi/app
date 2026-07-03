@@ -11,6 +11,7 @@ const account = (overrides: Partial<Account>): Account => ({
   includeInFireCalculations: false,
   createdAt: '2026-01-01',
   simplefinId: null,
+  countPaymentsAsExpense: false,
   ...overrides,
 })
 

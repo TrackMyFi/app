@@ -94,6 +94,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "simplefin_transfers",
         sql: include_str!("../migrations/0017_simplefin_transfers.sql"),
     },
+    Migration {
+        version: 18,
+        name: "payment_as_expense",
+        sql: include_str!("../migrations/0018_payment_as_expense.sql"),
+    },
+    Migration {
+        version: 19,
+        name: "suppress_rules",
+        sql: include_str!("../migrations/0019_suppress_rules.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {

@@ -33,6 +33,25 @@ export const categoryItems = CATEGORIES.map((c) => ({
   value: c,
 }))
 
+// Noise kinds a suppress rule may stamp on a transaction (txn.suppressedAs).
+// Mirrors KINDS in src-tauri/src/commands/suppress_rules.rs.
+export const SUPPRESS_KINDS = ['investment_activity', 'fee', 'interest'] as const
+export type SuppressKind = typeof SUPPRESS_KINDS[number]
+
+export const SUPPRESS_KIND_LABELS: Record<SuppressKind, string> = {
+  investment_activity: 'Investment activity',
+  fee: 'Fee',
+  interest: 'Interest',
+}
+
+export const labelForSuppressKind = (kind: string): string =>
+  SUPPRESS_KIND_LABELS[kind as SuppressKind] ?? kind
+
+export const suppressKindItems = SUPPRESS_KINDS.map((k) => ({
+  label: SUPPRESS_KIND_LABELS[k],
+  value: k,
+}))
+
 // Shared semantic color mapping so every chart/list that breaks spend down by
 // category agrees on what each bucket looks like.
 export const CATEGORY_DOT_COLOR: Record<Category, string> = {

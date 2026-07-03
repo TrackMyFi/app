@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router'
 import { useToast } from '@nuxt/ui/composables'
 import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
-import { transactionTypeItems, categoryItems, labelForCategory } from '../lib/transactions/constants'
+import { transactionTypeItems, categoryItems, labelForCategory, labelForSuppressKind } from '../lib/transactions/constants'
 import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
 import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
 import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
@@ -111,6 +111,16 @@ const types = ref<string[]>([])
 const categories = ref<string[]>([])
 const searchTerms = ref<string[]>([])
 
+// Rule-suppressed noise (fees/investment activity inside synced accounts) is
+// hidden by default; this toggle reveals it in the table. Charts and totals
+// always exclude it — classifyFlow neutralizes suppressed rows regardless.
+const showSuppressed = ref(false)
+
+async function toggleSuppressed() {
+  showSuppressed.value = !showSuppressed.value
+  await applyFilters()
+}
+
 async function clearFilters() {
   accountIds.value = []
   types.value = []
@@ -148,6 +158,7 @@ async function applyFilters() {
     types: types.value,
     categories: categories.value,
     searchTerms: searchTerms.value,
+    includeSuppressed: showSuppressed.value,
     startDate,
     endDate,
   })
@@ -580,9 +591,19 @@ onMounted(() => run(async () => {
     <div class="border border-default rounded-lg overflow-hidden">
       <div class="flex items-center justify-between px-4 py-2 border-b border-default">
         <p class="text-xs text-muted">{{ tableScopeLabel }}</p>
-        <p class="text-xs text-muted">
-          {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions
-        </p>
+        <div class="flex items-center gap-3">
+          <button
+            v-if="store.page.suppressedCount > 0 || showSuppressed"
+            class="text-xs flex items-center gap-1 text-muted hover:text-default"
+            @click="toggleSuppressed"
+          >
+            <UIcon :name="showSuppressed ? 'i-ph-eye' : 'i-ph-eye-slash'" class="size-3.5" />
+            {{ showSuppressed ? 'Hide' : 'Show' }} suppressed ({{ store.page.suppressedCount }})
+          </button>
+          <p class="text-xs text-muted">
+            {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions
+          </p>
+        </div>
       </div>
       <UTable :data="rows" :columns="columns">
         <template #empty>
@@ -610,7 +631,14 @@ onMounted(() => run(async () => {
         <template #category-cell="{ row }">
           <div class="flex items-center gap-1.5">
             <UBadge
-              v-if="row.original.isContribution"
+              v-if="row.original.suppressedAs"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              icon="i-ph-eye-slash"
+            >{{ labelForSuppressKind(row.original.suppressedAs) }}</UBadge>
+            <UBadge
+              v-else-if="row.original.isContribution"
               :color="row.original.isWithdrawal ? 'warning' : 'info'"
               variant="subtle"
               size="sm"

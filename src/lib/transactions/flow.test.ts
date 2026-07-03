@@ -4,16 +4,17 @@ import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null },
-  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '', simplefinId: null },
-  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
+  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
+  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
+  { id: 4, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true },
 ]
 
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 100, description: '', date: '2026-05-01',
     type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
-    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, createdAt: '', updatedAt: '',
+    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
 }
@@ -70,6 +71,27 @@ describe('classifyFlow', () => {
   it('treats a liability → asset transfer as cash-flow neutral (loan disbursement is not income)', () => {
     const f = classifyFlow(tx({ type: 'transfer', accountId: 3, transferAccountId: 1, amount: 75 }), accounts)
     expect(f).toMatchObject({ direction: 'inflow', inflow: 0, outflow: 0, isSavings: false })
+  })
+
+  it('counts a transfer into a countPaymentsAsExpense account as fixed spending', () => {
+    const f = classifyFlow(
+      tx({ type: 'transfer', accountId: 1, transferAccountId: 4, category: 'uncategorized', amount: 1592.29 }),
+      accounts,
+    )
+    expect(f).toMatchObject({ direction: 'outflow', inflow: 0, outflow: 1592.29, bucket: 'fixed', isSavings: false })
+  })
+
+  it('respects a discretionary category on a payment-as-expense transfer', () => {
+    const f = classifyFlow(
+      tx({ type: 'transfer', accountId: 1, transferAccountId: 4, category: 'discretionary', amount: 100 }),
+      accounts,
+    )
+    expect(f).toMatchObject({ outflow: 100, bucket: 'discretionary' })
+  })
+
+  it('neutralizes a suppressed transaction entirely', () => {
+    const f = classifyFlow(tx({ type: 'income', amount: 13.47, suppressedAs: 'investment_activity' }), accounts)
+    expect(f).toMatchObject({ direction: 'neutral', inflow: 0, outflow: 0, bucket: null, isSavings: false })
   })
 })
 

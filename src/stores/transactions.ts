@@ -4,7 +4,7 @@ import type { TransactionPage } from '../lib/types/TransactionPage'
 import type { Transaction } from '../lib/types/Transaction'
 import * as api from '../lib/api/transactions'
 
-const EMPTY: TransactionPage = { rows: [], totalCount: 0, totalIncome: 0, totalExpense: 0, net: 0 }
+const EMPTY: TransactionPage = { rows: [], totalCount: 0, totalIncome: 0, totalExpense: 0, net: 0, suppressedCount: 0 }
 const PAGE_SIZE = 200
 
 export const useTransactionsStore = defineStore('transactions', () => {

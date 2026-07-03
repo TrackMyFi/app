@@ -5,7 +5,8 @@ use tauri::State;
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
-    generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, created_at, updated_at";
+    generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, suppressed_as, \
+    created_at, updated_at";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -25,8 +26,9 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         paycheck_id: row.get(13).map_err(|e| e.to_string())?,
         vendor_category: row.get(14).map_err(|e| e.to_string())?,
         simplefin_id: row.get(15).map_err(|e| e.to_string())?,
-        created_at: row.get(16).map_err(|e| e.to_string())?,
-        updated_at: row.get(17).map_err(|e| e.to_string())?,
+        suppressed_as: row.get(16).map_err(|e| e.to_string())?,
+        created_at: row.get(17).map_err(|e| e.to_string())?,
+        updated_at: row.get(18).map_err(|e| e.to_string())?,
     })
 }
 

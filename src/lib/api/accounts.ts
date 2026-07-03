@@ -6,7 +6,7 @@ import type { BalanceMonthSummary } from '../types/BalanceMonthSummary'
 export const listAccounts = () => invoke<Account[]>('list_accounts_cmd')
 export const createAccount = (account: {
   name: string; type: string; institution: string | null;
-  includeInFireCalculations: boolean; createdAt: string
+  includeInFireCalculations: boolean; countPaymentsAsExpense: boolean; createdAt: string
 }) => invoke<number>('create_account_cmd', { account })
 export const archiveAccount = (id: number) => invoke<void>('archive_account_cmd', { id })
 export const unarchiveAccount = (id: number) => invoke<void>('unarchive_account_cmd', { id })
@@ -15,7 +15,7 @@ export const addBalance = (balance: { accountId: number; balance: number; record
   invoke<void>('add_balance_cmd', { balance })
 export const updateAccount = (id: number, account: {
   name: string; type: string; institution: string | null;
-  includeInFireCalculations: boolean; createdAt: string
+  includeInFireCalculations: boolean; countPaymentsAsExpense: boolean; createdAt: string
 }) => invoke<void>('update_account_cmd', { id, account })
 export const updateBalance = (balance: { id: number; balance: number; recordedAt: string }) =>
   invoke<void>('update_balance_cmd', { balance })

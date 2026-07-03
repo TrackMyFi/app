@@ -7,6 +7,7 @@ const tabs = [
   { label: 'FIRE Profile', to: '/settings/profile' },
   { label: 'Category Rules', to: '/settings/category-rules' },
   { label: 'Vendor Rules', to: '/settings/vendor-rules' },
+  { label: 'Suppress Rules', to: '/settings/suppress-rules' },
   { label: 'Bank Sync', to: '/settings/bank-sync' },
   { label: 'Data & Sync', to: '/settings/sync' },
   { label: 'General', to: '/settings/general' },

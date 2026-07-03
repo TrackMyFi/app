@@ -35,6 +35,10 @@ export const isInvestment = (t: string) => INVESTMENT_TYPES.has(t)
 export const isLiability = (t: string) => t === 'liability' || t === 'mortgage'
 export const isEquity = (t: string) => t === 'real_estate' || t === 'mortgage'
 export const defaultIncludeInFire = (t: AccountType) => INVESTMENT_TYPES.has(t)
+// A mortgage records no purchases of its own, so payments into it ARE the
+// expense; credit cards (also liabilities) must stay neutral or every purchase
+// would double-count. See countPaymentsAsExpense on Account.
+export const defaultCountPaymentsAsExpense = (t: AccountType) => t === 'mortgage'
 
 export const investmentTypeItems = [...INVESTMENT_TYPES].map((t) => ({
   label: ACCOUNT_TYPE_LABELS[t as AccountType] ?? t,

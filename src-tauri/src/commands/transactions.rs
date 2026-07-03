@@ -42,7 +42,7 @@ pub struct UpdateTransaction {
     pub updated_at: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionFilter {
     #[serde(default)]
@@ -55,6 +55,10 @@ pub struct TransactionFilter {
     pub end_date: Option<String>,
     #[serde(default)]
     pub search_terms: Vec<String>,
+    /// Rule-suppressed rows (txn.suppressed_as set) are hidden by default;
+    /// the transactions page's "show suppressed" toggle opts back in.
+    #[serde(default)]
+    pub include_suppressed: bool,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -68,6 +72,9 @@ pub struct TransactionPage {
     pub total_income: f64,
     pub total_expense: f64,
     pub net: f64,
+    /// Rows matching the filter that carry suppressed_as, regardless of the
+    /// include_suppressed flag — drives the "show suppressed (N)" toggle.
+    pub suppressed_count: i32,
 }
 
 /// Per-period (month or year) aggregated cash-flow stats, used for median
@@ -109,7 +116,8 @@ pub struct PeriodStatsFilter {
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
-    generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, created_at, updated_at";
+    generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, suppressed_as, \
+    created_at, updated_at";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -129,8 +137,9 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         paycheck_id: row.get(13).map_err(|e| e.to_string())?,
         vendor_category: row.get(14).map_err(|e| e.to_string())?,
         simplefin_id: row.get(15).map_err(|e| e.to_string())?,
-        created_at: row.get(16).map_err(|e| e.to_string())?,
-        updated_at: row.get(17).map_err(|e| e.to_string())?,
+        suppressed_as: row.get(16).map_err(|e| e.to_string())?,
+        created_at: row.get(17).map_err(|e| e.to_string())?,
+        updated_at: row.get(18).map_err(|e| e.to_string())?,
     })
 }
 
@@ -170,6 +179,9 @@ fn build_where(prefix: &str, f: &TransactionFilter, params: &mut Vec<Value>) -> 
         let sub = f.search_terms.iter().map(|_| format!("{prefix}.description LIKE ?")).collect::<Vec<_>>().join(" OR ");
         clauses.push(format!("({sub})"));
         for term in &f.search_terms { params.push(Value::Text(format!("%{term}%"))); }
+    }
+    if !f.include_suppressed {
+        clauses.push(format!("{prefix}.suppressed_as IS NULL"));
     }
     if clauses.is_empty() {
         String::new()
@@ -263,12 +275,34 @@ pub async fn list_transactions(
     let total_income: f64 = arow.get(1).map_err(|e| e.to_string())?;
     let total_expense: f64 = arow.get(2).map_err(|e| e.to_string())?;
 
+    // How many rows the filter *would* show with suppression off — computed
+    // against the same filter minus its suppressed_as clause, so the toggle
+    // label is accurate whichever way it's currently set.
+    let mut sup_filter = f.clone();
+    sup_filter.include_suppressed = true;
+    let mut sup_params: Vec<Value> = Vec::new();
+    let sup_where = build_where("txn", &sup_filter, &mut sup_params);
+    let sup_sql = if sup_where.is_empty() {
+        "SELECT COUNT(*) FROM txn WHERE suppressed_as IS NOT NULL".to_string()
+    } else {
+        format!("SELECT COUNT(*) FROM txn {sup_where} AND suppressed_as IS NOT NULL")
+    };
+    let mut sup = conn
+        .query(&sup_sql, libsql::params_from_iter(sup_params))
+        .await
+        .map_err(|e| e.to_string())?;
+    let suppressed_count: i64 = match sup.next().await.map_err(|e| e.to_string())? {
+        Some(r) => r.get(0).map_err(|e| e.to_string())?,
+        None => 0,
+    };
+
     Ok(TransactionPage {
         rows: out,
         total_count: total_count as i32,
         total_income,
         total_expense,
         net: total_income - total_expense,
+        suppressed_count: suppressed_count as i32,
     })
 }
 
@@ -941,6 +975,7 @@ pub async fn period_stats(
         search_terms: f.search_terms.clone(),
         start_date: None,
         end_date: None,
+        include_suppressed: false,
         limit: None,
         offset: None,
     };
@@ -949,7 +984,7 @@ pub async fn period_stats(
 
     let sql = format!(
         "SELECT t.type, t.amount, t.category, t.is_contribution, t.is_withdrawal, \
-         a1.type, a2.type, strftime('{period_fmt}', t.date) \
+         a1.type, a2.type, strftime('{period_fmt}', t.date), a2.count_payments_as_expense \
          FROM txn t \
          LEFT JOIN account a1 ON a1.id = t.account_id \
          LEFT JOIN account a2 ON a2.id = t.transfer_account_id \
@@ -972,6 +1007,7 @@ pub async fn period_stats(
         let is_contribution: bool = row.get::<i64>(3).map_err(|e| e.to_string())? != 0;
         let is_withdrawal: bool = row.get::<i64>(4).map_err(|e| e.to_string())? != 0;
         let period: String = row.get(7).map_err(|e| e.to_string())?;
+        let dest_counts_as_expense: Option<i64> = row.get(8).map_err(|e| e.to_string())?;
 
         // Skip the current period so it's never compared against itself.
         if period == f.exclude_period {
@@ -1002,10 +1038,19 @@ pub async fn period_stats(
                 _ => s.cat_uncategorized += amount,
             }
         } else if tx_type == "transfer" {
-            // All transfers are cash-flow neutral — the economic event (income or
+            // Transfers are cash-flow neutral — the economic event (income or
             // expense) is captured on the individual transactions themselves.
             // Counting a bank→CC payment as an expense double-counts every purchase
-            // already recorded against the card.
+            // already recorded against the card. Exception: a destination account
+            // flagged count_payments_as_expense (a mortgage, a car loan) records
+            // no purchases of its own, so the payment IS the expense.
+            if dest_counts_as_expense.unwrap_or(0) != 0 {
+                s.expense += amount;
+                match category.as_deref() {
+                    Some("discretionary") => s.cat_discretionary += amount,
+                    _ => s.cat_fixed += amount,
+                }
+            }
         }
     }
 
@@ -1115,7 +1160,11 @@ pub async fn create_transaction_cmd(
     transaction: NewTransaction,
 ) -> Result<i32, String> {
     let conn = db.conn().await?;
-    create_transaction_synced(&conn, &transaction).await
+    let id = create_transaction_synced(&conn, &transaction).await?;
+    // Every entry path re-derives suppression so a manual entry matching a
+    // suppress rule behaves like an imported one.
+    crate::commands::suppress_rules::apply_suppress_rules(&conn).await?;
+    Ok(id)
 }
 
 #[tauri::command]
@@ -1124,7 +1173,9 @@ pub async fn update_transaction_cmd(
     transaction: UpdateTransaction,
 ) -> Result<(), String> {
     let conn = db.conn().await?;
-    update_transaction_synced(&conn, &transaction).await
+    update_transaction_synced(&conn, &transaction).await?;
+    // An edit can change the description or type out of (or into) a rule match.
+    crate::commands::suppress_rules::apply_suppress_rules(&conn).await
 }
 
 #[tauri::command]
@@ -1147,7 +1198,9 @@ pub async fn bulk_create_transactions_cmd(
     // Dedicated connection: this path opens a multi-statement transaction, which
     // must stay isolated from concurrent readers on the shared connection.
     let conn = db.fresh_conn().await?;
-    bulk_create_transactions(&conn, &transactions).await
+    let count = bulk_create_transactions(&conn, &transactions).await?;
+    crate::commands::suppress_rules::apply_suppress_rules(&conn).await?;
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1156,7 +1209,9 @@ pub async fn bulk_create_transactions_with_snapshots_cmd(
     transactions: Vec<NewTransaction>,
 ) -> Result<i64, String> {
     let conn = db.conn().await?;
-    bulk_create_transactions_with_snapshots(&conn, &transactions).await
+    let count = bulk_create_transactions_with_snapshots(&conn, &transactions).await?;
+    crate::commands::suppress_rules::apply_suppress_rules(&conn).await?;
+    Ok(count)
 }
 
 /// Walk every snapshot for `account_id` from the beginning of time, treating

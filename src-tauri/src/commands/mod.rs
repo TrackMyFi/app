@@ -8,5 +8,6 @@ pub mod fire_profile;
 pub mod import_mappings;
 pub mod paychecks;
 pub mod storage;
+pub mod suppress_rules;
 pub mod transactions;
 pub mod vendor_rules;
