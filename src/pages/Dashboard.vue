@@ -7,12 +7,13 @@ import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
   netWorthOverTime, investmentsOverTime, projectedFiDate, savingsRate, activeFireInputs,
   derivedMonthlyContribution, journeyProgress, portfolioMonthlyEarnings,
-  coastStatus,
+  coastStatus, safeMonthlyWithdrawal, crossoverStatus, buildMilestones,
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
 import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
+import MilestoneLadder, { type MilestoneRow } from '../components/MilestoneLadder.vue'
 import InvestmentsChart from '../components/InvestmentsChart.vue'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
@@ -147,6 +148,56 @@ const retirementYearsAhead = computed(() => {
   return Math.round(retireDate.diff(fiDate.value, 'years').years)
 })
 
+// The portfolio as an employee: what it could sustainably pay out today (4% rule).
+const portfolioPays = computed(() => safeMonthlyWithdrawal(investable.value))
+const portfolioPaysHint = computed(() => {
+  if (!fp.profile || fp.profile.annualExpensesTarget === 0) return 'Sustainable income at a 4% withdrawal rate'
+  return `4% rule · covers ${Math.min(progress.value, 100).toFixed(0)}% of your ${fmt(fp.profile.annualExpensesTarget / 12)}/mo expenses`
+})
+
+// Crossover point: when compounding out-earns the monthly contribution.
+const crossover = computed(() => fp.profile
+  ? crossoverStatus(investable.value, contribution.value.monthly, fp.profile.expectedReturnRate)
+  : null)
+const crossoverValue = computed(() => {
+  if (!crossover.value) return '—'
+  if (crossover.value.crossed) return 'Crossed'
+  return crossover.value.date ? crossover.value.date.toFormat('LLL yyyy') : '—'
+})
+const crossoverHint = computed(() => {
+  if (crossover.value?.crossed) return 'Your portfolio now out-earns your monthly contributions'
+  if (crossover.value?.date) return `When your portfolio out-earns your ${fmt(contribution.value.monthly)}/mo contributions`
+  return 'When your portfolio out-earns your contributions'
+})
+
+const yearsAway = (d: DateTime) => {
+  const yrs = Math.round(d.diff(DateTime.now(), 'years').years)
+  return yrs < 1 ? 'under a year' : `${yrs} yr${yrs === 1 ? '' : 's'}`
+}
+
+const milestones = computed<MilestoneRow[]>(() => {
+  if (!fp.profile) return []
+  const ladder = buildMilestones({
+    investable: investable.value,
+    monthlyContribution: contribution.value.monthly,
+    expectedReturnRate: fp.profile.expectedReturnRate,
+    inflationRate: fp.profile.inflationRate,
+    annualExpensesTarget: fp.profile.annualExpensesTarget,
+    leanFireAnnualExpenses: fp.profile.leanFireAnnualExpenses,
+    fatFireAnnualExpenses: fp.profile.fatFireAnnualExpenses,
+    coastNumber: coast.value?.coastNumber ?? null,
+  })
+  const nextKey = ladder.find(m => !m.achieved)?.key
+  return ladder.map(m => ({
+    key: m.key,
+    label: m.label,
+    targetLabel: fmt(m.target),
+    achieved: m.achieved,
+    next: m.key === nextKey,
+    dateLabel: m.projectedDate ? `${m.projectedDate.toFormat('LLL yyyy')} · ${yearsAway(m.projectedDate)}` : null,
+  }))
+})
+
 const coastHint = computed(() => {
   if (!coast.value) return 'Add your date of birth in Settings'
   if (coast.value.coasting) return 'Portfolio compounds to your goal without contributions'
@@ -247,17 +298,41 @@ const coastHint = computed(() => {
             />
           </div>
         </div>
+
+        <!-- Row C: What your money does for you — income today, independence from saving -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="tmfi-rise" :style="{ animationDelay: '370ms' }">
+            <StatCard
+              label="Portfolio Pays / Mo"
+              :value="fmt(portfolioPays * reveal)"
+              :hint="portfolioPaysHint"
+            />
+          </div>
+          <div class="tmfi-rise" :style="{ animationDelay: '425ms' }">
+            <StatCard
+              label="Crossover Point"
+              :value="crossoverValue"
+              :color="crossover?.crossed ? 'success' : 'default'"
+              :hint="crossoverHint"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- The waypoints between here and FI -->
+      <div v-if="milestones.length > 0" class="tmfi-rise" :style="{ animationDelay: '480ms' }">
+        <MilestoneLadder :milestones="milestones" />
       </div>
     </template>
 
     <!-- Net worth chart -->
-    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '370ms' }">
+    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '535ms' }">
       <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
       <NetWorthChart :points="series" :show-liquid-series="hasLiquidAccounts" />
     </div>
 
     <!-- Investments chart -->
-    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '425ms' }">
+    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '590ms' }">
       <h2 class="font-semibold mb-4">Investments Over Time</h2>
       <InvestmentsChart :points="investmentSeries.points" :accounts="investmentAccounts" />
     </div>
