@@ -27,6 +27,8 @@ export interface PeriodStatsFilter {
   groupBy: 'month' | 'year'
   /** Current period to exclude so a period isn't compared against itself. */
   excludePeriod: string
+  /** Attribute month-end paychecks to the month they fund (see lib/transactions/attribution.ts). */
+  attributePaycheckToNextMonth?: boolean
 }
 
 export interface NewTransaction {

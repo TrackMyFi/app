@@ -75,10 +75,19 @@ const segments = computed(() =>
 // covers everything, inset when the period overran it).
 const incomeLinePct = computed(() => (totals.value.income / barScale.value) * 100)
 
-// Share of income the period consumed — drives the caption verdict.
-const usedPct = computed(() =>
-  hasIncome.value ? (totals.value.outgo / totals.value.income) * 100 : 0
+// The caption verdict separates spending from saving: a deficit driven by
+// aggressive contributions is a drawdown of reserves — money kept, not lost —
+// while consumption alone exceeding income is true overspending. Only the
+// latter earns the error voice.
+const savingsOut = computed(() => totals.value.byCategory.get('savings') ?? 0)
+const spending = computed(() => totals.value.outgo - savingsOut.value)
+const spendPct = computed(() =>
+  hasIncome.value ? (spending.value / totals.value.income) * 100 : 0
 )
+const savePct = computed(() =>
+  hasIncome.value ? (savingsOut.value / totals.value.income) * 100 : 0
+)
+const isTrueOverspend = computed(() => hasIncome.value && spending.value > totals.value.income)
 
 // Unspent track trailing the segments in a surplus month, shrinking as the
 // reveal fills the bar. Zero in a deficit, where segments fill the whole track.
@@ -115,10 +124,12 @@ function pctText(n: number) {
         class="h-full shrink-0 rounded-r-full bg-success/15"
         :style="{ width: surplusWidth + '%' }"
       />
-      <!-- Overspend zone: from the income line to the bar's end -->
+      <!-- Zone past the income line: error voice only for true overspending;
+           a savings-driven drawdown gets the softer warning tint. -->
       <div
         v-if="isDeficit"
-        class="absolute inset-y-0 right-0 bg-error/20 border-l-2 border-error/70"
+        class="absolute inset-y-0 right-0 border-l-2"
+        :class="isTrueOverspend ? 'bg-error/20 border-error/70' : 'bg-warning/15 border-warning/60'"
         :style="{ left: incomeLinePct + '%' }"
       />
     </div>
@@ -126,12 +137,15 @@ function pctText(n: number) {
     <!-- Caption: surplus / deficit verdict for the bar, kept calm — the stat
          strip above already carries the colour judgment. -->
     <p v-if="hasIncome" class="text-xs text-muted tabular-nums">
+      <span :class="isTrueOverspend ? 'text-error' : 'text-success'">{{ pctText(spendPct) }}</span> spent<template
+        v-if="savingsOut > 0"> · <span class="text-info">{{ pctText(savePct) }}</span> saved</template>
       <template v-if="surplus >= 0">
-        <span class="text-success">{{ pctText(usedPct) }}</span> of income used
         · <span class="text-heading font-medium">{{ money(surplus * reveal) }}</span> left to spare
       </template>
+      <template v-else-if="!isTrueOverspend">
+        · <span class="text-heading font-medium">{{ money(-surplus * reveal) }}</span> drawn from reserves
+      </template>
       <template v-else>
-        <span class="text-error">{{ pctText(usedPct) }}</span> of income used
         · <span class="text-heading font-medium">{{ money(-surplus * reveal) }}</span> beyond income
       </template>
     </p>

@@ -10,6 +10,8 @@ import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '.
 import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
 import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
 import { useReveal } from '../composables/useReveal'
+import { useMonthEndPaycheckAttribution } from '../composables/useMonthEndPaycheckAttribution'
+import { attributeToFundedMonth, MONTH_END_WINDOW_DAYS } from '../lib/transactions/attribution'
 import * as api from '../lib/api/transactions'
 import TransactionForm from '../components/TransactionForm.vue'
 import ImportWizard from '../components/ImportWizard.vue'
@@ -179,12 +181,16 @@ async function applyFilters() {
 }
 
 async function loadYearData() {
+  // The fetch reaches back into the prior December's month-end window so a
+  // shifted year-end paycheck can be attributed into January. When the
+  // attribution preference is off, attributedYear's date filter drops the
+  // extra rows again.
   const result = await api.listTransactions({
     accountIds: accountIds.value,
     types: types.value,
     categories: categories.value,
     searchTerms: searchTerms.value,
-    startDate: selectedDate.value.startOf('year').toISODate()!,
+    startDate: selectedDate.value.startOf('year').minus({ days: MONTH_END_WINDOW_DAYS }).toISODate()!,
     endDate: selectedDate.value.endOf('year').toISODate()!,
     limit: null,
   })
@@ -214,11 +220,13 @@ async function loadPeriodStats() {
       ...secondary,
       groupBy: 'month',
       excludePeriod: selectedDate.value.toFormat('yyyy-MM'),
+      attributePaycheckToNextMonth: attributePaychecks.value,
     }),
     api.periodStats({
       ...secondary,
       groupBy: 'year',
       excludePeriod: selectedDate.value.toFormat('yyyy'),
+      attributePaycheckToNextMonth: attributePaychecks.value,
     }),
   ])
   monthlyPeriodStats.value = monthly
@@ -243,17 +251,30 @@ onUnmounted(() => observer.disconnect())
 
 // ─── Totals ────────────────────────────────────────────────────────────────────
 
-// When scope !== 'month', derive monthly transactions from the full year data
-// (already loaded) so there's no extra IPC call.
+// Analytics run on attribution-adjusted data: with the paycheck-funded-month
+// preference on, month-end paycheck rows are re-dated to the month they fund.
+// The date filter also drops the prior-December window rows loadYearData
+// over-fetches (and, when shifting, this year's shifted-out December tail).
+const { enabled: attributePaychecks } = useMonthEndPaycheckAttribution()
+
+const attributedYear = computed(() => {
+  const start = selectedDate.value.startOf('year').toISODate()!
+  const end = selectedDate.value.endOf('year').toISODate()!
+  return attributeToFundedMonth(yearTransactions.value, attributePaychecks.value)
+    .filter((t) => t.date >= start && t.date <= end)
+})
+
+// Monthly analytics always derive from the year data rather than the table's
+// store page — the page is paginated, and attribution needs the neighbouring
+// months' rows anyway.
 const monthlyTransactions = computed(() => {
-  if (scope.value === 'month') return store.page.rows
   const start = monthStart.value
   const end = monthEnd.value
-  return yearTransactions.value.filter((t) => t.date >= start && t.date <= end)
+  return attributedYear.value.filter((t) => t.date >= start && t.date <= end)
 })
 
 const monthlyTotals = computed(() => cashFlowTotals(monthlyTransactions.value, accountsStore.accounts))
-const annualTotals = computed(() => cashFlowTotals(yearTransactions.value, accountsStore.accounts))
+const annualTotals = computed(() => cashFlowTotals(attributedYear.value, accountsStore.accounts))
 
 // The savings rate is the number a FIRE check-in is really about. Crossing 50%
 // — the canonical "halfway to your time" rate — is a genuine milestone, so a
@@ -296,7 +317,7 @@ const activeRate = computed(() => {
 
 const activeTransactionCount = computed(() => {
   if (scope.value === 'month') return monthlyTransactions.value.length
-  if (scope.value === 'year') return yearTransactions.value.length
+  if (scope.value === 'year') return attributedYear.value.length
   return 0
 })
 
@@ -329,16 +350,22 @@ const rateTrendPct = computed(() => {
 
 // ─── Chart data (scope-aware, never paginated) ────────────────────────────────
 
+// All-time analytics get the same attribution treatment; no boundary trimming
+// needed since every shifted row still lands inside "all time".
+const attributedAllTime = computed(() =>
+  attributeToFundedMonth(allTimeTransactions.value, attributePaychecks.value)
+)
+
 // Expense breakdown uses scope-appropriate full data set.
 const breakdownTransactions = computed(() => {
   if (scope.value === 'month') return monthlyTransactions.value
-  if (scope.value === 'year') return yearTransactions.value
-  return allTimeTransactions.value
+  if (scope.value === 'year') return attributedYear.value
+  return attributedAllTime.value
 })
 
 // Cumulative chart always uses at least the full year; all-time when scope='all'.
 const cumulativeTransactions = computed(() =>
-  scope.value === 'all' ? allTimeTransactions.value : yearTransactions.value
+  scope.value === 'all' ? attributedAllTime.value : attributedYear.value
 )
 
 // ─── Table ─────────────────────────────────────────────────────────────────────

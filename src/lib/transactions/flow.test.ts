@@ -50,6 +50,22 @@ describe('classifyFlow', () => {
     expect(f).toMatchObject({ outflow: 500, bucket: 'savings', isSavings: true })
   })
 
+  it('counts an income-type contribution (pre-tax deduction / employer match) as both income and savings', () => {
+    const f = classifyFlow(
+      tx({ type: 'income', accountId: 2, isContribution: true, amount: 750, paycheckId: 1 }),
+      accounts,
+    )
+    expect(f).toMatchObject({ inflow: 750, outflow: 750, bucket: 'savings', isSavings: true })
+  })
+
+  it('does not count an income-type contribution withdrawal as income', () => {
+    const f = classifyFlow(
+      tx({ type: 'income', accountId: 2, isContribution: true, isWithdrawal: true, amount: 300 }),
+      accounts,
+    )
+    expect(f).toMatchObject({ inflow: 0, outflow: -300, bucket: 'savings', isSavings: true })
+  })
+
   it('treats a withdrawal as negative savings (dis-saving)', () => {
     const f = classifyFlow(
       tx({ type: 'transfer', accountId: 2, transferAccountId: 1, isContribution: true, isWithdrawal: true, amount: 400 }),
@@ -104,6 +120,15 @@ describe('cashFlowTotals', () => {
       tx({ type: 'transfer', accountId: 1, transferAccountId: 2, isContribution: true, amount: 500 }),
     ]
     expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1000, expense: 300, savings: 500, net: 700 })
+  })
+
+  it('adds pre-tax contributions to both income and savings so the books balance', () => {
+    const txns = [
+      tx({ type: 'income', amount: 1000 }), // net paycheck deposit
+      tx({ type: 'income', accountId: 2, isContribution: true, amount: 400, paycheckId: 1 }), // pre-tax 401k
+      tx({ type: 'expense', category: 'fixed', amount: 200 }),
+    ]
+    expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1400, expense: 200, savings: 400, net: 1200 })
   })
 
   it('nets a withdrawal out of the savings total', () => {

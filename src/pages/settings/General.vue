@@ -2,10 +2,12 @@
 import { ref, computed } from 'vue'
 import { DateTime } from 'luxon'
 import { useUpdaterStore, CHECK_INTERVAL_MS } from '../../stores/updater'
+import { useMonthEndPaycheckAttribution } from '../../composables/useMonthEndPaycheckAttribution'
 import DeleteDataModal from '../../components/DeleteDataModal.vue'
 import SettingsNav from '../../components/SettingsNav.vue'
 
 const updater = useUpdaterStore()
+const paycheckAttribution = useMonthEndPaycheckAttribution()
 const upToDate = ref(false)
 
 const lastCheckedText = computed(() => {
@@ -68,6 +70,28 @@ const showDeleteModal = ref(false)
           <div class="flex gap-6 text-xs text-muted pt-1">
             <span>Last checked: {{ lastCheckedText }}</span>
             <span>Next automatic check: {{ nextCheckText }}</span>
+          </div>
+        </div>
+      </section>
+
+      <hr class="border-default" />
+
+      <section class="space-y-3">
+        <h2 class="text-xl font-bold">Cash Flow</h2>
+        <div class="border border-default rounded-lg p-4">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="text-sm font-medium">Count month-end paychecks toward the next month</p>
+              <p class="text-sm text-muted">
+                A paycheck landing in the last few days of a month usually funds the following
+                month's first half. This attributes it (and its pre-tax contributions) to the month
+                it funds in cash-flow analytics — transaction dates and balances stay untouched.
+              </p>
+            </div>
+            <USwitch
+              :model-value="paycheckAttribution.enabled.value"
+              @update:model-value="paycheckAttribution.set($event)"
+            />
           </div>
         </div>
       </section>

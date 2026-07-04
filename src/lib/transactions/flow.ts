@@ -81,9 +81,15 @@ export function classifyFlow(t: Transaction, accounts: AccountLookup): Transacti
   // Contributions always count as savings, whatever their underlying type. A
   // withdrawal is dis-saving — it nets the savings bucket down via a negative
   // outflow, so savings rate reflects money pulled back out of investments.
+  //
+  // An income-type contribution is money that arrived in the account without
+  // passing through spendable cash — a pre-tax paycheck deduction (401k, HSA)
+  // or employer match. It's counted as income AND savings, otherwise the
+  // breakdown would show gross-funded savings consuming net income.
   if (t.isContribution) {
     const outflow = t.isWithdrawal ? -t.amount : t.amount
-    return { direction, isTransfer, inflow: 0, outflow, bucket: 'savings', isSavings: true }
+    const inflow = t.type === 'income' && !t.isWithdrawal ? t.amount : 0
+    return { direction, isTransfer, inflow, outflow, bucket: 'savings', isSavings: true }
   }
 
   if (t.type === 'income') {

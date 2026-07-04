@@ -112,6 +112,10 @@ pub struct PeriodStatsFilter {
     pub group_by: String,
     /// The current period key to exclude so a period isn't compared against itself.
     pub exclude_period: String,
+    /// Attribute month-end paychecks to the month they fund — mirrors
+    /// attributeToFundedMonth() in src/lib/transactions/attribution.ts.
+    #[serde(default)]
+    pub attribute_paycheck_to_next_month: bool,
 }
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
@@ -954,6 +958,40 @@ pub async fn bulk_create_transactions_with_snapshots(
     Ok(rows.len() as i64)
 }
 
+/// Days at the end of a month treated as "month-end" for paycheck attribution.
+/// Mirrors MONTH_END_WINDOW_DAYS in src/lib/transactions/attribution.ts.
+const MONTH_END_WINDOW_DAYS: u32 = 4;
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+    }
+}
+
+/// Period key ("YYYY-MM" or "YYYY" per `group_by`) of the month FOLLOWING an
+/// ISO date, if the date falls in its month's month-end window; None otherwise.
+fn funded_period(date: &str, group_by: &str) -> Option<String> {
+    let year: i32 = date.get(0..4)?.parse().ok()?;
+    let month: u32 = date.get(5..7)?.parse().ok()?;
+    let day: u32 = date.get(8..10)?.parse().ok()?;
+    if !(1..=12).contains(&month) || day <= days_in_month(year, month).saturating_sub(MONTH_END_WINDOW_DAYS) {
+        return None;
+    }
+    let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    Some(match group_by {
+        "year" => format!("{ny:04}"),
+        _ => format!("{ny:04}-{nm:02}"),
+    })
+}
+
 /// Return per-period (month or year) aggregated cash-flow stats across all time,
 /// applying the same secondary filters used by the main transactions view.
 /// Grouping, classification, and the per-period aggregation all happen in Rust so
@@ -984,7 +1022,8 @@ pub async fn period_stats(
 
     let sql = format!(
         "SELECT t.type, t.amount, t.category, t.is_contribution, t.is_withdrawal, \
-         a1.type, a2.type, strftime('{period_fmt}', t.date), a2.count_payments_as_expense \
+         a1.type, a2.type, strftime('{period_fmt}', t.date), a2.count_payments_as_expense, \
+         t.paycheck_id, t.date \
          FROM txn t \
          LEFT JOIN account a1 ON a1.id = t.account_id \
          LEFT JOIN account a2 ON a2.id = t.transfer_account_id \
@@ -1006,8 +1045,17 @@ pub async fn period_stats(
         let category: Option<String> = row.get(2).map_err(|e| e.to_string())?;
         let is_contribution: bool = row.get::<i64>(3).map_err(|e| e.to_string())? != 0;
         let is_withdrawal: bool = row.get::<i64>(4).map_err(|e| e.to_string())? != 0;
-        let period: String = row.get(7).map_err(|e| e.to_string())?;
+        let mut period: String = row.get(7).map_err(|e| e.to_string())?;
         let dest_counts_as_expense: Option<i64> = row.get(8).map_err(|e| e.to_string())?;
+        let paycheck_id: Option<i64> = row.get(9).map_err(|e| e.to_string())?;
+        let date: String = row.get(10).map_err(|e| e.to_string())?;
+
+        // Month-end paycheck rows attribute to the month they fund.
+        if f.attribute_paycheck_to_next_month && paycheck_id.is_some() {
+            if let Some(shifted) = funded_period(&date, &f.group_by) {
+                period = shifted;
+            }
+        }
 
         // Skip the current period so it's never compared against itself.
         if period == f.exclude_period {
@@ -1028,6 +1076,12 @@ pub async fn period_stats(
         // Classification mirrors classifyFlow() in src/lib/transactions/flow.ts.
         if is_contribution {
             s.savings += if is_withdrawal { -amount } else { amount };
+            // Income-type contributions (pre-tax paycheck deductions, employer
+            // match) never passed through net pay — count them as income too so
+            // savings funded from gross don't read as consuming net income.
+            if tx_type == "income" && !is_withdrawal {
+                s.income += amount;
+            }
         } else if tx_type == "income" {
             s.income += amount;
         } else if tx_type == "expense" {
@@ -1532,6 +1586,129 @@ mod tests {
         assert_eq!(sums.len(), 2);
         assert_eq!(sums[0].4, Some(100.0)); // 2024-01-15: 0 + 100
         assert_eq!(sums[1].4, Some(600.0)); // 2024-03-01: rippled forward, 100 + 500
+    }
+
+    async fn insert_raw_txn(
+        conn: &Connection,
+        account_id: i32,
+        ty: &str,
+        amount: f64,
+        date: &str,
+        is_contribution: bool,
+        is_withdrawal: bool,
+    ) {
+        insert_paycheck_txn(conn, account_id, ty, amount, date, is_contribution, is_withdrawal, None).await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_paycheck_txn(
+        conn: &Connection,
+        account_id: i32,
+        ty: &str,
+        amount: f64,
+        date: &str,
+        is_contribution: bool,
+        is_withdrawal: bool,
+        paycheck_id: Option<i32>,
+    ) {
+        conn.execute(
+            "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, \
+             type, category, is_contribution, is_withdrawal, import_source, paycheck_id, created_at, updated_at) \
+             VALUES (?1, NULL, ?2, '', ?3, ?4, 'savings', ?5, ?6, 'test', ?7, ?3, ?3)",
+            params![account_id, amount, date, ty, i32::from(is_contribution), i32::from(is_withdrawal), paycheck_id],
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn insert_paycheck(conn: &Connection, pay_date: &str) -> i32 {
+        conn.execute(
+            "INSERT INTO paycheck (pay_date, employer, pay_period, gross_amount, net_amount, created_at, updated_at) \
+             VALUES (?1, 'Test Co', 'semimonthly', 0, 0, ?1, ?1)",
+            params![pay_date],
+        )
+        .await
+        .unwrap();
+        conn.last_insert_rowid() as i32
+    }
+
+    fn stats_filter(group_by: &str, exclude_period: &str, attribute: bool) -> PeriodStatsFilter {
+        PeriodStatsFilter {
+            account_ids: vec![],
+            types: vec![],
+            categories: vec![],
+            search_terms: vec![],
+            group_by: group_by.to_string(),
+            exclude_period: exclude_period.to_string(),
+            attribute_paycheck_to_next_month: attribute,
+        }
+    }
+
+    #[tokio::test]
+    async fn period_stats_counts_income_contributions_as_income_and_savings() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let brokerage = insert_account(&conn, "401k", "brokerage").await;
+
+        // Net paycheck deposit + plain expense.
+        insert_raw_txn(&conn, checking, "income", 1000.0, "2024-01-15", false, false).await;
+        insert_raw_txn(&conn, checking, "expense", 200.0, "2024-01-20", false, false).await;
+        // Pre-tax 401k deduction: income-type contribution — counts as income AND savings.
+        insert_raw_txn(&conn, brokerage, "income", 400.0, "2024-01-15", true, false).await;
+        // Post-tax contribution funded from checking: savings only, not income.
+        insert_raw_txn(&conn, checking, "expense", 100.0, "2024-01-25", true, false).await;
+        // Income-type contribution withdrawal: dis-saving, never income.
+        insert_raw_txn(&conn, brokerage, "income", 50.0, "2024-01-28", true, true).await;
+
+        let stats = period_stats(&conn, &stats_filter("month", "2024-02", false)).await.unwrap();
+        assert_eq!(stats.len(), 1);
+        let s = &stats[0];
+        assert_eq!(s.period, "2024-01");
+        assert_eq!(s.income, 1400.0); // 1000 net pay + 400 pre-tax contribution
+        assert_eq!(s.expense, 200.0);
+        assert_eq!(s.savings, 450.0); // 400 + 100 - 50 withdrawal
+        assert_eq!(s.net, 1200.0);
+    }
+
+    #[tokio::test]
+    async fn period_stats_attributes_month_end_paychecks_to_funded_month() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+        let brokerage = insert_account(&conn, "401k", "brokerage").await;
+
+        let p1 = insert_paycheck(&conn, "2024-01-15").await;
+        let p2 = insert_paycheck(&conn, "2024-01-30").await;
+        let p3 = insert_paycheck(&conn, "2024-12-31").await;
+
+        // Mid-month paycheck stays in January.
+        insert_paycheck_txn(&conn, checking, "income", 1000.0, "2024-01-15", false, false, Some(p1)).await;
+        // Month-end paycheck (deposit + pre-tax contribution) funds February.
+        insert_paycheck_txn(&conn, checking, "income", 1000.0, "2024-01-30", false, false, Some(p2)).await;
+        insert_paycheck_txn(&conn, brokerage, "income", 400.0, "2024-01-30", true, false, Some(p2)).await;
+        // Month-end but not paycheck-linked: never shifted.
+        insert_raw_txn(&conn, checking, "expense", 50.0, "2024-01-30", false, false).await;
+        // December month-end paycheck rolls into the next year.
+        insert_paycheck_txn(&conn, checking, "income", 1000.0, "2024-12-31", false, false, Some(p3)).await;
+
+        let stats = period_stats(&conn, &stats_filter("month", "none", true)).await.unwrap();
+        let by_period: BTreeMap<_, _> = stats.into_iter().map(|s| (s.period.clone(), s)).collect();
+        assert_eq!(by_period["2024-01"].income, 1000.0);
+        assert_eq!(by_period["2024-01"].expense, 50.0);
+        assert_eq!(by_period["2024-02"].income, 1400.0); // shifted deposit + pre-tax contribution
+        assert_eq!(by_period["2024-02"].savings, 400.0);
+        assert_eq!(by_period["2025-01"].income, 1000.0);
+
+        // Year grouping rolls the December paycheck into the next year too.
+        let annual = period_stats(&conn, &stats_filter("year", "none", true)).await.unwrap();
+        let by_year: BTreeMap<_, _> = annual.into_iter().map(|s| (s.period.clone(), s)).collect();
+        assert_eq!(by_year["2024"].income, 2400.0); // Dec 31 paycheck shifted out to 2025
+        assert_eq!(by_year["2025"].income, 1000.0);
+
+        // Flag off: everything stays on its calendar date.
+        let raw = period_stats(&conn, &stats_filter("month", "none", false)).await.unwrap();
+        let by_period: BTreeMap<_, _> = raw.into_iter().map(|s| (s.period.clone(), s)).collect();
+        assert_eq!(by_period["2024-01"].income, 2400.0);
+        assert!(!by_period.contains_key("2024-02"));
     }
 
     #[tokio::test]
