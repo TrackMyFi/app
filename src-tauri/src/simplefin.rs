@@ -232,6 +232,21 @@ pub struct SimpleFinSyncSummary {
     pub bridge_errors: Vec<String>,
 }
 
+/// Payload of the `simplefin-syncing` event: `syncing: true` when a sync
+/// starts, `syncing: false` plus the outcome when it finishes — lets the
+/// frontend surface progress/result notifications even for background syncs.
+#[derive(Serialize, Clone, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct SimpleFinSyncingEvent {
+    pub syncing: bool,
+    pub error: Option<String>,
+    #[ts(type = "number")]
+    pub transactions_added: i64,
+    #[ts(type = "number")]
+    pub snapshots_added: i64,
+}
+
 /// One candidate duplicate pair for the post-import review: a SimpleFIN-imported
 /// transaction and a non-SimpleFIN one (manual/CSV/paycheck) on the same account
 /// that look like the same real-world event.
@@ -887,6 +902,12 @@ pub(crate) async fn duplicate_candidates(
 // ---- sync orchestration ----
 
 /// The single funnel all SimpleFIN sync triggers call.
+///
+/// Every phase that touches the database runs under the global `DbGate`, so an
+/// import can never overlap a Turso `db.sync()` rewriting the replica file
+/// (which surfaced as "SQLite failure: `file is not a database`"). The network
+/// fetch deliberately happens OUTSIDE the gate — a slow bank response must not
+/// block cloud sync.
 pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
     let shared = app.state::<SimpleFinShared>();
     let _guard = shared.lock.lock().await; // serialize scheduler vs. manual click
@@ -895,19 +916,35 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         .ok_or_else(|| "SimpleFIN is not connected on this device.".to_string())?;
     let db = app.state::<Db>();
     let conn = db.conn().await?;
+    let gate = app.state::<crate::sync::DbGate>();
 
-    let state = read_state(&conn).await?;
-    set_state(&conn, "last_attempt_at", Some(&now_iso())).await?;
+    let _ = app.emit(
+        "simplefin-syncing",
+        SimpleFinSyncingEvent { syncing: true, error: None, transactions_added: 0, snapshots_added: 0 },
+    );
 
-    // Transaction window: always overlap back past the last SUCCESS, so a
-    // connection that was broken for days or weeks backfills the whole gap.
-    let start_ts = match state.last_success_at.as_deref().and_then(parse_iso) {
-        Some(t) => t.timestamp() - OVERLAP_DAYS * 86_400,
-        None => Utc::now().timestamp() - FIRST_SYNC_LOOKBACK_DAYS * 86_400,
-    };
-
+    // Everything fallible runs inside this block so the finish event below is
+    // emitted on every path — a leaked `?` here would strand the frontend's
+    // "syncing…" notification.
     let result: Result<SimpleFinSyncSummary, String> = async {
+        let state = {
+            let _db_guard = gate.lock.lock().await;
+            let state = read_state(&conn).await?;
+            set_state(&conn, "last_attempt_at", Some(&now_iso())).await?;
+            state
+        };
+
+        // Transaction window: always overlap back past the last SUCCESS, so a
+        // connection that was broken for days or weeks backfills the whole gap.
+        let start_ts = match state.last_success_at.as_deref().and_then(parse_iso) {
+            Some(t) => t.timestamp() - OVERLAP_DAYS * 86_400,
+            None => Utc::now().timestamp() - FIRST_SYNC_LOOKBACK_DAYS * 86_400,
+        };
+
+        // Network fetch — no DB access, no gate.
         let set = fetch_accounts(&access_url, Some(start_ts)).await?;
+
+        let _db_guard = gate.lock.lock().await;
         let (summary, cache) = import_account_set(&conn, &set).await?;
         let accounts_json = serde_json::to_string(&cache).map_err(|e| e.to_string())?;
         let bridge_json = serde_json::to_string(&set.errors).map_err(|e| e.to_string())?;
@@ -920,13 +957,23 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
     .await;
 
     if let Err(e) = &result {
-        set_state(&conn, "last_error", Some(e)).await?;
+        let _db_guard = gate.lock.lock().await;
+        let _ = set_state(&conn, "last_error", Some(e)).await;
     }
 
     // Tell the frontend. Data pages remount only when something changed.
     if let Ok(status) = build_status(&conn).await {
         let _ = app.emit("simplefin-status", status);
     }
+    let _ = app.emit(
+        "simplefin-syncing",
+        SimpleFinSyncingEvent {
+            syncing: false,
+            error: result.as_ref().err().cloned(),
+            transactions_added: result.as_ref().map(|s| s.transactions_added).unwrap_or(0),
+            snapshots_added: result.as_ref().map(|s| s.snapshots_added).unwrap_or(0),
+        },
+    );
     if let Ok(s) = &result {
         if s.transactions_added > 0 || s.snapshots_added > 0 {
             let _ = app.emit("data-refreshed", ());

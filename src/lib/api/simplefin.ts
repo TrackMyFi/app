@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { SimpleFinDuplicateCandidate } from '../types/SimpleFinDuplicateCandidate'
 import type { SimpleFinStatus } from '../types/SimpleFinStatus'
 import type { SimpleFinSyncSummary } from '../types/SimpleFinSyncSummary'
+import type { SimpleFinSyncingEvent } from '../types/SimpleFinSyncingEvent'
 
 export const getSimpleFinStatus = () => invoke<SimpleFinStatus>('simplefin_get_status')
 
@@ -24,3 +25,7 @@ export const disconnectSimpleFin = () => invoke<void>('simplefin_disconnect')
 
 export const onSimpleFinStatus = (cb: (s: SimpleFinStatus) => void): Promise<UnlistenFn> =>
   listen<SimpleFinStatus>('simplefin-status', (e) => cb(e.payload))
+
+/** Fires when a SimpleFIN sync starts (`syncing: true`) and finishes (`syncing: false` + outcome). */
+export const onSimpleFinSyncing = (cb: (e: SimpleFinSyncingEvent) => void): Promise<UnlistenFn> =>
+  listen<SimpleFinSyncingEvent>('simplefin-syncing', (e) => cb(e.payload))

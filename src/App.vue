@@ -8,12 +8,16 @@ import { useFireProfileStore } from './stores/fireProfile'
 import { useUpdaterStore } from './stores/updater'
 import UpdateNotifier from './components/UpdateNotifier.vue'
 import AccountsNavPanel from './components/AccountsNavPanel.vue'
+import { useSyncNotifications } from './composables/useSyncNotifications'
 
 const router = useRouter()
 const route = useRoute()
 const syncStore = useSyncStore()
 const fireProfileStore = useFireProfileStore()
 const updaterStore = useUpdaterStore()
+
+// Toasts announcing background cloud/bank syncs while they run.
+useSyncNotifications()
 
 // Bumped when the backend's background sync catch-up finishes pulling the cloud.
 // Keying the active route component on this remounts it, re-running its onMounted

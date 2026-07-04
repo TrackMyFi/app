@@ -67,7 +67,13 @@ pub struct Db {
     /// through one connection makes a page's concurrent reads queue onto one
     /// reader instead — leaving the clean WAL model of one reader + the sync
     /// writer, which the busy timeout absorbs.
-    conn: Connection,
+    ///
+    /// Behind a mutex because a Turso `sync()` can REPLACE the replica file
+    /// (snapshot re-bootstrap on a generation change); the connection opened at
+    /// launch would keep pointing at the dead file and every query app-wide
+    /// would fail with SQLITE_NOTADB until restart. `refresh_conn` swaps in a
+    /// freshly-opened connection after each sync.
+    conn: std::sync::Mutex<Connection>,
 }
 
 impl Db {
@@ -87,7 +93,17 @@ impl Db {
     }
 
     pub async fn conn(&self) -> Result<Connection, String> {
-        Ok(self.conn.clone())
+        Ok(self.conn.lock().unwrap().clone())
+    }
+
+    /// Reopen the shared connection against the current on-disk file. Called
+    /// after every Turso sync — see the `conn` field docs. In-flight commands
+    /// holding the old clone finish (or fail) on it; every later `conn()` call
+    /// gets the fresh one.
+    pub fn refresh_conn(&self) -> Result<(), String> {
+        let fresh = Self::open_conn(&self.db)?;
+        *self.conn.lock().unwrap() = fresh;
+        Ok(())
     }
 
     /// A dedicated connection, isolated from the shared one. Use only for a
@@ -168,7 +184,7 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
     if mode == DbMode::Local {
         crate::migrations::run(&conn).await?;
     }
-    Ok(Db { db, mode, conn })
+    Ok(Db { db, mode, conn: std::sync::Mutex::new(conn) })
 }
 
 #[cfg(test)]

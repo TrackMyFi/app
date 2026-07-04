@@ -351,10 +351,26 @@ impl SyncStatus {
     }
 }
 
-/// Managed state: current status snapshot + a lock serializing concurrent syncs.
+/// Managed state: current status snapshot.
 pub struct SyncShared {
     pub status: StdMutex<SyncStatus>,
+}
+
+/// Global gate serializing every job that touches the database file alongside
+/// libSQL's replica machinery: Turso `db.sync()` (timer, manual, startup
+/// catch-up + migrations) and SimpleFIN imports. A `db.sync()` can rewrite the
+/// replica file underneath the shared connection (a generation change triggers
+/// a full snapshot re-bootstrap), so a concurrent writer sees a half-swapped
+/// file and fails with SQLITE_NOTADB ("file is not a database"). Everything
+/// queues on this one lock instead of overlapping.
+pub struct DbGate {
     pub lock: AsyncMutex<()>,
+}
+
+impl DbGate {
+    pub fn new() -> Self {
+        Self { lock: AsyncMutex::new(()) }
+    }
 }
 
 /// Rendezvous that guarantees the post-catch-up `data-refreshed` event is emitted
@@ -432,8 +448,15 @@ pub async fn do_sync(app: &AppHandle) -> Result<(), String> {
     if !db.is_synced() {
         return Ok(());
     }
+    let gate = app.state::<DbGate>();
+    let _guard = gate.lock.lock().await; // serialize vs. other syncs (Turso + SimpleFIN)
+    do_sync_locked(app).await
+}
+
+/// Body of `do_sync`; caller must hold the `DbGate` lock.
+async fn do_sync_locked(app: &AppHandle) -> Result<(), String> {
+    let db = app.state::<crate::db::Db>();
     let shared = app.state::<SyncShared>();
-    let _guard = shared.lock.lock().await; // serialize timer vs. manual click
     {
         let mut s = shared.status.lock().unwrap();
         s.status = "syncing".into();
@@ -441,6 +464,14 @@ pub async fn do_sync(app: &AppHandle) -> Result<(), String> {
     emit_status(app);
 
     let result = db.db.sync().await;
+
+    // The sync may have replaced the replica file (snapshot re-bootstrap), which
+    // strands the shared connection on the dead file — every query app-wide then
+    // fails with SQLITE_NOTADB until restart. Reopen it unconditionally (even
+    // after a failed sync, which can still have swapped the file mid-way).
+    if let Err(e) = db.refresh_conn() {
+        eprintln!("warning: could not refresh db connection after sync: {e}");
+    }
 
     {
         let mut s = shared.status.lock().unwrap();
@@ -478,7 +509,11 @@ pub async fn initial_catch_up(app: &AppHandle) -> Result<(), String> {
     if !db.is_synced() {
         return Ok(());
     }
-    let pull = do_sync(app).await;
+    // Hold the gate across pull + migrations so the SimpleFIN scheduler's
+    // immediate startup tick can't import into a mid-migration database.
+    let gate = app.state::<DbGate>();
+    let _guard = gate.lock.lock().await;
+    let pull = do_sync_locked(app).await;
     let conn = db.conn().await?;
     crate::migrations::run(&conn).await?;
     // Don't emit directly — the frontend listener may not be attached yet. Mark

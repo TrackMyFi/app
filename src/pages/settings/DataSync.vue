@@ -58,6 +58,19 @@ onMounted(() => run(async () => {
 }))
 
 const isSynced = computed(() => syncStore.status?.mode === 'synced')
+// Distinguishes "sync is enabled and idle" from "a sync is running right now" —
+// previously the label read a perpetual "Syncing", with no done state.
+const syncStatusLabel = computed(() => {
+  if (!isSynced.value) return 'Local only'
+  switch (syncStore.status?.status) {
+    case 'syncing':
+      return 'Syncing…'
+    case 'error':
+      return 'Sync error'
+    default:
+      return 'Up to date'
+  }
+})
 const lastSynced = computed(() => {
   const ms = syncStore.status?.lastSyncedAt
   return ms ? new Date(ms).toLocaleString() : 'never'
@@ -224,9 +237,8 @@ async function clearStorageSettings() {
 
         <div class="text-sm">
           Status:
-          <span class="font-medium">{{ isSynced ? 'Syncing' : 'Local only' }}</span>
+          <span class="font-medium">{{ syncStatusLabel }}</span>
           <span v-if="isSynced"> · last synced {{ lastSynced }}</span>
-          <span v-if="syncStore.status?.status === 'syncing'"> · syncing…</span>
           <span v-if="syncStore.status?.lastError" class="text-error">
             · {{ syncStore.status.lastError }}
           </span>

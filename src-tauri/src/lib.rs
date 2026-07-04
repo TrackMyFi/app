@@ -81,10 +81,10 @@ pub fn run() {
             } else {
                 sync::SyncStatus::local()
             };
-            app.manage(sync::SyncShared {
-                status: std::sync::Mutex::new(initial),
-                lock: tokio::sync::Mutex::new(()),
-            });
+            app.manage(sync::SyncShared { status: std::sync::Mutex::new(initial) });
+            // One gate serializing everything that syncs against the DB file:
+            // Turso pulls/pushes and SimpleFIN imports queue instead of overlapping.
+            app.manage(sync::DbGate::new());
             app.manage(sync::RefreshGate::new());
             app.manage(simplefin::SimpleFinShared::new());
 
