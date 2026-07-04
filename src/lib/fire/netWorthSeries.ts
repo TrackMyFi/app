@@ -15,6 +15,32 @@ export interface NetWorthPoint {
 
 const LIQUID_TYPES = new Set(['checking', 'savings', 'brokerage', 'crypto'])
 
+export interface DrawdownStatus {
+  high: number
+  highDate: string
+  /** Fraction below the all-time high; 0 when at it. */
+  drawdown: number
+  atHigh: boolean
+}
+
+/** Where current net worth sits relative to its all-time high. Null without a positive high. */
+export function drawdownStatus(points: NetWorthPoint[]): DrawdownStatus | null {
+  if (points.length === 0) return null
+  let high = -Infinity
+  let highDate = ''
+  for (const p of points) {
+    if (p.netWorth > high) { high = p.netWorth; highDate = p.date }
+  }
+  if (high <= 0) return null
+  const current = points[points.length - 1].netWorth
+  return {
+    high,
+    highDate,
+    drawdown: Math.max(0, (high - current) / high),
+    atHigh: current >= high,
+  }
+}
+
 export function netWorthOverTime(accounts: FireAccount[], balances: FireBalance[]): NetWorthPoint[] {
   if (balances.length === 0) return []
   const typeById = new Map(accounts.map(a => [a.id, a.type]))

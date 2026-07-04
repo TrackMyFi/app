@@ -2,8 +2,11 @@ import type { FireAccount, FireBalance } from './types'
 import { isLiability } from '../accountTypes'
 import { isNewer } from '../balances/recency'
 import { monthsToFire, realMonthlyReturn } from './projection'
+import { SAFE_WITHDRAWAL_RATE } from './withdrawal'
 
-export const fireNumber = (annualExpensesTarget: number) => annualExpensesTarget * 25
+/** Portfolio needed to retire: expenses ÷ withdrawal rate (×25 at the default 4%). */
+export const fireNumber = (annualExpensesTarget: number, withdrawalRate: number = SAFE_WITHDRAWAL_RATE) =>
+  withdrawalRate > 0 ? annualExpensesTarget / withdrawalRate : 0
 
 export function latestBalances(balances: FireBalance[]): Map<number, number> {
   const latest = new Map<number, FireBalance>()

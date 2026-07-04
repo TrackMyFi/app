@@ -65,6 +65,7 @@ const forecastInputs = computed<ForecastInputs | null>(() => {
     inflationRate: effInflation.value,
     investable: investable.value,
     monthlyContribution: effMonthly.value,
+    withdrawalRate: fp.profile.withdrawalRate,
   }
 })
 
@@ -88,6 +89,7 @@ const baselineInputs = computed<ForecastInputs | null>(() => {
     inflationRate: fp.profile.inflationRate,
     investable: investable.value,
     monthlyContribution: baseline.value.monthly,
+    withdrawalRate: fp.profile.withdrawalRate,
   }
 })
 const baselineRegular = computed(() =>
@@ -289,7 +291,7 @@ const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.
                 <span class="underline decoration-dotted underline-offset-2">Investable</span>
               </span>
             </UTooltip>
-            <UTooltip text="25× this variant's annual expenses target (the 4% rule) — the portfolio value needed to retire.">
+            <UTooltip text="This variant's annual expenses target ÷ your withdrawal rate — the portfolio value needed to retire.">
               <span class="cursor-help">
                 <span class="inline-block w-3 border-t-2 border-dashed align-middle" style="border-color: var(--ui-text-highlighted)" />
                 <span class="underline decoration-dotted underline-offset-2">FIRE number</span>

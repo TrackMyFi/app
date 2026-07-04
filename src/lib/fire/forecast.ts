@@ -16,6 +16,8 @@ export interface ForecastInputs {
   inflationRate: number
   investable: number
   monthlyContribution: number
+  /** Safe withdrawal rate; defaults to the 4% rule when omitted. */
+  withdrawalRate?: number
 }
 
 export interface VariantForecast {
@@ -40,7 +42,7 @@ export function buildVariantForecast(
   inputs: ForecastInputs, variant: FireVariant, from: DateTime = DateTime.now(),
 ): VariantForecast {
   const expenses = variantExpenses(inputs, variant)
-  const fireNum = fireNumber(expenses)
+  const fireNum = fireNumber(expenses, inputs.withdrawalRate)
   const mr = realMonthlyReturn(inputs.expectedReturnRate, inputs.inflationRate)
   const months = monthsToFire(inputs.investable, inputs.monthlyContribution, mr, fireNum)
   const fiDate = projectedFiDate(

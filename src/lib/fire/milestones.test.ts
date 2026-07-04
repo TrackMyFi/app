@@ -67,6 +67,13 @@ describe('buildMilestones', () => {
     expect(ms.find(m => m.key === 'first100k')).toBeUndefined()
   })
 
+  it('scales every target by a custom withdrawal rate', () => {
+    const ms = buildMilestones({ ...base, withdrawalRate: 0.035, coastNumber: null }, from)
+    expect(ms.find(m => m.key === 'fire')!.target).toBeCloseTo(40_000 / 0.035, 6)
+    expect(ms.find(m => m.key === 'lean')!.target).toBeCloseTo(28_000 / 0.035, 6)
+    expect(ms.find(m => m.key === 'half')!.target).toBeCloseTo(40_000 / 0.035 / 2, 6)
+  })
+
   it('returns an empty ladder without an expenses target', () => {
     expect(buildMilestones({ ...base, annualExpensesTarget: 0 }, from)).toEqual([])
   })

@@ -1,6 +1,7 @@
 /**
- * The 4% rule — the inverse of the ×25 multiplier in `fireNumber`. If either
- * changes, they must change together or FI progress and safe income disagree.
+ * The 4% rule — the default when the profile doesn't override `withdrawalRate`.
+ * `fireNumber` divides by the same rate, so FI progress and safe income agree
+ * for any configured rate.
  */
 export const SAFE_WITHDRAWAL_RATE = 0.04
 

@@ -8,12 +8,14 @@ import {
   netWorthOverTime, investmentsOverTime, projectedFiDate, savingsRate, activeFireInputs,
   derivedMonthlyContribution, journeyProgress, portfolioMonthlyEarnings,
   coastStatus, safeMonthlyWithdrawal, crossoverStatus, buildMilestones,
+  accessibleSplit, bridgeStatus, drawdownStatus, realMonthlyReturn,
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
 import StatCard from '../components/StatCard.vue'
 import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 import MilestoneLadder, { type MilestoneRow } from '../components/MilestoneLadder.vue'
+import BridgeCard from '../components/BridgeCard.vue'
 import InvestmentsChart from '../components/InvestmentsChart.vue'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
@@ -44,7 +46,9 @@ const fmtDelta = (n: number) => {
   return `${n >= 0 ? '+' : '−'}${abs}`
 }
 
-const fireNum = computed(() => fp.profile ? fireNumber(fp.profile.annualExpensesTarget) : 0)
+const swr = computed(() => fp.profile?.withdrawalRate ?? 0.04)
+const swrPct = computed(() => `${+(swr.value * 100).toFixed(2)}%`)
+const fireNum = computed(() => fp.profile ? fireNumber(fp.profile.annualExpensesTarget, swr.value) : 0)
 const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances.value))
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
 const progress = computed(() => fiProgress(investable.value, fireNum.value))
@@ -87,6 +91,19 @@ const portfolioEarnings = computed(() =>
   fp.profile ? portfolioMonthlyEarnings(investable.value, fp.profile.expectedReturnRate) : 0
 )
 
+// The same growth restated in today's purchasing power — the honest number.
+const portfolioEarnsHint = computed(() => {
+  if (!fp.profile || fp.profile.inflationRate <= 0) return 'Nominal monthly growth from compounding alone'
+  const real = investable.value * realMonthlyReturn(fp.profile.expectedReturnRate, fp.profile.inflationRate)
+  return `Nominal · ≈ ${fmt(real)} in today's dollars`
+})
+
+// All-time-high context under the header: quiet when climbing, honest in a dip.
+const drawdown = computed(() => {
+  if (series.value.length < 2) return null
+  return drawdownStatus(series.value)
+})
+
 const coast = computed(() => {
   if (!fp.profile || fp.currentAge === 0) return null
   return coastStatus(
@@ -126,7 +143,8 @@ const investableTrend = computed(() => {
 // Static secondary-info hints for cards that need a second line to equalize row heights.
 const fireNumberHint = computed(() => {
   if (!fp.profile) return undefined
-  return `${fmt(fp.profile.annualExpensesTarget)} annual expenses × 25`
+  const mult = 1 / swr.value
+  return `${fmt(fp.profile.annualExpensesTarget)} annual expenses × ${Number.isInteger(mult) ? mult : mult.toFixed(1)}`
 })
 
 const contributionHint = computed(() => {
@@ -148,11 +166,11 @@ const retirementYearsAhead = computed(() => {
   return Math.round(retireDate.diff(fiDate.value, 'years').years)
 })
 
-// The portfolio as an employee: what it could sustainably pay out today (4% rule).
-const portfolioPays = computed(() => safeMonthlyWithdrawal(investable.value))
+// The portfolio as an employee: what it could sustainably pay out today.
+const portfolioPays = computed(() => safeMonthlyWithdrawal(investable.value, swr.value))
 const portfolioPaysHint = computed(() => {
-  if (!fp.profile || fp.profile.annualExpensesTarget === 0) return 'Sustainable income at a 4% withdrawal rate'
-  return `4% rule · covers ${Math.min(progress.value, 100).toFixed(0)}% of your ${fmt(fp.profile.annualExpensesTarget / 12)}/mo expenses`
+  if (!fp.profile || fp.profile.annualExpensesTarget === 0) return `Sustainable income at a ${swrPct.value} withdrawal rate`
+  return `${swrPct.value} rule · covers ${Math.min(progress.value, 100).toFixed(0)}% of your ${fmt(fp.profile.annualExpensesTarget / 12)}/mo expenses`
 })
 
 // Crossover point: when compounding out-earns the monthly contribution.
@@ -186,6 +204,7 @@ const milestones = computed<MilestoneRow[]>(() => {
     leanFireAnnualExpenses: fp.profile.leanFireAnnualExpenses,
     fatFireAnnualExpenses: fp.profile.fatFireAnnualExpenses,
     coastNumber: coast.value?.coastNumber ?? null,
+    withdrawalRate: swr.value,
   })
   const nextKey = ladder.find(m => !m.achieved)?.key
   return ladder.map(m => ({
@@ -196,6 +215,45 @@ const milestones = computed<MilestoneRow[]>(() => {
     next: m.key === nextKey,
     dateLabel: m.projectedDate ? `${m.projectedDate.toFormat('LLL yyyy')} · ${yearsAway(m.projectedDate)}` : null,
   }))
+})
+
+// Bridge to 59½: an early FI date must be funded from accessible accounts.
+const split = computed(() => accessibleSplit(fireAccounts.value, fireBalances.value))
+const bridgePct = computed(() => {
+  const acc = Math.max(0, split.value.accessible)
+  const total = acc + Math.max(0, split.value.deferred)
+  return total > 0 ? (acc / total) * 100 : 0
+})
+const bridge = computed(() => {
+  if (!fp.profile || fp.currentAge === 0) return null
+  const yearsExact = progress.value >= 100 ? 0
+    : fiDate.value ? fiDate.value.diff(DateTime.now(), 'years').years : null
+  if (yearsExact === null) return null
+  return bridgeStatus(
+    split.value, fp.currentAge, yearsExact, fp.profile.annualExpensesTarget,
+    fp.profile.expectedReturnRate, fp.profile.inflationRate,
+  )
+})
+const BRIDGE_CAVEAT = 'Projected from today\'s accessible balance alone — future contributions to taxable accounts aren\'t counted.'
+const bridgeDisplay = computed<{ text: string; color: 'success' | 'warning' | 'muted'; caveat?: string }>(() => {
+  if (!fp.profile || fp.currentAge === 0) {
+    return { text: 'Add your date of birth in Settings to assess your bridge.', color: 'muted' }
+  }
+  const b = bridge.value
+  if (!b) return { text: 'The bridge is assessed once a projected FI date is available.', color: 'muted' }
+  if (!b.needed) {
+    return { text: `You reach FI at age ${Math.round(b.ageAtFi)} — past 59½, so no bridge is needed.`, color: 'success' }
+  }
+  const yrs = Math.round(b.bridgeYears)
+  const summary = `${fmt(b.bridgeNeeded)} carries you the ${yrs} year${yrs === 1 ? '' : 's'} from FI (age ${Math.round(b.ageAtFi)}) to 59½`
+  if ((b.coverage ?? 0) >= 1) {
+    return { text: `On track: ~${fmt(b.projectedAccessibleAtFi)} accessible at FI. ${summary}.`, color: 'success', caveat: BRIDGE_CAVEAT }
+  }
+  return {
+    text: `Thin bridge: ~${fmt(b.projectedAccessibleAtFi)} accessible at FI covers ${((b.coverage ?? 0) * 100).toFixed(0)}% of it. ${summary}.`,
+    color: 'warning',
+    caveat: BRIDGE_CAVEAT,
+  }
 })
 
 const coastHint = computed(() => {
@@ -224,6 +282,12 @@ const coastHint = computed(() => {
         :class="moMDeltas.netWorth >= 0 ? 'text-success' : 'text-error'"
       >
         {{ fmtDelta(moMDeltas.netWorth) }} this month
+      </p>
+      <p v-if="drawdown && netWorth > 0" class="text-xs mt-0.5" :class="drawdown.atHigh ? 'text-success' : 'text-muted'">
+        <template v-if="drawdown.atHigh">At an all-time high</template>
+        <template v-else>
+          −{{ (drawdown.drawdown * 100).toFixed(1) }}% from the {{ DateTime.fromISO(drawdown.highDate).toFormat('LLL yyyy') }} high of {{ fmt(drawdown.high) }}
+        </template>
       </p>
       <p v-if="!fiDate && netWorth > 0" class="text-sm text-muted mt-1">
         Complete your FIRE profile in <router-link to="/settings/profile" class="text-primary underline">Settings</router-link> to project your FI date.
@@ -294,7 +358,7 @@ const coastHint = computed(() => {
             <StatCard
               label="Portfolio Earns / Mo"
               :value="fmt(portfolioEarnings * reveal)"
-              hint="Nominal monthly growth from compounding alone"
+              :hint="portfolioEarnsHint"
             />
           </div>
         </div>
@@ -323,16 +387,28 @@ const coastHint = computed(() => {
       <div v-if="milestones.length > 0" class="tmfi-rise" :style="{ animationDelay: '480ms' }">
         <MilestoneLadder :milestones="milestones" />
       </div>
+
+      <!-- The pre-59½ funding gap every early retiree has to plan around -->
+      <div class="tmfi-rise" :style="{ animationDelay: '535ms' }">
+        <BridgeCard
+          :accessible-label="fmt(split.accessible)"
+          :deferred-label="fmt(split.deferred)"
+          :accessible-pct="bridgePct"
+          :status-text="bridgeDisplay.text"
+          :status-color="bridgeDisplay.color"
+          :caveat="bridgeDisplay.caveat"
+        />
+      </div>
     </template>
 
     <!-- Net worth chart -->
-    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '535ms' }">
+    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '590ms' }">
       <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
       <NetWorthChart :points="series" :show-liquid-series="hasLiquidAccounts" />
     </div>
 
     <!-- Investments chart -->
-    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '590ms' }">
+    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '645ms' }">
       <h2 class="font-semibold mb-4">Investments Over Time</h2>
       <InvestmentsChart :points="investmentSeries.points" :accounts="investmentAccounts" />
     </div>

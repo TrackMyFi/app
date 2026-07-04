@@ -13,9 +13,16 @@ pub struct FireProfile {
     pub annual_income: f64,
     pub expected_return_rate: f64,
     pub inflation_rate: f64,
+    /// Safe withdrawal rate; 0.04 = the 4% rule (FIRE number = expenses × 25).
+    #[serde(default = "default_withdrawal_rate")]
+    pub withdrawal_rate: f64,
     pub hsa_coverage: String,
     #[serde(default)]
     pub onboarding_completed: bool,
+}
+
+fn default_withdrawal_rate() -> f64 {
+    0.04
 }
 
 #[derive(Serialize, TS, Clone)]

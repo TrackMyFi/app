@@ -104,6 +104,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "suppress_rules",
         sql: include_str!("../migrations/0019_suppress_rules.sql"),
     },
+    Migration {
+        version: 20,
+        name: "withdrawal_rate",
+        sql: include_str!("../migrations/0020_withdrawal_rate.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {

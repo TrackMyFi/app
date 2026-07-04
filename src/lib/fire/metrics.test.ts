@@ -15,7 +15,11 @@ const balances: FireBalance[] = [
 ]
 
 describe('fire metrics', () => {
-  it('fireNumber is 25x expenses', () => { expect(fireNumber(40000)).toBe(1_000_000) })
+  it('fireNumber is 25x expenses at the default 4% rate', () => { expect(fireNumber(40000)).toBe(1_000_000) })
+  it('fireNumber scales with a custom withdrawal rate', () => {
+    expect(fireNumber(40000, 0.035)).toBeCloseTo(40000 / 0.035, 6)
+    expect(fireNumber(40000, 0)).toBe(0) // degenerate rate never divides by zero
+  })
   it('latestBalances picks most recent per account', () => {
     const m = latestBalances(balances)
     expect(m.get(1)).toBe(200); expect(m.get(2)).toBe(50)

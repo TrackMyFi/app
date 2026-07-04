@@ -16,6 +16,7 @@ async fn fire_profile_roundtrip() {
     assert_eq!(p.annual_expenses_target, 40000.0);
     assert_eq!(p.lean_fire_annual_expenses, None);
     assert_eq!(p.hsa_coverage, "self");
+    assert_eq!(p.withdrawal_rate, 0.04); // migration default
 
     // update and read back
     let updated = FireProfile {
@@ -27,6 +28,7 @@ async fn fire_profile_roundtrip() {
         annual_income: 90000.0,
         expected_return_rate: 0.06,
         inflation_rate: 0.025,
+        withdrawal_rate: 0.035,
         hsa_coverage: "family".into(),
         onboarding_completed: false,
     };
@@ -37,6 +39,7 @@ async fn fire_profile_roundtrip() {
     assert_eq!(p2.lean_fire_annual_expenses, Some(35000.0));
     assert_eq!(p2.fat_fire_annual_expenses, None);
     assert_eq!(p2.hsa_coverage, "family");
+    assert_eq!(p2.withdrawal_rate, 0.035);
 }
 
 #[tokio::test]

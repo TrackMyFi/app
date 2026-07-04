@@ -219,7 +219,7 @@ pub async fn delete_data(
                  date_of_birth = NULL, target_retirement_age = 50, annual_expenses_target = 40000, \
                  lean_fire_annual_expenses = NULL, fat_fire_annual_expenses = NULL, \
                  annual_income = 80000, expected_return_rate = 0.07, inflation_rate = 0.03, \
-                 hsa_coverage = 'self', onboarding_completed = 0 WHERE id = 1",
+                 withdrawal_rate = 0.04, hsa_coverage = 'self', onboarding_completed = 0 WHERE id = 1",
                 (),
             )
             .await

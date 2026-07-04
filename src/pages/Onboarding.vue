@@ -96,6 +96,8 @@ async function finish() {
       annualIncome: form.annualIncome ?? 0,
       expectedReturnRate: form.expectedReturnRate ?? 0,
       inflationRate: form.inflationRate ?? 0,
+      // Not asked during onboarding — the 4% rule default; tunable in Settings.
+      withdrawalRate: fireProfileStore.profile?.withdrawalRate ?? 0.04,
       hsaCoverage: form.hsaCoverage,
       onboardingCompleted: false,
     }

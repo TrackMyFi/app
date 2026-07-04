@@ -23,6 +23,8 @@ export interface MilestoneInputs {
   fatFireAnnualExpenses: number | null
   /** From `coastStatus`; null when date of birth is unknown. */
   coastNumber: number | null
+  /** Safe withdrawal rate; defaults to the 4% rule when omitted. */
+  withdrawalRate?: number
 }
 
 /**
@@ -31,7 +33,7 @@ export interface MilestoneInputs {
  * unknown or degenerate) are omitted rather than shown as zero.
  */
 export function buildMilestones(inputs: MilestoneInputs, from: DateTime = DateTime.now()): Milestone[] {
-  const fireNum = fireNumber(inputs.annualExpensesTarget)
+  const fireNum = fireNumber(inputs.annualExpensesTarget, inputs.withdrawalRate)
   if (fireNum <= 0) return []
 
   const candidates: { key: MilestoneKey; label: string; target: number }[] = [
@@ -45,12 +47,12 @@ export function buildMilestones(inputs: MilestoneInputs, from: DateTime = DateTi
     candidates.push({ key: 'coast', label: 'Coast FI', target: inputs.coastNumber })
   }
   const lean = inputs.leanFireAnnualExpenses
-  if (lean !== null && lean > 0 && fireNumber(lean) < fireNum) {
-    candidates.push({ key: 'lean', label: 'Lean FI', target: fireNumber(lean) })
+  if (lean !== null && lean > 0 && fireNumber(lean, inputs.withdrawalRate) < fireNum) {
+    candidates.push({ key: 'lean', label: 'Lean FI', target: fireNumber(lean, inputs.withdrawalRate) })
   }
   const fat = inputs.fatFireAnnualExpenses
-  if (fat !== null && fat > 0 && fireNumber(fat) > fireNum) {
-    candidates.push({ key: 'fat', label: 'Fat FI', target: fireNumber(fat) })
+  if (fat !== null && fat > 0 && fireNumber(fat, inputs.withdrawalRate) > fireNum) {
+    candidates.push({ key: 'fat', label: 'Fat FI', target: fireNumber(fat, inputs.withdrawalRate) })
   }
 
   return candidates

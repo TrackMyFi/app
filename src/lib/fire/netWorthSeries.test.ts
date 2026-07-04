@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { netWorthOverTime } from './netWorthSeries'
+import { netWorthOverTime, drawdownStatus, type NetWorthPoint } from './netWorthSeries'
 import type { FireAccount, FireBalance } from './types'
 
 const accounts: FireAccount[] = [
@@ -58,5 +58,31 @@ describe('netWorthOverTime', () => {
     expect(netWorthOverTime(accs, bals)).toEqual([
       { date: '2026-01-01', netWorth: 200_000, lessEquity: 100_000, liquid: 100_000, illiquid: 100_000 },
     ])
+  })
+})
+
+describe('drawdownStatus', () => {
+  const pt = (date: string, netWorth: number): NetWorthPoint =>
+    ({ date, netWorth, lessEquity: null, liquid: 0, illiquid: netWorth })
+
+  it('reports at-high when the latest point is the peak', () => {
+    const r = drawdownStatus([pt('2026-01-01', 100_000), pt('2026-02-01', 120_000)])!
+    expect(r.atHigh).toBe(true)
+    expect(r.drawdown).toBe(0)
+    expect(r.high).toBe(120_000)
+    expect(r.highDate).toBe('2026-02-01')
+  })
+
+  it('measures the drop from a past peak', () => {
+    const r = drawdownStatus([pt('2026-01-01', 100_000), pt('2026-02-01', 150_000), pt('2026-03-01', 135_000)])!
+    expect(r.atHigh).toBe(false)
+    expect(r.drawdown).toBeCloseTo(0.1, 6)
+    expect(r.high).toBe(150_000)
+    expect(r.highDate).toBe('2026-02-01')
+  })
+
+  it('returns null for empty or never-positive series', () => {
+    expect(drawdownStatus([])).toBeNull()
+    expect(drawdownStatus([pt('2026-01-01', -5_000)])).toBeNull()
   })
 })

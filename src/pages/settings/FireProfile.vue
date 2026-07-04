@@ -19,6 +19,7 @@ interface FireProfileForm {
   annualIncome: number
   expectedReturnRate: number
   inflationRate: number
+  withdrawalRate: number
   hsaCoverage: string
 }
 
@@ -34,6 +35,7 @@ const form = reactive<FireProfileForm>({
   annualIncome: 0,
   expectedReturnRate: 0,
   inflationRate: 0,
+  withdrawalRate: 0.04,
   hsaCoverage: 'self',
 })
 
@@ -54,6 +56,7 @@ async function onSubmit() {
     annualIncome: form.annualIncome ?? 0,
     expectedReturnRate: form.expectedReturnRate ?? 0,
     inflationRate: form.inflationRate ?? 0,
+    withdrawalRate: form.withdrawalRate || 0.04,
     hsaCoverage: form.hsaCoverage,
     onboardingCompleted: store.profile?.onboardingCompleted ?? false,
   }
@@ -113,6 +116,14 @@ async function onSubmit() {
           </UFormField>
           <UFormField label="Inflation rate">
             <PercentInput v-model="form.inflationRate" class="w-full" />
+          </UFormField>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <UFormField
+            label="Safe withdrawal rate"
+            hint="4% is the classic rule; long early retirements often plan on 3.5% or 3.25%"
+          >
+            <PercentInput v-model="form.withdrawalRate" :step="0.0025" class="w-full" />
           </UFormField>
         </div>
         <UFormField label="HSA coverage">
