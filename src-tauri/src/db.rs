@@ -54,9 +54,22 @@ pub fn decide_db_source(
     }
 }
 
+/// Everything needed to rebuild the embedded replica `Database` from scratch —
+/// the in-process equivalent of an app restart. Only present in synced mode.
+struct ReplicaSpec {
+    path: PathBuf,
+    url: String,
+    token: String,
+}
+
 pub struct Db {
-    pub db: Database,
+    /// Behind an async RwLock so the whole `Database` can be swapped out after
+    /// replica corruption (see `ensure_healthy`). Normal use is read-locked;
+    /// only a rebuild takes the write lock.
+    db: tokio::sync::RwLock<Database>,
     pub mode: DbMode,
+    /// Rebuild parameters (synced mode only; local modes never corrupt this way).
+    replica: Option<ReplicaSpec>,
     /// One shared connection handed out (as cheap `Arc` clones) to every command.
     ///
     /// Opening a fresh connection per invoke meant a page firing several reads via
@@ -96,12 +109,12 @@ impl Db {
         Ok(self.conn.lock().unwrap().clone())
     }
 
-    /// Reopen the shared connection against the current on-disk file. Called
+    /// Reopen the shared connection against the current `Database`. Called
     /// after every Turso sync — see the `conn` field docs. In-flight commands
     /// holding the old clone finish (or fail) on it; every later `conn()` call
     /// gets the fresh one.
-    pub fn refresh_conn(&self) -> Result<(), String> {
-        let fresh = Self::open_conn(&self.db)?;
+    pub async fn refresh_conn(&self) -> Result<(), String> {
+        let fresh = Self::open_conn(&*self.db.read().await)?;
         *self.conn.lock().unwrap() = fresh;
         Ok(())
     }
@@ -112,11 +125,80 @@ impl Db {
     /// interleave a statement into the open transaction. Reads and single-call
     /// writes should use `conn()`.
     pub async fn fresh_conn(&self) -> Result<Connection, String> {
-        Self::open_conn(&self.db)
+        Self::open_conn(&*self.db.read().await)
     }
     pub fn is_synced(&self) -> bool {
         self.mode == DbMode::Synced
     }
+
+    /// Pull from / push to the remote (embedded replica). No-op result mapping
+    /// only; callers decide what a failure means.
+    pub async fn sync(&self) -> Result<(), String> {
+        self.db
+            .read()
+            .await
+            .sync()
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Cheap smoke test on a freshly-opened connection: does the database file
+    /// still look like a database to a new reader?
+    async fn verify(&self) -> Result<(), String> {
+        let conn = self.fresh_conn().await?;
+        conn.query("SELECT count(*) FROM sqlite_master", ())
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Whether an error message is the replica-corruption signature.
+    pub fn is_corruption_error(e: &str) -> bool {
+        let e = e.to_lowercase();
+        e.contains("not a database") || e.contains("disk image is malformed")
+    }
+
+    /// Verify the database is readable; if it shows the corruption signature,
+    /// rebuild the whole `Database` from scratch (close + reopen the replica —
+    /// the in-process equivalent of the app restart that recovers it) and
+    /// re-verify. Returns a human-readable outcome for the sync log.
+    pub async fn ensure_healthy(&self) -> Result<HealthOutcome, String> {
+        let Err(e) = self.verify().await else {
+            return Ok(HealthOutcome::Healthy);
+        };
+        if !Self::is_corruption_error(&e) {
+            // Unhealthy in some other way (e.g. busy) — not ours to fix here.
+            return Err(format!("verify failed (not corruption): {e}"));
+        }
+        let Some(spec) = &self.replica else {
+            return Err(format!("corruption detected but no replica spec to rebuild from: {e}"));
+        };
+        let fresh_db =
+            Builder::new_remote_replica(spec.path.clone(), spec.url.clone(), spec.token.clone())
+                .build()
+                .await
+                .map_err(|e| format!("rebuild failed: {e}"))?;
+        {
+            // Swap. The old Database drops here (in-flight connection clones
+            // keep it alive until they finish; they fail and complete).
+            let mut guard = self.db.write().await;
+            *guard = fresh_db;
+        }
+        self.refresh_conn().await?;
+        self.verify()
+            .await
+            .map(|_| HealthOutcome::Recovered { detected: e })
+            .map_err(|e2| format!("still corrupt after rebuild: {e2}"))
+    }
+}
+
+/// Outcome of `Db::ensure_healthy`, for the sync log.
+pub enum HealthOutcome {
+    Healthy,
+    /// Corruption was detected (with the original error) and a full database
+    /// reopen fixed it.
+    Recovered { detected: String },
 }
 
 pub const LOCAL_DB: &str = "trackmyfi.db";
@@ -141,10 +223,16 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
 
     let source = decide_db_source(cfg.enabled, has_creds, cfg.bootstrapped, replica_exists);
 
+    let mut replica_spec: Option<ReplicaSpec> = None;
     let (db, mode) = match source {
         DbSource::RemoteReplica => {
             let url = cfg.url.clone().unwrap();
             let token = token.unwrap();
+            replica_spec = Some(ReplicaSpec {
+                path: replica_path.clone(),
+                url: url.clone(),
+                token: token.clone(),
+            });
             let db = Builder::new_remote_replica(replica_path, url, token)
                 .build()
                 .await
@@ -184,7 +272,12 @@ pub async fn init(app: &AppHandle) -> Result<Db, String> {
     if mode == DbMode::Local {
         crate::migrations::run(&conn).await?;
     }
-    Ok(Db { db, mode, conn: std::sync::Mutex::new(conn) })
+    Ok(Db {
+        db: tokio::sync::RwLock::new(db),
+        mode,
+        replica: replica_spec,
+        conn: std::sync::Mutex::new(conn),
+    })
 }
 
 #[cfg(test)]

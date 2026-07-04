@@ -434,6 +434,45 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Best-effort diagnostic log for the sync subsystems, written to
+/// `sync-log.txt` in the app data dir. `eprintln!` is invisible in a release
+/// build, and the replica-corruption failures we're chasing happen on user
+/// machines during idle background syncs — this file is how they get diagnosed
+/// after the fact. Rotated once past ~512 KB (current + one `.old`).
+pub fn sync_log(app: &AppHandle, msg: &str) {
+    let Ok(dir) = data_dir(app) else { return };
+    let path = dir.join("sync-log.txt");
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 512_000 {
+            let _ = std::fs::rename(&path, dir.join("sync-log.old.txt"));
+        }
+    }
+    let line = format!("{} {msg}\n", chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"));
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+/// Post-sync health pass: verify the database is still readable through a
+/// fresh connection and, if it shows the corruption signature ("file is not a
+/// database" / "malformed"), rebuild the whole Database in place. Logs every
+/// outcome so field failures are diagnosable.
+pub async fn check_health(app: &AppHandle, context: &str) {
+    let db = app.state::<crate::db::Db>();
+    match db.ensure_healthy().await {
+        Ok(crate::db::HealthOutcome::Healthy) => {}
+        Ok(crate::db::HealthOutcome::Recovered { detected }) => {
+            sync_log(
+                app,
+                &format!("{context}: corruption detected ({detected}); database reopened OK"),
+            );
+        }
+        Err(e) => sync_log(app, &format!("{context}: health check problem: {e}")),
+    }
+}
+
 fn snapshot(app: &AppHandle) -> SyncStatus {
     app.state::<SyncShared>().status.lock().unwrap().clone()
 }
@@ -463,32 +502,39 @@ async fn do_sync_locked(app: &AppHandle) -> Result<(), String> {
     }
     emit_status(app);
 
-    let result = db.db.sync().await;
+    sync_log(app, "turso: sync start");
+    let result = db.sync().await;
+    match &result {
+        Ok(()) => sync_log(app, "turso: sync ok"),
+        Err(e) => sync_log(app, &format!("turso: sync failed: {e}")),
+    }
 
     // The sync may have replaced the replica file (snapshot re-bootstrap), which
     // strands the shared connection on the dead file — every query app-wide then
     // fails with SQLITE_NOTADB until restart. Reopen it unconditionally (even
-    // after a failed sync, which can still have swapped the file mid-way).
-    if let Err(e) = db.refresh_conn() {
-        eprintln!("warning: could not refresh db connection after sync: {e}");
+    // after a failed sync, which can still have swapped the file mid-way), then
+    // verify the database is actually readable and rebuild it in place if not.
+    if let Err(e) = db.refresh_conn().await {
+        sync_log(app, &format!("turso: refresh_conn failed: {e}"));
     }
+    check_health(app, "turso: post-sync").await;
 
     {
         let mut s = shared.status.lock().unwrap();
         match &result {
-            Ok(_) => {
+            Ok(()) => {
                 s.status = "idle".into();
                 s.last_synced_at = Some(now_ms());
                 s.last_error = None;
             }
             Err(e) => {
                 s.status = "error".into();
-                s.last_error = Some(e.to_string());
+                s.last_error = Some(e.clone());
             }
         }
     }
     emit_status(app);
-    result.map(|_| ()).map_err(|e| e.to_string())
+    result
 }
 
 /// Startup catch-up for synced mode, run in the background so the app is

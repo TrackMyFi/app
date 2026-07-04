@@ -923,6 +923,8 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         SimpleFinSyncingEvent { syncing: true, error: None, transactions_added: 0, snapshots_added: 0 },
     );
 
+    crate::sync::sync_log(app, "simplefin: sync start");
+
     // Everything fallible runs inside this block so the finish event below is
     // emitted on every path — a leaked `?` here would strand the frontend's
     // "syncing…" notification.
@@ -943,6 +945,7 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
 
         // Network fetch — no DB access, no gate.
         let set = fetch_accounts(&access_url, Some(start_ts)).await?;
+        crate::sync::sync_log(app, &format!("simplefin: fetch ok ({} accounts)", set.accounts.len()));
 
         let _db_guard = gate.lock.lock().await;
         let (summary, cache) = import_account_set(&conn, &set).await?;
@@ -956,14 +959,41 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
     }
     .await;
 
-    if let Err(e) = &result {
-        let _db_guard = gate.lock.lock().await;
-        let _ = set_state(&conn, "last_error", Some(e)).await;
+    match &result {
+        Ok(s) => crate::sync::sync_log(
+            app,
+            &format!(
+                "simplefin: sync ok ({} txns, {} snapshots)",
+                s.transactions_added, s.snapshots_added
+            ),
+        ),
+        Err(e) => crate::sync::sync_log(app, &format!("simplefin: sync failed: {e}")),
     }
 
-    // Tell the frontend. Data pages remount only when something changed.
-    if let Ok(status) = build_status(&conn).await {
-        let _ = app.emit("simplefin-status", status);
+    // The corruption signature means the whole app is about to start failing —
+    // verify + reopen the database in place before anything else reads it.
+    if let Err(e) = &result {
+        if Db::is_corruption_error(e) {
+            let _db_guard = gate.lock.lock().await;
+            crate::sync::check_health(app, "simplefin: post-failure").await;
+        }
+    }
+
+    {
+        let _db_guard = gate.lock.lock().await;
+        if let Err(e) = &result {
+            // Re-fetch the (possibly refreshed) shared connection so the error
+            // write works even after a recovery above.
+            if let Ok(conn) = db.conn().await {
+                let _ = set_state(&conn, "last_error", Some(e)).await;
+            }
+        }
+        // Tell the frontend. Data pages remount only when something changed.
+        if let Ok(conn) = db.conn().await {
+            if let Ok(status) = build_status(&conn).await {
+                let _ = app.emit("simplefin-status", status);
+            }
+        }
     }
     let _ = app.emit(
         "simplefin-syncing",
