@@ -116,6 +116,17 @@ pub struct PeriodStatsFilter {
     /// attributeToFundedMonth() in src/lib/transactions/attribution.ts.
     #[serde(default)]
     pub attribute_paycheck_to_next_month: bool,
+    /// The real (in-progress) calendar period key. Always excluded from the
+    /// reference set — its partial totals would drag every median down when
+    /// the user is viewing some other period.
+    #[serde(default)]
+    pub current_period: Option<String>,
+    /// When the selected period is itself still in progress, compare
+    /// like-for-like: an ISO date whose point-in-period (day-of-month for
+    /// month grouping, month+day for year grouping) truncates every reference
+    /// period, so "typical" means "typical by this point in the period".
+    #[serde(default)]
+    pub through_date: Option<String>,
 }
 
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
@@ -1051,15 +1062,35 @@ pub async fn period_stats(
         let date: String = row.get(10).map_err(|e| e.to_string())?;
 
         // Month-end paycheck rows attribute to the month they fund.
+        let mut attribution_shifted = false;
         if f.attribute_paycheck_to_next_month && paycheck_id.is_some() {
             if let Some(shifted) = funded_period(&date, &f.group_by) {
                 period = shifted;
+                attribution_shifted = true;
             }
         }
 
-        // Skip the current period so it's never compared against itself.
-        if period == f.exclude_period {
+        // Skip the selected period so it's never compared against itself, and
+        // the in-progress calendar period whose partial totals would skew the
+        // medians when the user is viewing a completed period.
+        if period == f.exclude_period || Some(&period) == f.current_period.as_ref() {
             continue;
+        }
+
+        // Prorate reference periods to the same point-in-period as through_date
+        // so an in-progress period is compared like-for-like. Attribution-shifted
+        // rows fund the START of their period, so they always fall inside the
+        // prorated window regardless of their calendar date.
+        if let Some(cutoff) = &f.through_date {
+            if !attribution_shifted {
+                let past_cutoff = match f.group_by.as_str() {
+                    "year" => date.get(5..10) > cutoff.get(5..10),
+                    _ => date.get(8..10) > cutoff.get(8..10),
+                };
+                if past_cutoff {
+                    continue;
+                }
+            }
         }
 
         let s = by_period.entry(period.clone()).or_insert(PeriodStats {
@@ -1641,6 +1672,8 @@ mod tests {
             group_by: group_by.to_string(),
             exclude_period: exclude_period.to_string(),
             attribute_paycheck_to_next_month: attribute,
+            current_period: None,
+            through_date: None,
         }
     }
 
@@ -1709,6 +1742,67 @@ mod tests {
         let by_period: BTreeMap<_, _> = raw.into_iter().map(|s| (s.period.clone(), s)).collect();
         assert_eq!(by_period["2024-01"].income, 2400.0);
         assert!(!by_period.contains_key("2024-02"));
+    }
+
+    #[tokio::test]
+    async fn period_stats_excludes_current_period_and_prorates_to_through_date() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+
+        // Two complete reference months with early- and late-month activity.
+        insert_raw_txn(&conn, checking, "expense", 100.0, "2024-01-02", false, false).await;
+        insert_raw_txn(&conn, checking, "expense", 900.0, "2024-01-25", false, false).await;
+        insert_raw_txn(&conn, checking, "expense", 200.0, "2024-02-03", false, false).await;
+        insert_raw_txn(&conn, checking, "expense", 800.0, "2024-02-20", false, false).await;
+        // The in-progress month — must never enter the reference set.
+        insert_raw_txn(&conn, checking, "expense", 50.0, "2024-04-01", false, false).await;
+
+        // Viewing March (selected) while April is in progress: April excluded.
+        let mut filter = stats_filter("month", "2024-03", false);
+        filter.current_period = Some("2024-04".into());
+        let stats = period_stats(&conn, &filter).await.unwrap();
+        let periods: Vec<&str> = stats.iter().map(|s| s.period.as_str()).collect();
+        assert_eq!(periods, vec!["2024-01", "2024-02"]);
+        assert_eq!(stats[0].expense, 1000.0);
+
+        // Viewing the in-progress month itself, on the 5th: references are
+        // truncated to their first 5 days.
+        let mut filter = stats_filter("month", "2024-04", false);
+        filter.current_period = Some("2024-04".into());
+        filter.through_date = Some("2024-04-05".into());
+        let stats = period_stats(&conn, &filter).await.unwrap();
+        let by_period: BTreeMap<_, _> = stats.iter().map(|s| (s.period.clone(), s)).collect();
+        assert_eq!(by_period["2024-01"].expense, 100.0); // Jan 25 row past cutoff
+        assert_eq!(by_period["2024-02"].expense, 200.0); // Feb 20 row past cutoff
+
+        // Year grouping prorates on month+day.
+        insert_raw_txn(&conn, checking, "expense", 300.0, "2023-02-01", false, false).await;
+        insert_raw_txn(&conn, checking, "expense", 400.0, "2023-06-15", false, false).await;
+        let mut filter = stats_filter("year", "2024", false);
+        filter.current_period = Some("2024".into());
+        filter.through_date = Some("2024-04-05".into());
+        let stats = period_stats(&conn, &filter).await.unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].period, "2023");
+        assert_eq!(stats[0].expense, 300.0); // Jun 15 row past the Apr 5 cutoff
+    }
+
+    #[tokio::test]
+    async fn period_stats_proration_keeps_attribution_shifted_paychecks() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking").await;
+
+        let p = insert_paycheck(&conn, "2024-01-30").await;
+        // Month-end paycheck funds February — economically it lands at the
+        // start of the month, so a day-5 proration must still include it.
+        insert_paycheck_txn(&conn, checking, "income", 1000.0, "2024-01-30", false, false, Some(p)).await;
+
+        let mut filter = stats_filter("month", "2024-04", true);
+        filter.through_date = Some("2024-04-05".into());
+        let stats = period_stats(&conn, &filter).await.unwrap();
+        let by_period: BTreeMap<_, _> = stats.iter().map(|s| (s.period.clone(), s)).collect();
+        assert_eq!(by_period["2024-02"].income, 1000.0);
+        assert!(!by_period.contains_key("2024-01"));
     }
 
     #[tokio::test]

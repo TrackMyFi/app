@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { pctVsMedian, changeColor, trendIcon } from './trends'
+import { DateTime } from 'luxon'
+import { pctVsMedian, changeColor, trendIcon, proratedSuffix } from './trends'
 
 describe('pctVsMedian', () => {
   it('returns null when the baseline is zero', () => {
@@ -26,6 +27,25 @@ describe('changeColor', () => {
   it('is neutral for negligible or missing deltas', () => {
     expect(changeColor('expense', null)).toBe('text-muted')
     expect(changeColor('expense', 0.001)).toBe('text-muted')
+  })
+})
+
+describe('proratedSuffix', () => {
+  const now = DateTime.fromISO('2026-07-03')
+
+  it('is empty for a completed period', () => {
+    expect(proratedSuffix('month', DateTime.fromISO('2026-06-01'), now)).toBe('')
+    expect(proratedSuffix('year', DateTime.fromISO('2025-06-01'), now)).toBe('')
+  })
+
+  it('notes the day for an in-progress month', () => {
+    expect(proratedSuffix('month', DateTime.fromISO('2026-07-01'), now)).toBe(' by the 3rd')
+    expect(proratedSuffix('month', DateTime.fromISO('2026-07-01'), DateTime.fromISO('2026-07-21'))).toBe(' by the 21st')
+    expect(proratedSuffix('month', DateTime.fromISO('2026-07-01'), DateTime.fromISO('2026-07-11'))).toBe(' by the 11th')
+  })
+
+  it('notes month and day for an in-progress year', () => {
+    expect(proratedSuffix('year', DateTime.fromISO('2026-01-01'), now)).toBe(' by Jul 3')
   })
 })
 

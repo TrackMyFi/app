@@ -7,8 +7,8 @@ import { useTransactionsStore } from '../stores/transactions'
 import { useAccountsStore } from '../stores/accounts'
 import { transactionTypeItems, categoryItems, labelForCategory, labelForSuppressKind } from '../lib/transactions/constants'
 import { classifyFlow, cashFlowTotals, savingsRate, type FlowDirection } from '../lib/transactions/flow'
-import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
-import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
+import { computeMedian, MONTHLY_REFERENCE_WINDOW, ANNUAL_REFERENCE_WINDOW, type PeriodStats } from '../lib/transactions/stats'
+import { pctVsMedian, changeColor, trendIcon, proratedSuffix, type TrendField } from '../lib/transactions/trends'
 import { useReveal } from '../composables/useReveal'
 import { useMonthEndPaycheckAttribution } from '../composables/useMonthEndPaycheckAttribution'
 import { attributeToFundedMonth, MONTH_END_WINDOW_DAYS } from '../lib/transactions/attribution'
@@ -215,17 +215,26 @@ async function loadPeriodStats() {
     categories: categories.value,
     searchTerms: searchTerms.value,
   }
+  // The in-progress calendar period never enters the baseline (partial data
+  // skews the medians), and when the *selected* period is itself in progress,
+  // reference periods are prorated to today's point-in-period so a 3-day-old
+  // month isn't compared against full-month typicals.
+  const now = DateTime.now()
   const [monthly, annual] = await Promise.all([
     api.periodStats({
       ...secondary,
       groupBy: 'month',
       excludePeriod: selectedDate.value.toFormat('yyyy-MM'),
+      currentPeriod: now.toFormat('yyyy-MM'),
+      throughDate: selectedDate.value.hasSame(now, 'month') ? now.toISODate() : null,
       attributePaycheckToNextMonth: attributePaychecks.value,
     }),
     api.periodStats({
       ...secondary,
       groupBy: 'year',
       excludePeriod: selectedDate.value.toFormat('yyyy'),
+      currentPeriod: now.toFormat('yyyy'),
+      throughDate: selectedDate.value.hasSame(now, 'year') ? now.toISODate() : null,
       attributePaycheckToNextMonth: attributePaychecks.value,
     }),
   ])
@@ -298,10 +307,12 @@ function isStrongRate(rate: number | null): boolean {
 
 // ─── Median comparisons ───────────────────────────────────────────────────────
 
-// Period stats are pre-aggregated by the Rust command (grouped, classified, current
-// period excluded) — computeMedian just takes the median across those rows.
-const medianMonthly = computed(() => computeMedian(monthlyPeriodStats.value))
-const medianAnnual = computed(() => computeMedian(annualPeriodStats.value))
+// Period stats are pre-aggregated by the Rust command (grouped, classified,
+// selected + in-progress periods excluded) — computeMedian takes the median
+// across the most recent rows, so "typical" reflects recent behaviour rather
+// than years-old history that may predate tracking some flows.
+const medianMonthly = computed(() => computeMedian(monthlyPeriodStats.value, MONTHLY_REFERENCE_WINDOW))
+const medianAnnual = computed(() => computeMedian(annualPeriodStats.value, ANNUAL_REFERENCE_WINDOW))
 
 const activeTotals = computed(() => {
   if (scope.value === 'month') return monthlyTotals.value
@@ -330,6 +341,20 @@ const activeMedian = computed(() => {
 // Only show comparison when there are at least 2 reference periods so the
 // baseline is meaningful (not just the one other month the user has entered).
 const showComparison = computed(() => (activeMedian.value?.periodCount ?? 0) >= 2)
+
+// A field whose median is exactly 0 has no meaningful baseline — usually every
+// reference period predates tracking that flow — so its "typ." line is hidden
+// rather than showing a bogus $0.00.
+function baselineFor(field: TrendField): number | null {
+  const v = activeMedian.value?.totals[field] ?? 0
+  return v === 0 ? null : v
+}
+
+// When the selected period is in progress the baseline is prorated to today's
+// point-in-period — say so, or "typ." reads as a full-period figure.
+const typSuffix = computed(() =>
+  scope.value === 'all' ? '' : proratedSuffix(scope.value, selectedDate.value)
+)
 
 function medianRate(totals: { income: number; savings: number }): string {
   if (totals.income <= 0) return '—'
@@ -519,9 +544,9 @@ onMounted(() => run(async () => {
             <span v-if="isStrongRate(activeRate)" :key="`r-${revealKey}`" class="tmfi-sheen" />
           </div>
           <p class="text-xs text-muted mt-1.5">Savings rate</p>
-          <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
+          <p v-if="showComparison && medianRateValue != null" class="text-xs flex items-center gap-1 mt-0.5">
             <UIcon :name="trendIcon(rateTrendPct)" class="size-3 shrink-0" :class="changeColor('savings', rateTrendPct)" />
-            <span class="text-dimmed tabular-nums">typ. {{ medianRate(activeMedian!.totals) }}</span>
+            <span class="text-dimmed tabular-nums">typ. {{ medianRate(activeMedian!.totals) }}{{ typSuffix }}</span>
           </p>
         </div>
 
@@ -532,25 +557,25 @@ onMounted(() => run(async () => {
           <div class="shrink-0">
             <p class="text-lg font-semibold tabular-nums leading-none text-success">{{ money(activeTotals.income * reveal) }}</p>
             <p class="text-xs text-muted mt-1.5">Income</p>
-            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
-              <UIcon :name="trendIcon(pctVsMedian(activeTotals.income, activeMedian!.totals.income))" class="size-3 shrink-0" :class="changeColor('income', pctVsMedian(activeTotals.income, activeMedian!.totals.income))" />
-              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.income) }}</span>
+            <p v-if="showComparison && baselineFor('income') != null" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.income, baselineFor('income')!))" class="size-3 shrink-0" :class="changeColor('income', pctVsMedian(activeTotals.income, baselineFor('income')!))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(baselineFor('income')!) }}{{ typSuffix }}</span>
             </p>
           </div>
           <div class="shrink-0">
             <p class="text-lg font-semibold tabular-nums leading-none text-error">{{ money(activeTotals.expense * reveal) }}</p>
             <p class="text-xs text-muted mt-1.5">Expenses</p>
-            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
-              <UIcon :name="trendIcon(pctVsMedian(activeTotals.expense, activeMedian!.totals.expense))" class="size-3 shrink-0" :class="changeColor('expense', pctVsMedian(activeTotals.expense, activeMedian!.totals.expense))" />
-              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.expense) }}</span>
+            <p v-if="showComparison && baselineFor('expense') != null" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.expense, baselineFor('expense')!))" class="size-3 shrink-0" :class="changeColor('expense', pctVsMedian(activeTotals.expense, baselineFor('expense')!))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(baselineFor('expense')!) }}{{ typSuffix }}</span>
             </p>
           </div>
           <div class="shrink-0">
             <p class="text-lg font-semibold tabular-nums leading-none" :class="activeTotals.net >= 0 ? 'text-heading' : 'text-error'">{{ money(activeTotals.net * reveal) }}</p>
             <p class="text-xs text-muted mt-1.5">Net</p>
-            <p v-if="showComparison" class="text-xs flex items-center gap-1 mt-0.5">
-              <UIcon :name="trendIcon(pctVsMedian(activeTotals.net, activeMedian!.totals.net))" class="size-3 shrink-0" :class="changeColor('net', pctVsMedian(activeTotals.net, activeMedian!.totals.net))" />
-              <span class="text-dimmed tabular-nums">typ. {{ money(activeMedian!.totals.net) }}</span>
+            <p v-if="showComparison && baselineFor('net') != null" class="text-xs flex items-center gap-1 mt-0.5">
+              <UIcon :name="trendIcon(pctVsMedian(activeTotals.net, baselineFor('net')!))" class="size-3 shrink-0" :class="changeColor('net', pctVsMedian(activeTotals.net, baselineFor('net')!))" />
+              <span class="text-dimmed tabular-nums">typ. {{ money(baselineFor('net')!) }}{{ typSuffix }}</span>
             </p>
           </div>
         </div>

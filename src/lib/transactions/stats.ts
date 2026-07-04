@@ -21,13 +21,27 @@ export interface PeriodMedians {
 }
 
 /**
+ * Reference windows for the "typical period" baseline. "Typical" should mean
+ * *recent* behaviour, not all-time: a user whose history reaches back years
+ * before they started tracking a given flow (e.g. income recorded since 2019
+ * but expenses only since 2025) would otherwise see those empty periods drag
+ * the median to zero.
+ */
+export const MONTHLY_REFERENCE_WINDOW = 12
+export const ANNUAL_REFERENCE_WINDOW = 5
+
+/**
  * Compute median cash-flow stats from an array of pre-aggregated period rows.
  *
- * Each row is one calendar period (month or year) returned by `period_stats_cmd`.
- * The current period has already been excluded by the Rust command so a period
- * is never compared against itself.
+ * Each row is one calendar period (month or year) returned by `period_stats_cmd`,
+ * sorted ascending by period key (the command guarantees this). The selected and
+ * in-progress periods have already been excluded by the Rust command so a period
+ * is never compared against itself or a partial period.
+ *
+ * `window` keeps only the most recent N periods as the baseline.
  */
-export function computeMedian(periods: PeriodStats[]): PeriodMedians | null {
+export function computeMedian(periods: PeriodStats[], window?: number): PeriodMedians | null {
+  if (window != null) periods = periods.slice(-window)
   if (periods.length === 0) return null
 
   const medianIncome = median(periods.map((p) => p.income))

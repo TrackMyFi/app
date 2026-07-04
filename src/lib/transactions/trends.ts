@@ -4,6 +4,25 @@
  * periods (Transactions, Expenses).
  */
 
+import { DateTime } from 'luxon'
+
+function ordinal(n: number): string {
+  const suffixes = ['th', 'st', 'nd', 'rd']
+  const v = n % 100
+  return n + (suffixes[(v - 20) % 10] ?? suffixes[v] ?? suffixes[0])
+}
+
+/**
+ * Suffix appended to "typ." figures when the selected period is still in
+ * progress — the baseline is then prorated to today's point in the period, and
+ * without saying so the figure reads as a full-period typical.
+ * Returns '' for completed periods (full-period baseline, no note needed).
+ */
+export function proratedSuffix(scope: 'month' | 'year', selected: DateTime, now: DateTime = DateTime.now()): string {
+  if (!selected.hasSame(now, scope === 'month' ? 'month' : 'year')) return ''
+  return scope === 'month' ? ` by the ${ordinal(now.day)}` : ` by ${now.toFormat('MMM d')}`
+}
+
 /** Signed % change of `current` vs. `med`, or null when there's no baseline to compare against. */
 export function pctVsMedian(current: number, med: number): number | null {
   if (med === 0) return null

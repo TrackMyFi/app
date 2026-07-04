@@ -81,6 +81,33 @@ describe('computeMedian', () => {
     expect(result!.breakdown.byCategory.get('savings')).toBe(1000)
   })
 
+  it('keeps only the most recent N periods when a window is given', () => {
+    // Two old months with no expense data would otherwise drag the median to 0.
+    const result = computeMedian([
+      period({ period: '2024-01', income: 4000, expense: 0 }),
+      period({ period: '2024-02', income: 4000, expense: 0 }),
+      period({ period: '2025-01', income: 5000, expense: 1000 }),
+      period({ period: '2025-02', income: 5200, expense: 1400 }),
+      period({ period: '2025-03', income: 5400, expense: 1200 }),
+    ], 3)
+    expect(result!.periodCount).toBe(3)
+    expect(result!.totals.income).toBe(5200)
+    expect(result!.totals.expense).toBe(1200)
+  })
+
+  it('windows larger than the input use all periods', () => {
+    const result = computeMedian([
+      period({ period: '2025-01', income: 1000 }),
+      period({ period: '2025-02', income: 3000 }),
+    ], 12)
+    expect(result!.periodCount).toBe(2)
+    expect(result!.totals.income).toBe(2000)
+  })
+
+  it('returns null for empty input with a window', () => {
+    expect(computeMedian([], 12)).toBeNull()
+  })
+
   it('breakdown income matches totals income', () => {
     const result = computeMedian([
       period({ period: '2025-01', income: 3000 }),

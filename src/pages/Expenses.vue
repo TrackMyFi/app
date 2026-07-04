@@ -8,8 +8,8 @@ import { useReveal } from '../composables/useReveal'
 import * as api from '../lib/api/transactions'
 import * as vendorRulesApi from '../lib/api/vendorRules'
 import { classifyFlow } from '../lib/transactions/flow'
-import { computeMedian, type PeriodStats } from '../lib/transactions/stats'
-import { pctVsMedian, changeColor, trendIcon } from '../lib/transactions/trends'
+import { computeMedian, MONTHLY_REFERENCE_WINDOW, ANNUAL_REFERENCE_WINDOW, type PeriodStats } from '../lib/transactions/stats'
+import { pctVsMedian, changeColor, trendIcon, proratedSuffix } from '../lib/transactions/trends'
 import { CATEGORY_LABELS, CATEGORY_TEXT_COLOR } from '../lib/transactions/constants'
 import { groupByMerchant, type VendorRuleInput } from '../lib/expenses/merchants'
 import { detectRecurring } from '../lib/expenses/recurring'
@@ -78,10 +78,24 @@ async function applyFilters() {
     endDate = selectedDate.value.endOf('year').toISODate()!
   }
 
+  // Mirrors Transactions.vue's baseline rules: the in-progress calendar period
+  // never enters the reference set, and when the selected period is itself in
+  // progress the references are prorated to today's point-in-period.
+  const now = DateTime.now()
   const [txResult, monthly, annual] = await Promise.all([
     api.listTransactions({ startDate, endDate, limit: null }),
-    api.periodStats({ groupBy: 'month', excludePeriod: selectedDate.value.toFormat('yyyy-MM') }),
-    api.periodStats({ groupBy: 'year', excludePeriod: selectedDate.value.toFormat('yyyy') }),
+    api.periodStats({
+      groupBy: 'month',
+      excludePeriod: selectedDate.value.toFormat('yyyy-MM'),
+      currentPeriod: now.toFormat('yyyy-MM'),
+      throughDate: selectedDate.value.hasSame(now, 'month') ? now.toISODate() : null,
+    }),
+    api.periodStats({
+      groupBy: 'year',
+      excludePeriod: selectedDate.value.toFormat('yyyy'),
+      currentPeriod: now.toFormat('yyyy'),
+      throughDate: selectedDate.value.hasSame(now, 'year') ? now.toISODate() : null,
+    }),
   ])
   scopeTransactions.value = txResult.rows
   monthlyPeriodStats.value = monthly
@@ -126,8 +140,8 @@ const categoryTotals = computed(() => {
 })
 
 const activeMedian = computed(() => {
-  if (scope.value === 'month') return computeMedian(monthlyPeriodStats.value)
-  if (scope.value === 'year') return computeMedian(annualPeriodStats.value)
+  if (scope.value === 'month') return computeMedian(monthlyPeriodStats.value, MONTHLY_REFERENCE_WINDOW)
+  if (scope.value === 'year') return computeMedian(annualPeriodStats.value, ANNUAL_REFERENCE_WINDOW)
   return null
 })
 
@@ -135,9 +149,17 @@ const activeMedian = computed(() => {
 // for "all time" — there's no single period to compare against.
 const showComparison = computed(() => scope.value !== 'all' && (activeMedian.value?.periodCount ?? 0) >= 2)
 
+// When the selected period is in progress the baseline is prorated to today's
+// point-in-period — say so, or "typ." reads as a full-period figure.
+const typSuffix = computed(() =>
+  scope.value === 'all' ? '' : proratedSuffix(scope.value, selectedDate.value)
+)
+
 function typicalFor(bucket: 'fixed' | 'discretionary'): number | null {
   if (!showComparison.value) return null
-  return activeMedian.value?.breakdown.byCategory.get(bucket) ?? null
+  // A zero median means no reference period tracked this bucket — no baseline.
+  const typical = activeMedian.value?.breakdown.byCategory.get(bucket) ?? 0
+  return typical === 0 ? null : typical
 }
 
 function trendPctFor(bucket: 'fixed' | 'discretionary'): number | null {
@@ -302,7 +324,7 @@ function money(n: number): string {
                   class="size-3 shrink-0"
                   :class="changeColor('expense', trendPctFor(bucket))"
                 />
-                <span class="text-dimmed tabular-nums">typ. {{ money(typicalFor(bucket)!) }}</span>
+                <span class="text-dimmed tabular-nums">typ. {{ money(typicalFor(bucket)!) }}{{ typSuffix }}</span>
               </p>
             </div>
           </div>

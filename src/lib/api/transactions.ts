@@ -29,6 +29,10 @@ export interface PeriodStatsFilter {
   excludePeriod: string
   /** Attribute month-end paychecks to the month they fund (see lib/transactions/attribution.ts). */
   attributePaycheckToNextMonth?: boolean
+  /** The real in-progress period key — always excluded from the reference set (partial data skews medians). */
+  currentPeriod?: string | null
+  /** When the selected period is in progress: ISO date truncating every reference period to the same point-in-period. */
+  throughDate?: string | null
 }
 
 export interface NewTransaction {
