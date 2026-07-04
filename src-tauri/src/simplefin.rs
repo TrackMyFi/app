@@ -346,6 +346,13 @@ fn sync_due(
     success_due && attempt_ok
 }
 
+/// Lock/busy errors that clear on their own once the holder finishes — retry
+/// material, unlike corruption or constraint failures.
+fn is_transient_lock_error(e: &str) -> bool {
+    let e = e.to_lowercase();
+    e.contains("locked") || e.contains("busy")
+}
+
 /// First matching category rule wins; matching is a case-insensitive substring
 /// test on the description — mirrors `applyMapping` in src/lib/csv/mapping.ts.
 fn match_category(rules: &[(String, String)], description: &str) -> String {
@@ -527,36 +534,43 @@ async fn import_account_set(
     set: &SfinAccountSet,
 ) -> Result<(SimpleFinSyncSummary, Vec<SimpleFinRemoteAccount>), String> {
     // simplefin_id → local account (id + liability flag, for balance sign).
+    // Both lookup cursors are scoped so their statements are closed before the
+    // write loop below — an open reader on this connection makes the writes'
+    // WAL auto-checkpoint fail ("database table is locked").
     let mut linked: std::collections::HashMap<String, LinkedAccount> =
         std::collections::HashMap::new();
-    let mut rows = conn
-        .query(
-            "SELECT simplefin_id, id, type FROM account WHERE simplefin_id IS NOT NULL",
-            (),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
-        let sfin_id: String = r.get(0).map_err(|e| e.to_string())?;
-        let account_id: i32 = r.get(1).map_err(|e| e.to_string())?;
-        let ty: String = r.get(2).map_err(|e| e.to_string())?;
-        linked.insert(
-            sfin_id,
-            LinkedAccount { account_id, is_liability: ty == "liability" || ty == "mortgage" },
-        );
+    {
+        let mut rows = conn
+            .query(
+                "SELECT simplefin_id, id, type FROM account WHERE simplefin_id IS NOT NULL",
+                (),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+            let sfin_id: String = r.get(0).map_err(|e| e.to_string())?;
+            let account_id: i32 = r.get(1).map_err(|e| e.to_string())?;
+            let ty: String = r.get(2).map_err(|e| e.to_string())?;
+            linked.insert(
+                sfin_id,
+                LinkedAccount { account_id, is_liability: ty == "liability" || ty == "mortgage" },
+            );
+        }
     }
 
     // Category rules, first-match-wins in id order (same as the CSV importer).
     let mut rules: Vec<(String, String)> = Vec::new();
-    let mut rule_rows = conn
-        .query("SELECT keyword, category FROM category_rules ORDER BY id", ())
-        .await
-        .map_err(|e| e.to_string())?;
-    while let Some(r) = rule_rows.next().await.map_err(|e| e.to_string())? {
-        rules.push((
-            r.get::<String>(0).map_err(|e| e.to_string())?,
-            r.get::<String>(1).map_err(|e| e.to_string())?,
-        ));
+    {
+        let mut rule_rows = conn
+            .query("SELECT keyword, category FROM category_rules ORDER BY id", ())
+            .await
+            .map_err(|e| e.to_string())?;
+        while let Some(r) = rule_rows.next().await.map_err(|e| e.to_string())? {
+            rules.push((
+                r.get::<String>(0).map_err(|e| e.to_string())?,
+                r.get::<String>(1).map_err(|e| e.to_string())?,
+            ));
+        }
     }
 
     let mut summary = SimpleFinSyncSummary::default();
@@ -587,19 +601,31 @@ async fn import_account_set(
         // Balance snapshot. Banks report liabilities as negative amounts; the
         // app stores liability balances as positive debt (see side_delta).
         let balance = if link.is_liability { -raw_balance } else { raw_balance };
-        let mut existing = conn
-            .query(
-                "SELECT id, balance FROM account_balance \
-                 WHERE account_id = ?1 AND source = 'simplefin' AND recorded_at = ?2 \
-                 ORDER BY id DESC LIMIT 1",
-                params![link.account_id, balance_date.clone()],
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        match existing.next().await.map_err(|e| e.to_string())? {
-            Some(r) => {
-                let snap_id: i32 = r.get(0).map_err(|e| e.to_string())?;
-                let old: f64 = r.get(1).map_err(|e| e.to_string())?;
+        // Read the existing snapshot into locals and DROP the cursor before any
+        // write. A `Rows` still alive on this connection holds its read
+        // statement open, and the write's WAL auto-checkpoint then fails with
+        // "Failed to checkpoint WAL: database table is locked" (same rule as
+        // reproject_account: never write while a query is streaming).
+        let existing: Option<(i32, f64)> = {
+            let mut rows = conn
+                .query(
+                    "SELECT id, balance FROM account_balance \
+                     WHERE account_id = ?1 AND source = 'simplefin' AND recorded_at = ?2 \
+                     ORDER BY id DESC LIMIT 1",
+                    params![link.account_id, balance_date.clone()],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            match rows.next().await.map_err(|e| e.to_string())? {
+                Some(r) => Some((
+                    r.get(0).map_err(|e| e.to_string())?,
+                    r.get(1).map_err(|e| e.to_string())?,
+                )),
+                None => None,
+            }
+        };
+        match existing {
+            Some((snap_id, old)) => {
                 // Same-day re-report with a different value: update in place
                 // rather than piling up snapshots for one day.
                 if (old - balance).abs() > 0.005 {
@@ -948,7 +974,21 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         crate::sync::sync_log(app, &format!("simplefin: fetch ok ({} accounts)", set.accounts.len()));
 
         let _db_guard = gate.lock.lock().await;
-        let (summary, cache) = import_account_set(&conn, &set).await?;
+        // Lock/busy failures (e.g. a WAL checkpoint colliding with a straggling
+        // reader) are transient; the import is idempotent by construction
+        // (INSERT OR IGNORE + same-day snapshot dedup), so one retry is safe.
+        let (summary, cache) = match import_account_set(&conn, &set).await {
+            Ok(v) => v,
+            Err(e) if is_transient_lock_error(&e) => {
+                crate::sync::sync_log(
+                    app,
+                    &format!("simplefin: import hit transient lock, retrying once: {e}"),
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+                import_account_set(&conn, &set).await?
+            }
+            Err(e) => return Err(e),
+        };
         let accounts_json = serde_json::to_string(&cache).map_err(|e| e.to_string())?;
         let bridge_json = serde_json::to_string(&set.errors).map_err(|e| e.to_string())?;
         set_state(&conn, "accounts_json", Some(&accounts_json)).await?;
