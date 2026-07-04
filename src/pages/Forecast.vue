@@ -37,14 +37,14 @@ const baseline = computed(() => {
   return derivedMonthlyContribution(contrib.txns, asOf.value, estimateMonthly)
 })
 
-const ov = reactive<{ monthly: number | null; returnRate: number | null; inflation: number | null; retireAge: number | null; annualExpenses: number | null }>({
-  monthly: null, returnRate: null, inflation: null, retireAge: null, annualExpenses: null,
+const ov = reactive<{ monthly: number | null; returnRate: number | null; inflation: number | null; retireAge: number | null; annualExpenses: number | null; withdrawalRate: number | null }>({
+  monthly: null, returnRate: null, inflation: null, retireAge: null, annualExpenses: null, withdrawalRate: null,
 })
 const isScenario = computed(() =>
-  ov.monthly !== null || ov.returnRate !== null || ov.inflation !== null || ov.retireAge !== null || ov.annualExpenses !== null)
+  ov.monthly !== null || ov.returnRate !== null || ov.inflation !== null || ov.retireAge !== null || ov.annualExpenses !== null || ov.withdrawalRate !== null)
 
 function reset() {
-  ov.monthly = null; ov.returnRate = null; ov.inflation = null; ov.retireAge = null; ov.annualExpenses = null
+  ov.monthly = null; ov.returnRate = null; ov.inflation = null; ov.retireAge = null; ov.annualExpenses = null; ov.withdrawalRate = null
 }
 
 const effMonthly = computed(() => ov.monthly ?? baseline.value.monthly)
@@ -52,6 +52,7 @@ const effReturn = computed(() => ov.returnRate ?? fp.profile?.expectedReturnRate
 const effInflation = computed(() => ov.inflation ?? fp.profile?.inflationRate ?? 0)
 const effRetireAge = computed(() => ov.retireAge ?? fp.profile?.targetRetirementAge ?? 0)
 const effAnnualExpenses = computed(() => ov.annualExpenses ?? fp.profile?.annualExpensesTarget ?? 0)
+const effWithdrawal = computed(() => ov.withdrawalRate ?? fp.profile?.withdrawalRate ?? 0.04)
 
 const forecastInputs = computed<ForecastInputs | null>(() => {
   if (!fp.profile) return null
@@ -65,7 +66,7 @@ const forecastInputs = computed<ForecastInputs | null>(() => {
     inflationRate: effInflation.value,
     investable: investable.value,
     monthlyContribution: effMonthly.value,
-    withdrawalRate: fp.profile.withdrawalRate,
+    withdrawalRate: effWithdrawal.value,
   }
 })
 
@@ -205,6 +206,7 @@ const sReturn = computed({ get: () => effReturn.value, set: v => { ov.returnRate
 const sInflation = computed({ get: () => effInflation.value, set: v => { ov.inflation = v ?? null } })
 const sRetire = computed({ get: () => effRetireAge.value, set: v => { ov.retireAge = v ?? null } })
 const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.annualExpenses = v ?? null } })
+const sWithdrawal = computed({ get: () => effWithdrawal.value, set: v => { ov.withdrawalRate = v ?? null } })
 </script>
 
 <template>
@@ -471,8 +473,30 @@ const sExpenses = computed({ get: () => effAnnualExpenses.value, set: v => { ov.
             </div>
             <USlider v-model="sExpenses" :min="0" :max="300000" :step="1000" />
             <p class="text-xs text-muted mt-1.5">
-              From your FIRE profile. Sets the regular FIRE number directly (25× this value, the 4%
-              rule) — lower spending means a smaller target and an earlier FI date.
+              From your FIRE profile. Sets the regular FIRE number directly (this value ÷ your
+              withdrawal rate) — lower spending means a smaller target and an earlier FI date.
+            </p>
+          </div>
+
+          <div>
+            <div class="flex justify-between items-center text-sm mb-2">
+              <label class="text-muted">Withdrawal rate</label>
+              <div class="flex items-center gap-0.5">
+                <input
+                  type="number"
+                  :value="+(sWithdrawal * 100).toFixed(2)"
+                  @change="ov.withdrawalRate = Number(($event.target as HTMLInputElement).value) / 100"
+                  :min="2" :max="8" :step="0.25"
+                  class="w-16 text-right font-mono text-sm bg-transparent border border-default rounded px-2 py-0.5 focus:border-primary/50 focus:outline-none"
+                />
+                <span class="text-sm text-muted">%</span>
+              </div>
+            </div>
+            <USlider v-model="sWithdrawal" :min="0.02" :max="0.08" :step="0.0025" />
+            <p class="text-xs text-muted mt-1.5">
+              From your FIRE profile. The share of your portfolio you'd spend each year in retirement —
+              4% is the classic rule; a lower rate is safer over a long retirement but raises every
+              FIRE number above.
             </p>
           </div>
 
