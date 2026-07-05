@@ -7,6 +7,8 @@ import { DateTime } from 'luxon'
 const props = defineProps<{
   points: NetWorthPoint[]
   showLiquidSeries?: boolean
+  /** Fill the parent's remaining height (parent must be a flex column) instead of the fixed 280px. */
+  fluid?: boolean
 }>()
 
 // ── palette ───────────────────────────────────────────────────────────────────
@@ -105,7 +107,12 @@ const crosshairTemplate = (d: D) => {
 <template>
   <template v-if="points.length > 0">
     <VisBulletLegend :items="legendItems" class="mb-3" />
-    <VisXYContainer :data="data" :height="280" class="tmfi-nw-chart">
+    <VisXYContainer
+      :data="data"
+      :height="fluid ? undefined : 280"
+      class="tmfi-nw-chart"
+      :class="fluid ? 'flex-1 min-h-[280px]' : ''"
+    >
       <!-- Areas: paint largest-first so smaller ones show through -->
       <VisArea :x="x" :y="yTotal"    :color="COLOR_TOTAL"    :baseline="0" :opacity="0.08" />
       <VisArea v-if="showLiquid" :x="x" :y="yIlliquid" :color="COLOR_ILLIQUID" :baseline="0" :opacity="0.1" />

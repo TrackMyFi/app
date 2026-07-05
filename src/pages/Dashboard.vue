@@ -11,7 +11,6 @@ import {
   accessibleSplit, bridgeStatus, drawdownStatus, realMonthlyReturn,
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
-import StatCard from '../components/StatCard.vue'
 import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 import MilestoneLadder, { type MilestoneRow } from '../components/MilestoneLadder.vue'
@@ -53,6 +52,25 @@ const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
 const progress = computed(() => fiProgress(investable.value, fireNum.value))
 const series = computed(() => netWorthOverTime(fireAccounts.value, fireBalances.value))
+// Net worth with real-estate equity stripped out — null when no real estate is tracked.
+const netWorthLessEquity = computed(() => series.value[series.value.length - 1]?.lessEquity ?? null)
+
+// YTD change measures from the last recorded point before Jan 1 — the year-end
+// snapshot the series carries forward. Null when history starts this year.
+const ytdBaseline = computed(() => {
+  const jan1 = DateTime.now().startOf('year').toISODate()!
+  let base = null
+  for (const p of series.value) {
+    if (p.date >= jan1) break
+    base = p
+  }
+  return base
+})
+const netWorthYtd = computed(() => ytdBaseline.value ? netWorth.value - ytdBaseline.value.netWorth : null)
+const lessEquityYtd = computed(() =>
+  ytdBaseline.value?.lessEquity != null && netWorthLessEquity.value != null
+    ? netWorthLessEquity.value - ytdBaseline.value.lessEquity
+    : null)
 const hasLiquidAccounts = computed(() => fireAccounts.value.some(a => ['checking', 'savings'].includes(a.type)))
 
 const investmentSeries = computed(() => investmentsOverTime(fireAccounts.value, fireBalances.value))
@@ -264,35 +282,50 @@ const coastHint = computed(() => {
   const yrs = Math.round(d.diff(DateTime.now(), 'years').years)
   return `coast by ${d.toFormat('LLL yyyy')} · ${yrs} yr${yrs === 1 ? '' : 's'}`
 })
+
+// The eight supporting metrics, consolidated into one card under the net worth
+// headline. Row one is targets and waypoints; row two is the monthly flows.
+interface Metric {
+  label: string
+  value: string
+  hint?: string
+  color?: 'success' | 'default'
+  trend?: { text: string; positive: boolean } | null
+}
+
+const metrics = computed<Metric[]>(() => [
+  { label: 'FIRE Number', value: fmt(fireNum.value * reveal.value), hint: fireNumberHint.value },
+  { label: 'Investable Net Worth', value: fmt(investable.value * reveal.value), trend: investableTrend.value },
+  {
+    label: 'Coast FIRE',
+    value: !coast.value ? '—' : coast.value.coasting ? 'Coasting' : fmt(coast.value.coastNumber * reveal.value),
+    color: coast.value?.coasting ? 'success' : 'default',
+    hint: coastHint.value,
+  },
+  {
+    label: 'Crossover Point',
+    value: crossoverValue.value,
+    color: crossover.value?.crossed ? 'success' : 'default',
+    hint: crossoverHint.value,
+  },
+  { label: 'Monthly Contribution', value: fmt(contribution.value.monthly * reveal.value), hint: contributionHint.value },
+  { label: 'Savings Rate', value: `${(rate.value * 100 * reveal.value).toFixed(1)}%`, hint: savingsRateHint.value },
+  { label: 'Portfolio Earns / Mo', value: fmt(portfolioEarnings.value * reveal.value), hint: portfolioEarnsHint.value },
+  { label: 'Portfolio Pays / Mo', value: fmt(portfolioPays.value * reveal.value), hint: portfolioPaysHint.value },
+])
 </script>
 
 <template>
   <div class="p-6 space-y-6">
     <PageError v-if="error" :message="error" @retry="retry" />
 
-    <!-- Contextual header -->
-    <div>
-      <h1 class="text-2xl font-bold text-balance">
-        <template v-if="netWorth > 0">Net worth: {{ fmt(netWorth) }}</template>
-        <template v-else>Your FIRE journey starts here</template>
-      </h1>
-      <p
-        v-if="moMDeltas && netWorth > 0"
-        class="text-sm font-mono tabular-nums mt-0.5"
-        :class="moMDeltas.netWorth >= 0 ? 'text-success' : 'text-error'"
-      >
-        {{ fmtDelta(moMDeltas.netWorth) }} this month
-      </p>
-      <p v-if="drawdown && netWorth > 0" class="text-xs mt-0.5" :class="drawdown.atHigh ? 'text-success' : 'text-muted'">
-        <template v-if="drawdown.atHigh">At an all-time high</template>
-        <template v-else>
-          −{{ (drawdown.drawdown * 100).toFixed(1) }}% from the {{ DateTime.fromISO(drawdown.highDate).toFormat('LLL yyyy') }} high of {{ fmt(drawdown.high) }}
-        </template>
-      </p>
-      <p v-if="!fiDate && netWorth > 0" class="text-sm text-muted mt-1">
-        Complete your FIRE profile in <router-link to="/settings/profile" class="text-primary underline">Settings</router-link> to project your FI date.
-      </p>
+    <!-- First-run greeting; once accounts exist, net worth heads the metrics card below -->
+    <div v-if="acc.accounts.length === 0">
+      <h1 class="text-2xl font-bold text-balance">Your FIRE journey starts here</h1>
     </div>
+    <p v-if="!fiDate && netWorth > 0" class="text-sm text-muted">
+      Complete your FIRE profile in <router-link to="/settings/profile" class="text-primary underline">Settings</router-link> to project your FI date.
+    </p>
 
     <!-- The journey: the long game made tangible -->
     <FiProgressCard
@@ -323,94 +356,95 @@ const coastHint = computed(() => {
       </div>
     </template>
     <template v-else>
-      <div class="space-y-3">
-        <!-- Row A: Goal definition — what you're aiming at -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="tmfi-rise" :style="{ animationDelay: '40ms' }">
-            <StatCard label="FIRE Number" :value="fmt(fireNum * reveal)" :hint="fireNumberHint" />
+      <!-- Where you stand: net worth headline over its eight supporting metrics -->
+      <section class="tmfi-rise border border-default rounded-lg" :style="{ animationDelay: '40ms' }">
+        <header class="px-4 sm:px-5 pt-4 pb-4 flex flex-wrap items-start gap-x-10 gap-y-3">
+          <div>
+            <h2 class="text-sm text-muted">Net Worth</h2>
+            <div class="mt-0.5 font-mono font-bold tabular-nums text-3xl text-highlighted">{{ fmt(netWorth * reveal) }}</div>
+            <div
+              v-if="moMDeltas"
+              class="mt-0.5 text-xs font-mono tabular-nums"
+              :class="moMDeltas.netWorth >= 0 ? 'text-success' : 'text-error'"
+            >
+              {{ fmtDelta(moMDeltas.netWorth) }} this month
+            </div>
+            <div
+              v-if="netWorthYtd != null"
+              class="mt-0.5 text-xs font-mono tabular-nums"
+              :class="netWorthYtd >= 0 ? 'text-success' : 'text-error'"
+            >
+              {{ fmtDelta(netWorthYtd) }} YTD
+            </div>
           </div>
-          <div class="tmfi-rise" :style="{ animationDelay: '95ms' }">
-            <StatCard label="Investable Net Worth" :value="fmt(investable * reveal)" :trend="investableTrend" />
+          <div v-if="netWorthLessEquity != null">
+            <div class="text-sm text-muted">Excl. Home Equity</div>
+            <div class="mt-0.5 font-mono font-semibold tabular-nums text-3xl text-highlighted">{{ fmt(netWorthLessEquity * reveal) }}</div>
+            <div
+              v-if="lessEquityYtd != null"
+              class="mt-0.5 text-xs font-mono tabular-nums"
+              :class="lessEquityYtd >= 0 ? 'text-success' : 'text-error'"
+            >
+              {{ fmtDelta(lessEquityYtd) }} YTD
+            </div>
           </div>
-          <div class="tmfi-rise" :style="{ animationDelay: '150ms' }">
-            <StatCard
-              label="Coast FIRE"
-              :value="!coast ? '—' : coast.coasting ? 'Coasting' : fmt(coast.coastNumber * reveal)"
-              :color="coast?.coasting ? 'success' : 'default'"
-              :hint="coastHint"
-            />
+          <span v-if="drawdown" class="ms-auto text-xs" :class="drawdown.atHigh ? 'text-success' : 'text-muted'">
+            <template v-if="drawdown.atHigh">At an all-time high</template>
+            <template v-else>
+              −{{ (drawdown.drawdown * 100).toFixed(1) }}% from the {{ DateTime.fromISO(drawdown.highDate).toFormat('LLL yyyy') }} high of {{ fmt(drawdown.high) }}
+            </template>
+          </span>
+        </header>
+        <dl class="border-t border-default px-4 sm:px-5 py-4 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-5">
+          <div v-for="(m, i) in metrics" :key="m.label" class="tmfi-rise" :style="{ animationDelay: `${80 + i * 40}ms` }">
+            <dt class="text-sm text-muted">{{ m.label }}</dt>
+            <dd
+              class="mt-0.5 font-mono font-semibold tabular-nums text-xl"
+              :class="m.color === 'success' ? 'text-success' : 'text-highlighted'"
+            >
+              {{ m.value }}
+            </dd>
+            <dd v-if="m.hint" class="mt-0.5 text-xs text-muted">{{ m.hint }}</dd>
+            <dd
+              v-if="m.trend"
+              class="mt-0.5 text-xs font-mono tabular-nums"
+              :class="m.trend.positive ? 'text-success' : 'text-error'"
+            >
+              {{ m.trend.text }}
+            </dd>
           </div>
-        </div>
+        </dl>
+      </section>
 
-        <!-- Row B: Building velocity — how fast you're getting there -->
-        <div class="grid grid-cols-3 gap-3">
-          <div class="tmfi-rise" :style="{ animationDelay: '205ms' }">
-            <StatCard
-              label="Monthly Contribution"
-              :value="fmt(contribution.monthly * reveal)"
-              :hint="contributionHint"
-            />
-          </div>
-          <div class="tmfi-rise" :style="{ animationDelay: '260ms' }">
-            <StatCard label="Savings Rate" :value="`${(rate * 100 * reveal).toFixed(1)}%`" :hint="savingsRateHint" />
-          </div>
-          <div class="tmfi-rise" :style="{ animationDelay: '315ms' }">
-            <StatCard
-              label="Portfolio Earns / Mo"
-              :value="fmt(portfolioEarnings * reveal)"
-              :hint="portfolioEarnsHint"
-            />
-          </div>
-        </div>
-
-        <!-- Row C: What your money does for you — income today, independence from saving -->
-        <div class="grid grid-cols-2 gap-3">
-          <div class="tmfi-rise" :style="{ animationDelay: '370ms' }">
-            <StatCard
-              label="Portfolio Pays / Mo"
-              :value="fmt(portfolioPays * reveal)"
-              :hint="portfolioPaysHint"
-            />
-          </div>
-          <div class="tmfi-rise" :style="{ animationDelay: '425ms' }">
-            <StatCard
-              label="Crossover Point"
-              :value="crossoverValue"
-              :color="crossover?.crossed ? 'success' : 'default'"
-              :hint="crossoverHint"
-            />
-          </div>
-        </div>
-      </div>
-
-      <!-- The waypoints between here and FI -->
-      <div v-if="milestones.length > 0" class="tmfi-rise" :style="{ animationDelay: '480ms' }">
-        <MilestoneLadder :milestones="milestones" />
-      </div>
-
-      <!-- The pre-59½ funding gap every early retiree has to plan around -->
-      <div class="tmfi-rise" :style="{ animationDelay: '535ms' }">
-        <BridgeCard
-          :accessible-label="fmt(split.accessible)"
-          :deferred-label="fmt(split.deferred)"
-          :accessible-pct="bridgePct"
-          :status-text="bridgeDisplay.text"
-          :status-color="bridgeDisplay.color"
-          :caveat="bridgeDisplay.caveat"
-        />
-      </div>
     </template>
 
-    <!-- Net worth chart -->
-    <div class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '590ms' }">
-      <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
-      <NetWorthChart :points="series" :show-liquid-series="hasLiquidAccounts" />
+    <!-- Net worth chart, with the milestone ladder alongside setting the row height -->
+    <div class="grid gap-3 items-stretch" :class="milestones.length > 0 ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]' : ''">
+      <div class="tmfi-rise border border-default rounded-lg p-4 flex flex-col" :style="{ animationDelay: '440ms' }">
+        <h2 class="font-semibold mb-4">Net Worth Over Time</h2>
+        <NetWorthChart :points="series" :show-liquid-series="hasLiquidAccounts" :fluid="milestones.length > 0" />
+      </div>
+      <div v-if="milestones.length > 0" class="tmfi-rise" :style="{ animationDelay: '480ms' }">
+        <MilestoneLadder :milestones="milestones" class="h-full" />
+      </div>
     </div>
 
     <!-- Investments chart -->
-    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '645ms' }">
+    <div v-if="investmentSeries.points.length > 0" class="tmfi-rise border border-default rounded-lg p-4" :style="{ animationDelay: '520ms' }">
       <h2 class="font-semibold mb-4">Investments Over Time</h2>
       <InvestmentsChart :points="investmentSeries.points" :accounts="investmentAccounts" />
+    </div>
+
+    <!-- The pre-59½ funding gap every early retiree has to plan around -->
+    <div v-if="acc.accounts.length > 0" class="tmfi-rise" :style="{ animationDelay: '560ms' }">
+      <BridgeCard
+        :accessible-label="fmt(split.accessible)"
+        :deferred-label="fmt(split.deferred)"
+        :accessible-pct="bridgePct"
+        :status-text="bridgeDisplay.text"
+        :status-color="bridgeDisplay.color"
+        :caveat="bridgeDisplay.caveat"
+      />
     </div>
   </div>
 </template>
