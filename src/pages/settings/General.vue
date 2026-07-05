@@ -85,7 +85,8 @@ const showDeleteModal = ref(false)
               <p class="text-sm text-muted">
                 A paycheck landing in the last few days of a month usually funds the following
                 month's first half. This attributes it (and its pre-tax contributions) to the month
-                it funds in cash-flow analytics — transaction dates and balances stay untouched.
+                it funds in cash-flow analytics and the monthly budget — transaction dates and
+                balances stay untouched.
               </p>
             </div>
             <USwitch

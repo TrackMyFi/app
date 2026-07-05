@@ -20,12 +20,3 @@ export const getBudgetMonthTarget = (year: number, month: number): Promise<RawBu
 
 export const setBudgetMonthTarget = (year: number, month: number, savingsTarget: number): Promise<void> =>
   invoke('set_budget_month_target_cmd', { year, month, savingsTarget })
-
-export type BudgetPaycheckSummary = {
-  grossIncome: number
-  netIncome: number
-  taxes: number
-}
-
-export const getBudgetPaycheckSummary = (year: number, month: number): Promise<BudgetPaycheckSummary> =>
-  invoke('get_budget_paycheck_summary_cmd', { year, month })

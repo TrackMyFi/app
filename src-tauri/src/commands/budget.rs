@@ -19,14 +19,6 @@ pub struct BudgetMonthTarget {
     pub source_month: i32,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BudgetPaycheckSummary {
-    pub gross_income: f64,
-    pub net_income: f64,
-    pub taxes: f64,
-}
-
 const TXN_COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
     generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, suppressed_as, \
@@ -153,50 +145,6 @@ pub async fn set_budget_month_target_cmd(db: State<'_, Db>, year: i32, month: i3
     set_budget_month_target(&conn, year, month, savings_target).await
 }
 
-pub async fn get_budget_paycheck_summary(
-    conn: &Connection,
-    year: i32,
-    month: i32,
-) -> Result<BudgetPaycheckSummary, String> {
-    let mut rows = conn
-        .query(
-            "SELECT \
-              COALESCE(SUM(gross_amount), 0.0), \
-              COALESCE(SUM(net_amount), 0.0), \
-              COALESCE(SUM(federal_tax + state_tax + local_tax + social_security_tax + medicare_tax), 0.0) \
-             FROM paycheck \
-             WHERE strftime('%Y', pay_date) = printf('%04d', ?1) \
-               AND strftime('%m', pay_date) = printf('%02d', ?2)",
-            params![year, month],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
-        Ok(BudgetPaycheckSummary {
-            gross_income: row.get(0).map_err(|e| e.to_string())?,
-            net_income: row.get(1).map_err(|e| e.to_string())?,
-            taxes: row.get(2).map_err(|e| e.to_string())?,
-        })
-    } else {
-        Ok(BudgetPaycheckSummary {
-            gross_income: 0.0,
-            net_income: 0.0,
-            taxes: 0.0,
-        })
-    }
-}
-
-#[tauri::command]
-pub async fn get_budget_paycheck_summary_cmd(
-    db: State<'_, Db>,
-    year: i32,
-    month: i32,
-) -> Result<BudgetPaycheckSummary, String> {
-    let conn = db.conn().await?;
-    get_budget_paycheck_summary(&conn, year, month).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,29 +244,4 @@ mod tests {
         assert!(txns[0].date.starts_with("2025-06"));
     }
 
-    #[tokio::test]
-    async fn test_get_budget_paycheck_summary() {
-        let conn = test_conn().await;
-        // Insert a paycheck for 2026-06
-        conn.execute(
-            "INSERT INTO paycheck (pay_date, employer, pay_period, gross_amount, net_amount, \
-             federal_tax, state_tax, local_tax, social_security_tax, medicare_tax, \
-             deductions, employer_match, import_source, created_at, updated_at) \
-             VALUES ('2026-06-15', 'Acme', 'biweekly', 5000.0, 3500.0, \
-             800.0, 200.0, 50.0, 310.0, 72.5, '[]', '[]', 'manual', '2026-06-15', '2026-06-15')",
-            libsql::params![],
-        )
-        .await
-        .unwrap();
-
-        let result = get_budget_paycheck_summary(&conn, 2026, 6).await.unwrap();
-        assert_eq!(result.gross_income, 5000.0);
-        assert_eq!(result.net_income, 3500.0);
-        assert_eq!(result.taxes, 1432.5); // 800 + 200 + 50 + 310 + 72.5
-
-        // No paychecks for a different month returns zeros
-        let empty = get_budget_paycheck_summary(&conn, 2026, 5).await.unwrap();
-        assert_eq!(empty.gross_income, 0.0);
-        assert_eq!(empty.taxes, 0.0);
-    }
 }

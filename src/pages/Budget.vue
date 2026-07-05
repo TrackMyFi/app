@@ -74,10 +74,34 @@ async function saveTarget() {
   }
 }
 
+// The income table normally hides paycheck deposit rows (paycheck income
+// lives in the summary figures), but a deposit carried in from last month's
+// month-end paycheck would otherwise be invisible — surface it, notated.
+const incomeTransactions = computed(() => {
+  if (!store.summary) return []
+  const carriedDeposits = store.carriedIn.filter((t) => t.type === 'income' && !t.isContribution)
+  return [...carriedDeposits, ...store.summary.income.transactions]
+})
+
+// Newest first so fresh activity tops the table; carried-in rows from last
+// month are the oldest by real date and naturally settle at the bottom.
 const detailTransactions = computed(() => {
   if (!store.summary || !store.activeSection) return []
-  return store.summary[store.activeSection].transactions
+  const rows = store.activeSection === 'income'
+    ? incomeTransactions.value
+    : store.summary[store.activeSection].transactions
+  return [...rows].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
 })
+
+// ─── Month-end paycheck attribution ──────────────────────────────────────────
+
+// A row dated before the selected month was carried in by the paycheck
+// attribution preference — badge it so the numbers stay explainable.
+function isCarriedIn(t: { date: string }): boolean {
+  return t.date < selectedDate.value.toISODate()!
+}
+
+const carriedFromLabel = computed(() => selectedDate.value.minus({ months: 1 }).toFormat('MMM'))
 
 const emptyMessage = computed(() => {
   switch (store.activeSection) {
@@ -334,7 +358,7 @@ onMounted(() => run(async () => {
       <div class="tmfi-rise border border-default rounded-lg overflow-hidden" :style="{ animationDelay: '120ms' }">
         <div class="bg-elevated px-4 py-2 border-b border-default">
           <span v-if="store.activeSection === 'income'" class="text-sm font-medium uppercase tracking-wide">
-            INCOME — {{ store.summary.income.transactions.length }} transaction{{ store.summary.income.transactions.length === 1 ? '' : 's' }}
+            INCOME — {{ incomeTransactions.length }} transaction{{ incomeTransactions.length === 1 ? '' : 's' }}
           </span>
           <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
         </div>
@@ -350,6 +374,19 @@ onMounted(() => run(async () => {
           <div :key="store.activeSection ?? 'none'">
             <!-- Income table: Gross + Net columns -->
             <UTable v-if="store.activeSection === 'income'" :data="detailTransactions" :columns="incomeColumns" :empty="emptyMessage">
+              <template #description-cell="{ row }">
+                <span class="inline-flex items-center gap-2">
+                  {{ row.original.description }}
+                  <UBadge
+                    v-if="isCarriedIn(row.original)"
+                    color="info"
+                    variant="subtle"
+                    size="sm"
+                    icon="i-ph-arrow-bend-down-right"
+                    title="Month-end paycheck counted toward the month it funds"
+                  >from {{ carriedFromLabel }}</UBadge>
+                </span>
+              </template>
               <template #account-cell="{ row }">
                 <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
               </template>
@@ -361,6 +398,19 @@ onMounted(() => run(async () => {
 
             <!-- All other sections: single Amount column -->
             <UTable v-else :data="detailTransactions" :columns="sectionColumns" :empty="emptyMessage">
+              <template #description-cell="{ row }">
+                <span class="inline-flex items-center gap-2">
+                  {{ row.original.description }}
+                  <UBadge
+                    v-if="isCarriedIn(row.original)"
+                    color="info"
+                    variant="subtle"
+                    size="sm"
+                    icon="i-ph-arrow-bend-down-right"
+                    title="Month-end paycheck counted toward the month it funds"
+                  >from {{ carriedFromLabel }}</UBadge>
+                </span>
+              </template>
               <template #account-cell="{ row }">
                 <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
               </template>

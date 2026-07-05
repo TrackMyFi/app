@@ -11,7 +11,7 @@ import { computeMedian, MONTHLY_REFERENCE_WINDOW, ANNUAL_REFERENCE_WINDOW, type 
 import { pctVsMedian, changeColor, trendIcon, proratedSuffix, type TrendField } from '../lib/transactions/trends'
 import { useReveal } from '../composables/useReveal'
 import { useMonthEndPaycheckAttribution } from '../composables/useMonthEndPaycheckAttribution'
-import { attributeToFundedMonth, MONTH_END_WINDOW_DAYS } from '../lib/transactions/attribution'
+import { attributeToFundedMonth, fundedMonthISO, isMonthEndPaycheckRow, MONTH_END_WINDOW_DAYS } from '../lib/transactions/attribution'
 import * as api from '../lib/api/transactions'
 import { listSimpleFinPending } from '../lib/api/simplefin'
 import type { SimpleFinPendingTransaction } from '../lib/types/SimpleFinPendingTransaction'
@@ -395,6 +395,50 @@ const cumulativeTransactions = computed(() =>
   scope.value === 'all' ? attributedAllTime.value : attributedYear.value
 )
 
+// ─── Carried-in month-end paychecks ───────────────────────────────────────────
+
+// Rows dated before the selected period that the attribution preference counts
+// toward it (last month's month-end paycheck and its pre-tax contributions).
+// They're inside every total above but outside the ledger table's date filter,
+// so they get their own notated strip — otherwise the figures don't add up to
+// what the table shows.
+const carriedInTransactions = computed(() => {
+  if (!attributePaychecks.value || scope.value === 'all') return []
+  const start = scope.value === 'month' ? monthStart.value : selectedDate.value.startOf('year').toISODate()!
+  const end = scope.value === 'month' ? monthEnd.value : selectedDate.value.endOf('year').toISODate()!
+  return yearTransactions.value.filter((t) => {
+    if (t.date >= start) return false
+    const funded = fundedMonthISO(t)
+    return funded != null && funded >= start && funded <= end
+  })
+})
+
+const carriedFromLabel = computed(() => {
+  const prev = scope.value === 'month'
+    ? selectedDate.value.minus({ months: 1 })
+    : selectedDate.value.startOf('year').minus({ months: 1 })
+  return prev.toFormat(scope.value === 'month' ? 'MMMM' : 'MMMM yyyy')
+})
+
+// A month-end paycheck row in the ledger whose cash flow was shifted out of
+// its calendar month; marked so its exclusion from the totals is explainable.
+function isShiftedOut(t: Transaction): boolean {
+  return attributePaychecks.value && isMonthEndPaycheckRow(t)
+}
+
+function shiftedOutTitle(t: Transaction): string {
+  const funded = fundedMonthISO(t)
+  const label = funded ? DateTime.fromISO(funded).toFormat('MMMM') : 'next month'
+  return `Month-end paycheck — counted toward ${label}`
+}
+
+const carriedColumns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'account', header: 'Account' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
+
 // ─── Pending (SimpleFIN) ──────────────────────────────────────────────────────
 
 // Transactions still pending at the bank, shown for awareness in their own
@@ -759,6 +803,17 @@ onMounted(() => run(async () => {
             </div>
           </div>
         </template>
+        <template #date-cell="{ row }">
+          <span class="inline-flex items-center gap-1.5">
+            {{ row.original.date }}
+            <UIcon
+              v-if="isShiftedOut(row.original)"
+              name="i-ph-arrow-bend-up-right"
+              class="size-3.5 text-info shrink-0"
+              :title="shiftedOutTitle(row.original)"
+            />
+          </span>
+        </template>
         <template #description-cell="{ row }">
           <!-- Tooltip shows the bank's unedited text when the import cleaned it up. -->
           <span class="block max-w-[300px] truncate" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
@@ -801,6 +856,32 @@ onMounted(() => run(async () => {
       <div v-if="store.loading && store.page.rows.length > 0" class="flex justify-center py-3">
         <UIcon name="i-ph-spinner" class="size-5 text-muted animate-spin" />
       </div>
+    </div>
+
+    <!-- Carried in from last month-end — counted in this period's totals.
+         Last on the page: these rows are the period's oldest by real date,
+         so they read in sequence after the ledger. -->
+    <div v-if="carriedInTransactions.length > 0" class="border border-default rounded-lg overflow-hidden">
+      <div class="flex items-center gap-1.5 px-4 py-2 border-b border-default">
+        <UIcon name="i-ph-arrow-bend-down-right" class="size-3.5 text-info" />
+        <p class="text-xs text-muted">
+          Carried in from {{ carriedFromLabel }} ({{ carriedInTransactions.length }}) — month-end paycheck counted toward {{ tableScopeLabel }}'s totals
+        </p>
+      </div>
+      <UTable :data="carriedInTransactions" :columns="carriedColumns">
+        <template #description-cell="{ row }">
+          <span class="block max-w-[300px] truncate" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
+        </template>
+        <template #account-cell="{ row }">
+          {{ accountName(row.original.accountId) }}
+        </template>
+        <template #amount-cell="{ row }">
+          <span class="inline-flex items-center justify-end gap-1.5" :class="flowColor(row.original)">
+            <UIcon :name="flowIcon(row.original)" class="size-4 shrink-0" :title="directionLabel(row.original)" />
+            {{ money(row.original.amount) }}
+          </span>
+        </template>
+      </UTable>
     </div>
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
