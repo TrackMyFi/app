@@ -8,9 +8,12 @@
 //! imports data for each SimpleFIN account the user has linked to a local
 //! account (`account.simplefin_id`).
 //!
-//! Rate limits: SimpleFIN asks clients to poll roughly once a day. The
-//! scheduler in `lib.rs` syncs 24h after the last success, retrying no sooner
-//! than 6h after a failed attempt. "Sync now" is always allowed (user action).
+//! Rate limits: SimpleFIN allows up to 24 requests per day, but only refreshes
+//! from institutions about once every 24h (at unpredictable times per bank).
+//! The scheduler in `lib.rs` syncs 3h after the last success — often enough to
+//! pick up their daily refresh promptly, at most 8 requests/day — retrying no
+//! sooner than 6h after a failed attempt, and only while the app window is
+//! focused. "Sync now" is always allowed (user action).
 //!
 //! Gaps: bank connections drop and can stay broken for days or weeks. Every
 //! fetch therefore starts its transaction window at the last SUCCESSFUL sync
@@ -34,8 +37,11 @@ use ts_rs::TS;
 
 const KEYCHAIN_USER: &str = "simplefin-access-url";
 
-/// Sync 24h after the last successful sync (SimpleFIN's ~once-a-day guidance).
-const SYNC_AFTER_SUCCESS_HOURS: i64 = 24;
+/// Sync 3h after the last successful sync. SimpleFIN only refreshes upstream
+/// data ~once a day at an unknown time, so this bounds how stale we can be
+/// after their refresh lands while staying well under their 24-requests/day
+/// limit (≤8/day, focused-only).
+const SYNC_AFTER_SUCCESS_HOURS: i64 = 3;
 /// After a failed attempt, wait this long before retrying automatically.
 const RETRY_AFTER_FAILURE_HOURS: i64 = 6;
 /// Re-fetch this many days before the last success so nothing on the boundary
@@ -397,7 +403,7 @@ fn select_description(t: &SfinTxn) -> (String, Option<String>) {
     (display, raw)
 }
 
-/// Whether an automatic sync is due. Pure so it's testable: 24h after the last
+/// Whether an automatic sync is due. Pure so it's testable: 3h after the last
 /// success, but never within 6h of the last attempt (failed attempts back off
 /// instead of hammering a broken connection).
 fn sync_due(
@@ -409,7 +415,17 @@ fn sync_due(
         Some(t) => now - t >= chrono::Duration::hours(SYNC_AFTER_SUCCESS_HOURS),
         None => true,
     };
-    let attempt_ok = match last_attempt {
+    // The backoff applies only to FAILED attempts. `last_attempt_at` is
+    // written when a sync starts and `last_success_at` when it finishes, so
+    // an attempt strictly newer than the last success is one that failed —
+    // a successful sync must not push the next auto-sync past the normal
+    // interval.
+    let last_failed_attempt = match (last_attempt, last_success) {
+        (Some(a), Some(s)) => (a > s).then_some(a),
+        (a, None) => a,
+        (None, Some(_)) => None,
+    };
+    let attempt_ok = match last_failed_attempt {
         Some(t) => now - t >= chrono::Duration::hours(RETRY_AFTER_FAILURE_HOURS),
         None => true,
     };
@@ -1186,6 +1202,23 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
 /// Scheduler entry point: sync only when due. Errors are recorded in the state
 /// row by `run_sync`; the scheduler itself never fails.
 pub async fn maybe_sync(app: &AppHandle) {
+    // Auto-sync only while the app is focused: a backgrounded app doesn't need
+    // fresh bank data, and skipping keeps us far under SimpleFIN's request
+    // budget. The focus handler in `lib.rs` re-enters here the moment focus
+    // returns, so a stale app catches up immediately on focus rather than
+    // waiting for the next scheduler tick.
+    let focused = app.webview_windows().values().any(|w| w.is_focused().unwrap_or(false));
+    if !focused {
+        return;
+    }
+    // A focus event can in principle fire before `setup` finishes managing
+    // state; `run_sync` needs all three, so bail instead of panicking.
+    if app.try_state::<Db>().is_none()
+        || app.try_state::<SimpleFinShared>().is_none()
+        || app.try_state::<crate::sync::DbGate>().is_none()
+    {
+        return;
+    }
     let Ok(Some(_)) = access_url_get() else { return };
     let Ok(conn) = app.state::<Db>().conn().await else { return };
     let Ok(state) = read_state(&conn).await else { return };
@@ -1424,14 +1457,17 @@ mod tests {
         let h = chrono::Duration::hours;
         // Never synced → due.
         assert!(sync_due(now, None, None));
-        // Succeeded 2h ago → not due.
+        // Succeeded 2h ago → not due (interval is 3h).
         assert!(!sync_due(now, Some(now - h(2)), Some(now - h(2))));
-        // Succeeded 25h ago, no recent attempt → due.
-        assert!(sync_due(now, Some(now - h(25)), Some(now - h(25))));
+        // Succeeded 4h ago (attempt recorded just before the success) → due;
+        // a successful attempt must not trigger the failure backoff.
+        assert!(sync_due(now, Some(now - h(4)), Some(now - h(4))));
         // Succeeded 25h ago but a (failed) attempt 2h ago → back off.
         assert!(!sync_due(now, Some(now - h(25)), Some(now - h(2))));
-        // ...and retry once the attempt is 6h old.
+        // ...and retry once the failed attempt is 6h old.
         assert!(sync_due(now, Some(now - h(30)), Some(now - h(7))));
+        // Never succeeded, failed attempt 2h ago → back off.
+        assert!(!sync_due(now, None, Some(now - h(2))));
     }
 
     #[test]

@@ -36,6 +36,18 @@ pub fn run() {
     }
 
     builder
+        .on_window_event(|window, event| {
+            // Focus regained: give the SimpleFIN scheduler an immediate shot
+            // instead of waiting up to 30 minutes for the next tick. If the
+            // app was backgrounded past the sync interval, this is what makes
+            // data refresh the moment the user comes back.
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                let handle = window.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    simplefin::maybe_sync(&handle).await;
+                });
+            }
+        })
         .setup(|app| {
             // First-launch window sizing. The window-state plugin restores the
             // user's last size & position on every subsequent launch, but on a
@@ -107,11 +119,12 @@ pub fn run() {
                 }
             });
 
-            // SimpleFIN daily bank sync. `maybe_sync` no-ops unless connected
-            // AND due (24h after the last success, 6h backoff after failures),
-            // so ticking every 30 minutes stays well within SimpleFIN's
-            // ~once-a-day polling guidance while catching up promptly after
-            // the app has been closed for days.
+            // SimpleFIN bank sync. `maybe_sync` no-ops unless the window is
+            // focused, connected, AND due (3h after the last success, 6h
+            // backoff after failures) — at most 8 requests/day against
+            // SimpleFIN's 24/day budget. A backgrounded app never polls; the
+            // window-focus handler below triggers an immediate catch-up sync
+            // when focus returns.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(
