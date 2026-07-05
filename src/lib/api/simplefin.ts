@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { SimpleFinDuplicateCandidate } from '../types/SimpleFinDuplicateCandidate'
+import type { SimpleFinPendingTransaction } from '../types/SimpleFinPendingTransaction'
 import type { SimpleFinStatus } from '../types/SimpleFinStatus'
 import type { SimpleFinSyncSummary } from '../types/SimpleFinSyncSummary'
 import type { SimpleFinSyncingEvent } from '../types/SimpleFinSyncingEvent'
@@ -20,6 +21,11 @@ export const syncSimpleFinNow = () => invoke<SimpleFinSyncSummary>('simplefin_sy
 /** Candidate SimpleFIN-vs-manual/CSV duplicate pairs for the review UI. */
 export const listSimpleFinDuplicates = () =>
   invoke<SimpleFinDuplicateCandidate[]>('simplefin_duplicate_candidates')
+
+/** Transactions still pending at the bank — awareness only, outside the
+ *  ledger and every sum/aggregate. Empty when SimpleFIN isn't connected. */
+export const listSimpleFinPending = () =>
+  invoke<SimpleFinPendingTransaction[]>('simplefin_list_pending')
 
 export const disconnectSimpleFin = () => invoke<void>('simplefin_disconnect')
 

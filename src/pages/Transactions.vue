@@ -13,6 +13,8 @@ import { useReveal } from '../composables/useReveal'
 import { useMonthEndPaycheckAttribution } from '../composables/useMonthEndPaycheckAttribution'
 import { attributeToFundedMonth, MONTH_END_WINDOW_DAYS } from '../lib/transactions/attribution'
 import * as api from '../lib/api/transactions'
+import { listSimpleFinPending } from '../lib/api/simplefin'
+import type { SimpleFinPendingTransaction } from '../lib/types/SimpleFinPendingTransaction'
 import TransactionForm from '../components/TransactionForm.vue'
 import ImportWizard from '../components/ImportWizard.vue'
 import TransactionChart from '../components/TransactionChart.vue'
@@ -393,6 +395,22 @@ const cumulativeTransactions = computed(() =>
   scope.value === 'all' ? attributedAllTime.value : attributedYear.value
 )
 
+// ─── Pending (SimpleFIN) ──────────────────────────────────────────────────────
+
+// Transactions still pending at the bank, shown for awareness in their own
+// strip above the ledger table. They live outside `txn` entirely, so no sum,
+// chart, or stat on this page (or anywhere else) can see them — everything is
+// muted/neutral to signal "not counted yet". Deliberately unaffected by the
+// page filters: the set is small and vanishes as rows post.
+const pendingTransactions = ref<SimpleFinPendingTransaction[]>([])
+
+const pendingColumns = [
+  { accessorKey: 'date', header: 'Date' },
+  { accessorKey: 'description', header: 'Description' },
+  { id: 'account', header: 'Account' },
+  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
+]
+
 // ─── Table ─────────────────────────────────────────────────────────────────────
 
 const rows = computed(() => store.page.rows)
@@ -489,6 +507,7 @@ onMounted(() => run(async () => {
   await accountsStore.load()
   seedFiltersFromRoute()
   await applyFilters()
+  pendingTransactions.value = await listSimpleFinPending()
 }))
 </script>
 
@@ -655,6 +674,37 @@ onMounted(() => run(async () => {
       <UInputTags v-model="searchTerms" placeholder="Search terms" class="flex-1 min-w-0" />
       <UButton @click="applyFilters">Apply</UButton>
       <UButton variant="ghost" @click="clearFilters">Clear</UButton>
+    </div>
+
+    <!-- Pending at the bank — awareness only, outside every total -->
+    <div v-if="pendingTransactions.length > 0" class="border border-default rounded-lg overflow-hidden">
+      <div class="flex items-center gap-1.5 px-4 py-2 border-b border-default">
+        <UIcon name="i-ph-clock" class="size-3.5 text-warning" />
+        <p class="text-xs text-muted">
+          Pending at your bank ({{ pendingTransactions.length }}) — not counted in any totals until they post
+        </p>
+      </div>
+      <UTable :data="pendingTransactions" :columns="pendingColumns">
+        <template #date-cell="{ row }">
+          <span class="text-muted">{{ row.original.date }}</span>
+        </template>
+        <template #description-cell="{ row }">
+          <span class="block max-w-[300px] truncate text-muted" :title="row.original.description">{{ row.original.description }}</span>
+        </template>
+        <template #account-cell="{ row }">
+          <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
+        </template>
+        <template #amount-cell="{ row }">
+          <span class="inline-flex items-center justify-end gap-1.5 text-muted">
+            <UIcon
+              :name="row.original.txnType === 'income' ? 'i-ph-arrow-right' : 'i-ph-arrow-left'"
+              class="size-4 shrink-0"
+              :title="row.original.txnType === 'income' ? 'Income (pending)' : 'Expense (pending)'"
+            />
+            {{ money(row.original.amount) }}
+          </span>
+        </template>
+      </UTable>
     </div>
 
     <!-- Table -->

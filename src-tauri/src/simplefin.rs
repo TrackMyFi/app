@@ -229,6 +229,9 @@ pub struct SimpleFinSyncSummary {
     /// Cross-account income/expense pairs collapsed into canonical transfers.
     #[ts(type = "number")]
     pub transfers_detected: i64,
+    /// Whether the pending-transaction cache changed this sync (the set is
+    /// wiped and re-inserted every time; this compares the row counts).
+    pub pending_changed: bool,
     pub bridge_errors: Vec<String>,
 }
 
@@ -245,6 +248,25 @@ pub struct SimpleFinSyncingEvent {
     pub transactions_added: i64,
     #[ts(type = "number")]
     pub snapshots_added: i64,
+}
+
+/// A transaction still pending at the bank, cached for awareness display only.
+/// Never enters `txn` and never counts toward any total — pending rows mutate
+/// or vanish (even their SimpleFIN id can change once posted), so the cache is
+/// wiped and re-inserted on every sync.
+#[derive(Serialize, Clone, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct SimpleFinPendingTransaction {
+    pub id: i32,
+    pub account_id: i32,
+    pub amount: f64,
+    pub description: String,
+    /// "YYYY-MM-DD" (transacted date when the bank sends one, else posted).
+    pub date: String,
+    /// "income" | "expense" (sign-derived, same as the posted import path).
+    pub txn_type: String,
+    pub simplefin_id: String,
 }
 
 /// One candidate duplicate pair for the post-import review: a SimpleFIN-imported
@@ -581,6 +603,15 @@ async fn import_account_set(
     let mut reproject: Vec<(i32, String)> = Vec::new();
     let created_at = now_iso();
 
+    // The pending cache is rebuilt from scratch every sync: pending rows at
+    // the bank mutate or vanish, so the previous set is worthless. Rows are
+    // re-inserted below as each linked account's transactions are walked.
+    let pending_wiped = conn
+        .execute("DELETE FROM simplefin_pending_txn", ())
+        .await
+        .map_err(|e| e.to_string())? as i64;
+    let mut pending_inserted = 0i64;
+
     for acct in &set.accounts {
         let raw_balance = acct.balance.as_f64().unwrap_or(0.0);
         let balance_date = ts_to_date(acct.balance_date);
@@ -651,12 +682,10 @@ async fn import_account_set(
             }
         }
 
-        // Transactions. Pending ones are skipped — they mutate or vanish, and
-        // the next daily sync picks them up once posted.
+        // Transactions. Pending ones never enter `txn` — they mutate or
+        // vanish, and the next daily sync picks them up once posted — but they
+        // ARE cached in simplefin_pending_txn for awareness display.
         for t in &acct.transactions {
-            if t.pending == Some(true) {
-                continue;
-            }
             let Some(signed) = t.amount.as_f64() else { continue };
             let ts = if t.posted > 0 { t.posted } else { t.transacted_at.unwrap_or(0) };
             if ts <= 0 {
@@ -672,6 +701,33 @@ async fn import_account_set(
                 .find(|s| !s.is_empty())
                 .unwrap_or("SimpleFIN transaction")
                 .to_string();
+
+            if t.pending == Some(true) {
+                // The NOT EXISTS guards skip a pending row whose id already
+                // posted into the ledger (some bridges keep the id stable) or
+                // was consumed by a transfer collapse — either way it would
+                // read as a double entry.
+                pending_inserted += conn
+                    .execute(
+                        "INSERT INTO simplefin_pending_txn (account_id, simplefin_id, \
+                         amount, description, date, type, created_at) \
+                         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+                         WHERE NOT EXISTS (SELECT 1 FROM txn \
+                           WHERE simplefin_id = ?2 OR simplefin_counterpart_id = ?2)",
+                        params![
+                            link.account_id,
+                            t.id.clone(),
+                            amount,
+                            description,
+                            date,
+                            ty,
+                            created_at.clone()
+                        ],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())? as i64;
+                continue;
+            }
             let category = match_category(&rules, &description);
             let vendor_cat = vendor_category(t);
 
@@ -725,6 +781,10 @@ async fn import_account_set(
     crate::commands::suppress_rules::apply_suppress_rules(conn).await?;
 
     summary.transfers_detected = collapse_transfer_pairs(conn).await?;
+
+    // Count comparison only — a same-count content mutation slips through, but
+    // it self-corrects on the next page visit and the next sync.
+    summary.pending_changed = pending_wiped != pending_inserted;
 
     Ok((summary, cache))
 }
@@ -1045,7 +1105,7 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         },
     );
     if let Ok(s) = &result {
-        if s.transactions_added > 0 || s.snapshots_added > 0 {
+        if s.transactions_added > 0 || s.snapshots_added > 0 || s.pending_changed {
             let _ = app.emit("data-refreshed", ());
         }
     }
@@ -1176,6 +1236,36 @@ pub async fn simplefin_duplicate_candidates(
 ) -> Result<Vec<SimpleFinDuplicateCandidate>, String> {
     let conn = app.state::<Db>().conn().await?;
     duplicate_candidates(&conn).await
+}
+
+/// List the cached pending transactions (newest first). Awareness only —
+/// these rows are outside the ledger and every sum/aggregate.
+#[tauri::command]
+pub async fn simplefin_list_pending(
+    app: AppHandle,
+) -> Result<Vec<SimpleFinPendingTransaction>, String> {
+    let conn = app.state::<Db>().conn().await?;
+    let mut rows = conn
+        .query(
+            "SELECT id, account_id, amount, description, date, type, simplefin_id \
+             FROM simplefin_pending_txn ORDER BY date DESC, id DESC",
+            (),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(SimpleFinPendingTransaction {
+            id: r.get(0).map_err(|e| e.to_string())?,
+            account_id: r.get(1).map_err(|e| e.to_string())?,
+            amount: r.get(2).map_err(|e| e.to_string())?,
+            description: r.get(3).map_err(|e| e.to_string())?,
+            date: r.get(4).map_err(|e| e.to_string())?,
+            txn_type: r.get(5).map_err(|e| e.to_string())?,
+            simplefin_id: r.get(6).map_err(|e| e.to_string())?,
+        });
+    }
+    Ok(out)
 }
 
 /// Remove the access URL from the keychain and reset sync state. Imported data
@@ -1771,6 +1861,84 @@ mod tests {
         assert_eq!(summary.transactions_added, 0);
         assert_eq!(summary.snapshots_added, 0);
         assert_eq!(cache.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_rows_cache_and_clear_when_posted() {
+        let conn = setup_db().await;
+        let acc = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let ts = 1_700_000_000;
+
+        let mut pending = demo_txn("TRN-P", "-12.34", ts, "PENDING COFFEE");
+        pending.pending = Some(true);
+        let (s1, _) =
+            import_account_set(&conn, &demo_set("100.00", ts, vec![pending])).await.unwrap();
+        assert!(s1.pending_changed);
+        assert_eq!(s1.transactions_added, 0, "pending must not enter the ledger");
+
+        let mut rows = conn
+            .query(
+                "SELECT account_id, amount, type, simplefin_id FROM simplefin_pending_txn",
+                (),
+            )
+            .await
+            .unwrap();
+        let r = rows.next().await.unwrap().unwrap();
+        assert_eq!(r.get::<i32>(0).unwrap(), acc);
+        assert_eq!(r.get::<f64>(1).unwrap(), 12.34);
+        assert_eq!(r.get::<String>(2).unwrap(), "expense");
+        assert_eq!(r.get::<String>(3).unwrap(), "TRN-P");
+        assert!(rows.next().await.unwrap().is_none());
+        drop(rows);
+
+        // Next sync: the charge has posted (same id kept by this bridge). The
+        // cache empties and the ledger gains the posted row exactly once.
+        let (s2, _) = import_account_set(
+            &conn,
+            &demo_set("87.66", ts + DAY, vec![demo_txn("TRN-P", "-12.34", ts + DAY, "COFFEE")]),
+        )
+        .await
+        .unwrap();
+        assert!(s2.pending_changed);
+        assert_eq!(s2.transactions_added, 1);
+        let mut count = conn
+            .query("SELECT COUNT(*) FROM simplefin_pending_txn", ())
+            .await
+            .unwrap();
+        assert_eq!(count.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+
+        // Idempotent re-import with no pending: nothing changed.
+        let (s3, _) = import_account_set(
+            &conn,
+            &demo_set("87.66", ts + DAY, vec![demo_txn("TRN-P", "-12.34", ts + DAY, "COFFEE")]),
+        )
+        .await
+        .unwrap();
+        assert!(!s3.pending_changed);
+    }
+
+    #[tokio::test]
+    async fn pending_row_already_posted_under_same_id_is_not_cached() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let ts = 1_700_000_000;
+
+        // Posted import first…
+        import_account_set(
+            &conn,
+            &demo_set("100.00", ts, vec![demo_txn("TRN-1", "-5.00", ts, "CHARGE")]),
+        )
+        .await
+        .unwrap();
+        // …then a stale fetch still marks the same id as pending: guarded out.
+        let mut stale = demo_txn("TRN-1", "-5.00", ts, "CHARGE");
+        stale.pending = Some(true);
+        import_account_set(&conn, &demo_set("100.00", ts, vec![stale])).await.unwrap();
+        let mut count = conn
+            .query("SELECT COUNT(*) FROM simplefin_pending_txn", ())
+            .await
+            .unwrap();
+        assert_eq!(count.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
     }
 
     #[tokio::test]

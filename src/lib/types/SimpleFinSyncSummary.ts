@@ -4,4 +4,9 @@ export type SimpleFinSyncSummary = { accountsSynced: number, transactionsAdded: 
 /**
  * Cross-account income/expense pairs collapsed into canonical transfers.
  */
-transfersDetected: number, bridgeErrors: Array<string>, };
+transfersDetected: number, 
+/**
+ * Whether the pending-transaction cache changed this sync (the set is
+ * wiped and re-inserted every time; this compares the row counts).
+ */
+pendingChanged: boolean, bridgeErrors: Array<string>, };

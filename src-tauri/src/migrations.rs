@@ -109,6 +109,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "withdrawal_rate",
         sql: include_str!("../migrations/0020_withdrawal_rate.sql"),
     },
+    Migration {
+        version: 21,
+        name: "simplefin_pending",
+        sql: include_str!("../migrations/0021_simplefin_pending.sql"),
+    },
 ];
 
 pub async fn run(conn: &Connection) -> Result<(), String> {
