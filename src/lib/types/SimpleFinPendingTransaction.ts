@@ -14,4 +14,8 @@ date: string,
 /**
  * "income" | "expense" (sign-derived, same as the posted import path).
  */
-txnType: string, simplefinId: string, };
+txnType: string, simplefinId: string, 
+/**
+ * Every distinct description field the bank sent, unedited.
+ */
+rawDescription: string | null, };

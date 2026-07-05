@@ -19,7 +19,7 @@ function makeTxn(overrides: Partial<Transaction>): Transaction {
     importSource: 'manual',
     generatedBalanceId: null,
     generatedBalanceToId: null,
-    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null,
+    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null,
     createdAt: '2025-01-01',
     updatedAt: '2025-01-01',
     ...overrides,

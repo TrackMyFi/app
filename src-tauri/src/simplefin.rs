@@ -267,6 +267,8 @@ pub struct SimpleFinPendingTransaction {
     /// "income" | "expense" (sign-derived, same as the posted import path).
     pub txn_type: String,
     pub simplefin_id: String,
+    /// Every distinct description field the bank sent, unedited.
+    pub raw_description: Option<String>,
 }
 
 /// One candidate duplicate pair for the post-import review: a SimpleFIN-imported
@@ -347,6 +349,52 @@ fn vendor_category(t: &SfinTxn) -> Option<String> {
         }
     }
     None
+}
+
+/// Payment-processor wrappers that obscure the real merchant: "LINK.COM*
+/// SIMPLEFIN BR ..." is a SimpleFIN charge routed through Link, not a
+/// purchase from link.com. Matched case-insensitively at the start of a
+/// field; an optional "*" after the prefix is stripped too.
+const PROCESSOR_PREFIXES: &[&str] = &["LINK.COM"];
+
+/// Strip a processor wrapper from one candidate field. Returns None when the
+/// field is JUST the processor name (e.g. a payee of "Link.com") — such a
+/// field says nothing about the purchase and must not win the precedence.
+fn strip_processor_prefix(field: &str) -> Option<String> {
+    for prefix in PROCESSOR_PREFIXES {
+        if field.len() >= prefix.len() && field[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            let rest = field[prefix.len()..].trim_start_matches('*').trim();
+            return if rest.is_empty() { None } else { Some(rest.to_string()) };
+        }
+    }
+    Some(field.to_string())
+}
+
+/// Pick the display description (payee → description → memo, processor
+/// wrappers stripped) and assemble the raw description: every distinct
+/// non-empty field the bank sent, joined unedited — kept on the row so the
+/// user can always see the original text behind any cleanup.
+fn select_description(t: &SfinTxn) -> (String, Option<String>) {
+    let fields: Vec<&str> = [t.payee.as_deref(), t.description.as_deref(), t.memo.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut raw_parts: Vec<&str> = Vec::new();
+    for f in &fields {
+        if !raw_parts.iter().any(|p| p.eq_ignore_ascii_case(f)) {
+            raw_parts.push(f);
+        }
+    }
+    let raw = if raw_parts.is_empty() { None } else { Some(raw_parts.join(" · ")) };
+
+    let display = fields
+        .iter()
+        .find_map(|f| strip_processor_prefix(f))
+        .unwrap_or_else(|| "SimpleFIN transaction".to_string());
+    (display, raw)
 }
 
 /// Whether an automatic sync is due. Pure so it's testable: 24h after the last
@@ -441,10 +489,12 @@ async fn claim_access_url(setup_token: &str) -> Result<String, String> {
 
 /// GET `{access}/accounts`, moving the URL-embedded credentials into a proper
 /// Basic auth header (hyper does not transmit userinfo from the URL).
+/// Returns the parsed set plus the raw response body (for the debug dump —
+/// the body carries no credentials, those live in the request).
 async fn fetch_accounts(
     access_url: &str,
     start_date: Option<i64>,
-) -> Result<SfinAccountSet, String> {
+) -> Result<(SfinAccountSet, String), String> {
     let mut url =
         reqwest::Url::parse(access_url).map_err(|_| "Stored access URL is invalid.".to_string())?;
     let user = url.username().to_string();
@@ -456,6 +506,9 @@ async fn fetch_accounts(
     if let Some(ts) = start_date {
         url.query_pairs_mut().append_pair("start-date", &ts.to_string());
     }
+    // Without this the bridge returns posted transactions only — pending ones
+    // are opt-in per the SimpleFIN protocol.
+    url.query_pairs_mut().append_pair("pending", "1");
 
     let mut req = http()?.get(url);
     if !user.is_empty() {
@@ -476,9 +529,29 @@ async fn fetch_accounts(
     if !status.is_success() {
         return Err(format!("SimpleFIN returned HTTP {}.", status.as_u16()));
     }
-    resp.json::<SfinAccountSet>()
+    let raw = resp
+        .text()
         .await
-        .map_err(|e| format!("Could not parse the SimpleFIN response: {e}"))
+        .map_err(|e| format!("Could not read the SimpleFIN response: {e}"))?;
+    let set = serde_json::from_str::<SfinAccountSet>(&raw)
+        .map_err(|e| format!("Could not parse the SimpleFIN response: {e}"))?;
+    Ok((set, raw))
+}
+
+/// Dump the raw `/accounts` response to `simplefin-last-response.json` in the
+/// app data dir, pretty-printed when possible. Debugging aid: shows exactly
+/// what the bridge sent (pending flags, extra fields, vendor categories).
+/// Overwritten every sync so it never grows; contains account/transaction
+/// data but no credentials — same sensitivity and same directory as the
+/// database file itself, and deliberately NOT in the DB so it can never ride
+/// along with Turso cloud sync.
+fn dump_raw_response(app: &AppHandle, raw: &str) {
+    let Ok(dir) = crate::sync::data_dir(app) else { return };
+    let pretty = serde_json::from_str::<serde_json::Value>(raw)
+        .and_then(|v| serde_json::to_string_pretty(&v))
+        .unwrap_or_else(|_| raw.to_string());
+    let body = format!("// fetched {}\n{pretty}\n", now_iso());
+    let _ = std::fs::write(dir.join("simplefin-last-response.json"), body);
 }
 
 // ---- sync state (simplefin_state singleton row) ----
@@ -694,13 +767,7 @@ async fn import_account_set(
             let date = ts_to_date(ts);
             let (ty, amount) =
                 if signed < 0.0 { ("expense", -signed) } else { ("income", signed) };
-            let description = [t.payee.as_deref(), t.description.as_deref(), t.memo.as_deref()]
-                .into_iter()
-                .flatten()
-                .map(str::trim)
-                .find(|s| !s.is_empty())
-                .unwrap_or("SimpleFIN transaction")
-                .to_string();
+            let (description, raw_description) = select_description(t);
 
             if t.pending == Some(true) {
                 // The NOT EXISTS guards skip a pending row whose id already
@@ -710,8 +777,8 @@ async fn import_account_set(
                 pending_inserted += conn
                     .execute(
                         "INSERT INTO simplefin_pending_txn (account_id, simplefin_id, \
-                         amount, description, date, type, created_at) \
-                         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+                         amount, description, date, type, created_at, raw_description) \
+                         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
                          WHERE NOT EXISTS (SELECT 1 FROM txn \
                            WHERE simplefin_id = ?2 OR simplefin_counterpart_id = ?2)",
                         params![
@@ -721,7 +788,8 @@ async fn import_account_set(
                             description,
                             date,
                             ty,
-                            created_at.clone()
+                            created_at.clone(),
+                            raw_description
                         ],
                     )
                     .await
@@ -742,9 +810,9 @@ async fn import_account_set(
                     "INSERT OR IGNORE INTO txn (account_id, transfer_account_id, amount, \
                      description, date, type, category, is_contribution, is_withdrawal, \
                      import_source, generated_balance_id, generated_balance_to_id, \
-                     vendor_category, simplefin_id, created_at, updated_at) \
+                     vendor_category, simplefin_id, created_at, updated_at, raw_description) \
                      SELECT ?1, NULL, ?2, ?3, ?4, ?5, ?6, 0, 0, 'simplefin', NULL, NULL, \
-                     ?7, ?8, ?9, ?9 \
+                     ?7, ?8, ?9, ?9, ?10 \
                      WHERE NOT EXISTS \
                      (SELECT 1 FROM txn WHERE simplefin_counterpart_id = ?8)",
                     params![
@@ -756,7 +824,8 @@ async fn import_account_set(
                         category,
                         vendor_cat,
                         t.id.clone(),
-                        created_at.clone()
+                        created_at.clone(),
+                        raw_description
                     ],
                 )
                 .await
@@ -1030,8 +1099,9 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         };
 
         // Network fetch — no DB access, no gate.
-        let set = fetch_accounts(&access_url, Some(start_ts)).await?;
+        let (set, raw) = fetch_accounts(&access_url, Some(start_ts)).await?;
         crate::sync::sync_log(app, &format!("simplefin: fetch ok ({} accounts)", set.accounts.len()));
+        dump_raw_response(app, &raw);
 
         let _db_guard = gate.lock.lock().await;
         // Lock/busy failures (e.g. a WAL checkpoint colliding with a straggling
@@ -1247,7 +1317,8 @@ pub async fn simplefin_list_pending(
     let conn = app.state::<Db>().conn().await?;
     let mut rows = conn
         .query(
-            "SELECT id, account_id, amount, description, date, type, simplefin_id \
+            "SELECT id, account_id, amount, description, date, type, simplefin_id, \
+             raw_description \
              FROM simplefin_pending_txn ORDER BY date DESC, id DESC",
             (),
         )
@@ -1263,6 +1334,7 @@ pub async fn simplefin_list_pending(
             date: r.get(4).map_err(|e| e.to_string())?,
             txn_type: r.get(5).map_err(|e| e.to_string())?,
             simplefin_id: r.get(6).map_err(|e| e.to_string())?,
+            raw_description: r.get(7).map_err(|e| e.to_string())?,
         });
     }
     Ok(out)
@@ -1298,6 +1370,52 @@ mod tests {
         assert_eq!(decode_setup_token(url).unwrap(), url);
         // Garbage is rejected.
         assert!(decode_setup_token("not-a-token!!!").is_err());
+    }
+
+    #[test]
+    fn description_skips_processor_wrappers_and_keeps_raw() {
+        let mk = |payee: Option<&str>, desc: Option<&str>, memo: Option<&str>| SfinTxn {
+            id: "TRN-1".into(),
+            posted: 1,
+            transacted_at: None,
+            amount: NumOrStr::S("-1.00".into()),
+            description: desc.map(str::to_string),
+            payee: payee.map(str::to_string),
+            memo: memo.map(str::to_string),
+            pending: None,
+            category: None,
+            extra: None,
+        };
+
+        // The real-world shape: a payee that is only the processor name and a
+        // description wrapped in the processor prefix. The wrapper is stripped
+        // and the bare payee never wins; the raw keeps both, unedited.
+        let (display, raw) = select_description(&mk(
+            Some("Link.com"),
+            Some("LINK.COM* SIMPLEFIN BR SOUTH SAN FRA USA"),
+            None,
+        ));
+        assert_eq!(display, "SIMPLEFIN BR SOUTH SAN FRA USA");
+        assert_eq!(
+            raw.as_deref(),
+            Some("Link.com · LINK.COM* SIMPLEFIN BR SOUTH SAN FRA USA")
+        );
+
+        // Ordinary transactions are untouched, and duplicate fields collapse
+        // in the raw.
+        let (display, raw) = select_description(&mk(Some("Aldi"), Some("ALDI"), None));
+        assert_eq!(display, "Aldi");
+        assert_eq!(raw.as_deref(), Some("Aldi"));
+
+        // All fields being just the processor name still yields a display.
+        let (display, raw) = select_description(&mk(Some("Link.com"), None, None));
+        assert_eq!(display, "SimpleFIN transaction");
+        assert_eq!(raw.as_deref(), Some("Link.com"));
+
+        // Nothing at all.
+        let (display, raw) = select_description(&mk(None, None, None));
+        assert_eq!(display, "SimpleFIN transaction");
+        assert_eq!(raw, None);
     }
 
     #[test]

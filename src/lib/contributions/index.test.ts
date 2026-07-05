@@ -20,7 +20,7 @@ function txn(id: number, accountId: number, amount: number, date: string): Trans
     id, accountId, transferAccountId: null, amount, description: 'Contribution',
     date, type: 'income', category: 'savings', isContribution: true, isWithdrawal: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
-    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, createdAt: date, updatedAt: date,
+    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: date, updatedAt: date,
   }
 }
 
@@ -31,7 +31,7 @@ function withdrawal(id: number, fromInvestmentId: number, toCashId: number, amou
     id, accountId: fromInvestmentId, transferAccountId: toCashId, amount, description: 'Withdrawal',
     date, type: 'transfer', category: 'transfer', isContribution: true, isWithdrawal: true,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
-    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, createdAt: date, updatedAt: date,
+    paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: date, updatedAt: date,
   }
 }
 

@@ -580,7 +580,7 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 
 use crate::db::{BACKUP_DB, LOCAL_DB, REPLICA_DB};
 
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::db::resolve_app_dir(app.path().app_data_dir().map_err(|e| e.to_string())?);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)

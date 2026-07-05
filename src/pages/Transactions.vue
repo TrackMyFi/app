@@ -404,6 +404,19 @@ const cumulativeTransactions = computed(() =>
 // page filters: the set is small and vanishes as rows post.
 const pendingTransactions = ref<SimpleFinPendingTransaction[]>([])
 
+// What the pending set adds up to if everything posts as-is. Same sign
+// convention as the verdict strip (net = income − expenses); shown muted
+// because none of it is counted anywhere yet.
+const pendingTotals = computed(() => {
+  let income = 0
+  let expense = 0
+  for (const p of pendingTransactions.value) {
+    if (p.txnType === 'income') income += p.amount
+    else expense += p.amount
+  }
+  return { income, expense, net: income - expense }
+})
+
 const pendingColumns = [
   { accessorKey: 'date', header: 'Date' },
   { accessorKey: 'description', header: 'Description' },
@@ -689,7 +702,7 @@ onMounted(() => run(async () => {
           <span class="text-muted">{{ row.original.date }}</span>
         </template>
         <template #description-cell="{ row }">
-          <span class="block max-w-[300px] truncate text-muted" :title="row.original.description">{{ row.original.description }}</span>
+          <span class="block max-w-[300px] truncate text-muted" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
         </template>
         <template #account-cell="{ row }">
           <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
@@ -705,6 +718,11 @@ onMounted(() => run(async () => {
           </span>
         </template>
       </UTable>
+      <div class="flex items-center justify-end gap-4 px-4 py-2 border-t border-default text-xs text-muted tabular-nums">
+        <span v-if="pendingTotals.income > 0">Income {{ money(pendingTotals.income) }}</span>
+        <span v-if="pendingTotals.expense > 0">Expenses {{ money(pendingTotals.expense) }}</span>
+        <span>Net {{ money(pendingTotals.net) }}</span>
+      </div>
     </div>
 
     <!-- Table -->
@@ -742,7 +760,8 @@ onMounted(() => run(async () => {
           </div>
         </template>
         <template #description-cell="{ row }">
-          <span class="block max-w-[300px] truncate" :title="row.original.description">{{ row.original.description }}</span>
+          <!-- Tooltip shows the bank's unedited text when the import cleaned it up. -->
+          <span class="block max-w-[300px] truncate" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
         </template>
         <template #account-cell="{ row }">
           {{ accountName(row.original.accountId) }}

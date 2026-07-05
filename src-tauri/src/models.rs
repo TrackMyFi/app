@@ -97,6 +97,10 @@ pub struct Transaction {
     pub vendor_category: Option<String>,
     /// SimpleFIN transaction id, set only on synced transactions (dedup key).
     pub simplefin_id: Option<String>,
+    /// Every distinct description field the bank sent, unedited — kept so the
+    /// user can see the original text behind the import's cleanup (e.g. a
+    /// stripped "LINK.COM*" processor wrapper). NULL on manual/CSV rows.
+    pub raw_description: Option<String>,
     /// Rule-derived noise kind ('investment_activity' | 'fee' | 'interest').
     /// When set, the transaction is excluded from cash-flow analytics and
     /// hidden from the default transactions list; balance math still sees it.

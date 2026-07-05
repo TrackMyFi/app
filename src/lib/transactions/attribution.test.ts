@@ -6,7 +6,7 @@ function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 100, description: '', date: '2026-05-01',
     type: 'income', category: 'fixed', isContribution: false, isWithdrawal: false, importSource: 'paycheck',
-    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: 1, vendorCategory: null, simplefinId: null, suppressedAs: null, createdAt: '', updatedAt: '',
+    generatedBalanceId: null, generatedBalanceToId: null, paycheckId: 1, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
 }

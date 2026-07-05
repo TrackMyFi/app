@@ -258,6 +258,17 @@ async function save(mode: SaveMode = 'close') {
     </UFormField>
     <UFormField label="Description">
       <UInput v-model="form.description" placeholder="Optional" class="w-full" />
+      <!-- The bank's unedited text behind an imported description (e.g. a
+           stripped payment-processor wrapper); click restores it verbatim. -->
+      <button
+        v-if="props.editing?.rawDescription"
+        type="button"
+        class="mt-1.5 text-xs text-muted hover:text-default text-left"
+        title="Click to use as the description"
+        @click="form.description = props.editing.rawDescription"
+      >
+        Bank sent: <span class="italic">{{ props.editing.rawDescription }}</span>
+      </button>
     </UFormField>
     <UFormField v-if="!isTransfer" label="Category">
       <USelect v-model="form.category" :items="categoryItems" class="w-full" />
