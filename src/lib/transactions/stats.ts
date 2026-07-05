@@ -50,6 +50,7 @@ export function computeMedian(periods: PeriodStats[], window?: number): PeriodMe
   byCategory.set('savings', median(periods.map((p) => p.savings)))
   byCategory.set('fixed', median(periods.map((p) => p.catFixed)))
   byCategory.set('discretionary', median(periods.map((p) => p.catDiscretionary)))
+  byCategory.set('irregular', median(periods.map((p) => p.catIrregular)))
   byCategory.set('uncategorized', median(periods.map((p) => p.catUncategorized)))
 
   return {

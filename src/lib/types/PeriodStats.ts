@@ -20,4 +20,4 @@ savings: number,
 /**
  * Income minus spending (savings is not subtracted — the money is still yours).
  */
-net: number, catFixed: number, catDiscretionary: number, catUncategorized: number, };
+net: number, catFixed: number, catDiscretionary: number, catIrregular: number, catUncategorized: number, };

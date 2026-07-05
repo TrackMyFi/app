@@ -19,12 +19,13 @@ watch(() => props.transactions, play)
 
 // Income is allocated in priority order: what you paid yourself first
 // (contributions), then obligations, then discretionary, then the unsorted tail.
-const CATEGORY_ORDER = ['savings', 'fixed', 'discretionary', 'uncategorized'] as const
+const CATEGORY_ORDER = ['savings', 'fixed', 'discretionary', 'irregular', 'uncategorized'] as const
 
 const SEGMENT_COLOR: Record<string, string> = {
   savings:       'bg-info',
   fixed:         'bg-warning',
   discretionary: 'bg-error',
+  irregular:     'bg-violet-500',
   uncategorized: 'bg-inverted/35',
 }
 

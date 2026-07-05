@@ -6,7 +6,7 @@ import type { MerchantGroup } from '../lib/expenses/merchants'
 
 // Only the categories a merchant list can actually contain — savings/contributions
 // never appear here (excluded upstream in groupByMerchant).
-const LEGEND_CATEGORIES = ['fixed', 'discretionary', 'uncategorized'] as const
+const LEGEND_CATEGORIES = ['fixed', 'discretionary', 'irregular', 'uncategorized'] as const
 
 const props = defineProps<{
   merchants: MerchantGroup[]

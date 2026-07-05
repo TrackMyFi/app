@@ -127,6 +127,20 @@ watch([() => form.accountId, () => form.transferAccountId], () => {
   form.isContribution = isContributionTransfer.value || isWithdrawalTransfer.value
 })
 
+// A transfer into a count-payments-as-expense account (mortgage, car loan) IS
+// spending, so it gets a category — but only Bills/Spending make sense for a
+// loan payment, and anything that isn't discretionary already counts as fixed.
+const isPaymentExpenseTransfer = computed(() => {
+  if (!isTransfer.value || form.transferAccountId == null) return false
+  return accountsStore.accounts.find((a) => a.id === form.transferAccountId)?.countPaymentsAsExpense ?? false
+})
+
+const paymentCategoryItems = categoryItems.filter((c) => c.value === 'fixed' || c.value === 'discretionary')
+
+watch(isPaymentExpenseTransfer, (is) => {
+  if (is && form.category !== 'fixed' && form.category !== 'discretionary') form.category = 'fixed'
+})
+
 // Default the switch on for cash/liability accounts, off for investment accounts.
 function defaultUpdateBalance(accountId: number | undefined): boolean {
   if (accountId == null) return false
@@ -247,6 +261,13 @@ async function save(mode: SaveMode = 'close') {
     </UFormField>
     <UFormField v-if="!isTransfer" label="Category">
       <USelect v-model="form.category" :items="categoryItems" class="w-full" />
+    </UFormField>
+    <UFormField
+      v-else-if="isPaymentExpenseTransfer"
+      label="Category"
+      description="This account counts payments as expenses, so this transfer shows up in your spending."
+    >
+      <USelect v-model="form.category" :items="paymentCategoryItems" class="w-full" />
     </UFormField>
     <UCheckbox v-if="!isTransfer || isContributionTransfer || isWithdrawalTransfer" v-model="form.isContribution" :label="contributionFlagLabel" />
 

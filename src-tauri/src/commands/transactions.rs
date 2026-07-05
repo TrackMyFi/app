@@ -94,6 +94,7 @@ pub struct PeriodStats {
     pub net: f64,
     pub cat_fixed: f64,
     pub cat_discretionary: f64,
+    pub cat_irregular: f64,
     pub cat_uncategorized: f64,
 }
 
@@ -1101,6 +1102,7 @@ pub async fn period_stats(
             net: 0.0,
             cat_fixed: 0.0,
             cat_discretionary: 0.0,
+            cat_irregular: 0.0,
             cat_uncategorized: 0.0,
         });
 
@@ -1120,6 +1122,7 @@ pub async fn period_stats(
             match category.as_deref().unwrap_or("uncategorized") {
                 "fixed" => s.cat_fixed += amount,
                 "discretionary" => s.cat_discretionary += amount,
+                "irregular" => s.cat_irregular += amount,
                 _ => s.cat_uncategorized += amount,
             }
         } else if tx_type == "transfer" {

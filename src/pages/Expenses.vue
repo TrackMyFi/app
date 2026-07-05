@@ -123,20 +123,22 @@ onMounted(() => run(async () => {
 
 // ─── Where it's going: Fixed / Discretionary totals + typical-period trend ─────
 
-const SPEND_BUCKETS = ['fixed', 'discretionary'] as const
+const SPEND_BUCKETS = ['fixed', 'discretionary', 'irregular'] as const
 
 const categoryTotals = computed(() => {
   let fixed = 0
   let discretionary = 0
+  let irregular = 0
   let uncategorized = 0
   for (const t of scopeTransactions.value) {
     const f = classifyFlow(t, accountsStore.accounts)
     if (f.isSavings || f.outflow <= 0 || !f.bucket) continue
     if (f.bucket === 'fixed') fixed += f.outflow
     else if (f.bucket === 'discretionary') discretionary += f.outflow
+    else if (f.bucket === 'irregular') irregular += f.outflow
     else uncategorized += f.outflow
   }
-  return { fixed, discretionary, uncategorized }
+  return { fixed, discretionary, irregular, uncategorized }
 })
 
 const activeMedian = computed(() => {
@@ -155,14 +157,14 @@ const typSuffix = computed(() =>
   scope.value === 'all' ? '' : proratedSuffix(scope.value, selectedDate.value)
 )
 
-function typicalFor(bucket: 'fixed' | 'discretionary'): number | null {
+function typicalFor(bucket: 'fixed' | 'discretionary' | 'irregular'): number | null {
   if (!showComparison.value) return null
   // A zero median means no reference period tracked this bucket — no baseline.
   const typical = activeMedian.value?.breakdown.byCategory.get(bucket) ?? 0
   return typical === 0 ? null : typical
 }
 
-function trendPctFor(bucket: 'fixed' | 'discretionary'): number | null {
+function trendPctFor(bucket: 'fixed' | 'discretionary' | 'irregular'): number | null {
   const typical = typicalFor(bucket)
   return typical == null ? null : pctVsMedian(categoryTotals.value[bucket], typical)
 }
@@ -182,6 +184,9 @@ const recurringCharges = computed(() =>
   )
 )
 
+// Irregular is excluded from spike detection on purpose: lumpy one-off costs
+// (car repair, medical) exceed their median in almost every period they occur,
+// so flagging them would be constant noise rather than a savings opportunity.
 const categorySpikes = computed(() => {
   if (!showComparison.value) return []
   const typical = activeMedian.value?.breakdown.byCategory

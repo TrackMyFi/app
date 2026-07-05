@@ -10,6 +10,7 @@ function period(overrides: Partial<PeriodStats> & { period: string }): PeriodSta
     net: 0,
     catFixed: 0,
     catDiscretionary: 0,
+    catIrregular: 0,
     catUncategorized: 0,
     ...overrides,
   }

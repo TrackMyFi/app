@@ -17,7 +17,7 @@ import type { Account } from '../types/Account'
  */
 
 export type FlowDirection = 'inflow' | 'outflow' | 'neutral'
-export type FlowBucket = 'savings' | 'fixed' | 'discretionary' | 'uncategorized'
+export type FlowBucket = 'savings' | 'fixed' | 'discretionary' | 'irregular' | 'uncategorized'
 
 export interface TransactionFlow {
   /** Visual direction for the amount prefix icon/colour. */

@@ -15,13 +15,14 @@ export const transactionTypeItems = TRANSACTION_TYPES.map((t) => ({
   value: t,
 }))
 
-export const CATEGORIES = ['savings', 'fixed', 'discretionary', 'uncategorized'] as const
+export const CATEGORIES = ['savings', 'fixed', 'discretionary', 'irregular', 'uncategorized'] as const
 export type Category = typeof CATEGORIES[number]
 
 export const CATEGORY_LABELS: Record<Category, string> = {
   savings: 'Contributions',
   fixed: 'Bills',
   discretionary: 'Spending',
+  irregular: 'Irregular',
   uncategorized: 'Uncategorized',
 }
 
@@ -54,10 +55,14 @@ export const suppressKindItems = SUPPRESS_KINDS.map((k) => ({
 
 // Shared semantic color mapping so every chart/list that breaks spend down by
 // category agrees on what each bucket looks like.
+// Irregular has no semantic meaning (it's not an error/warning state), so it
+// uses a raw violet — the same hue InvestmentsChart already uses for series
+// that fall outside the semantic palette.
 export const CATEGORY_DOT_COLOR: Record<Category, string> = {
   savings: 'bg-info',
   fixed: 'bg-warning',
   discretionary: 'bg-error',
+  irregular: 'bg-violet-500',
   uncategorized: 'bg-inverted/45',
 }
 
@@ -65,6 +70,7 @@ export const CATEGORY_TEXT_COLOR: Record<Category, string> = {
   savings: 'text-info',
   fixed: 'text-warning',
   discretionary: 'text-error',
+  irregular: 'text-violet-600 dark:text-violet-400',
   uncategorized: 'text-muted',
 }
 

@@ -447,6 +447,24 @@ function directionLabel(t: Transaction): string {
   return 'Transfer'
 }
 
+// ─── Category cell ───────────────────────────────────────────────────────────
+
+// The stored category only means something on expenses. Income and transfers
+// show what they ARE instead of "Uncategorized" — except a transfer into a
+// count-payments-as-expense account (mortgage, car loan), where the payment IS
+// the expense: show the bucket it actually lands in.
+function categoryCell(t: Transaction): { label: string; muted: boolean } {
+  if (t.type === 'income') return { label: 'Income', muted: true }
+  if (t.type === 'transfer') {
+    const dest = accountsStore.accounts.find((a) => a.id === t.transferAccountId)
+    if (dest?.countPaymentsAsExpense) {
+      return { label: labelForCategory(t.category === 'discretionary' ? 'discretionary' : 'fixed'), muted: false }
+    }
+    return { label: 'Transfer', muted: true }
+  }
+  return { label: labelForCategory(t.category), muted: false }
+}
+
 // Arriving from Expenses' merchant/category drill-down seeds the filters and
 // scope, so the table shows exactly what fed the figure that was clicked —
 // same expense-type filter, same time period, plus the search/category term.
@@ -696,7 +714,7 @@ onMounted(() => run(async () => {
               size="sm"
               :icon="row.original.isWithdrawal ? 'i-ph-arrow-line-up' : 'i-ph-piggy-bank'"
             >{{ row.original.isWithdrawal ? 'Withdrawal' : 'Contribution' }}</UBadge>
-            <span v-else>{{ labelForCategory(row.original.category) }}</span>
+            <span v-else :class="{ 'text-muted': categoryCell(row.original).muted }">{{ categoryCell(row.original).label }}</span>
           </div>
         </template>
         <template #amount-cell="{ row }">
