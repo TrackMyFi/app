@@ -7,6 +7,7 @@ import { listPaychecks } from '../lib/api/paychecks'
 import { labelForPayPeriod } from '../lib/paychecks/constants'
 import { useAccountsStore } from '../stores/accounts'
 import { paycheckBreakdown } from '../lib/paychecks/index'
+import { projectYearEnd } from '../lib/paychecks/projection'
 import PaycheckForm from '../components/PaycheckForm.vue'
 import MonthPicker from '../components/MonthPicker.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
@@ -97,6 +98,21 @@ async function clearFilters() {
 }
 
 const breakdown = computed(() => paycheckBreakdown(store.paychecks))
+
+// Bonuses, RSU vests, and other one-offs carry their own flag on the paycheck
+// (payPeriod === 'irregular'), so "how much of this was windfall?" is just the
+// breakdown re-run on that slice.
+const irregularBreakdown = computed(() =>
+  paycheckBreakdown(store.paychecks.filter((p) => p.payPeriod === 'irregular')),
+)
+
+// End-of-year projection only makes sense while the selected year is still in
+// progress — a finished year's actuals ARE its year-end figures.
+const projection = computed(() => {
+  const now = DateTime.now()
+  if (scope.value !== 'year' || selectedDate.value.year !== now.year) return null
+  return projectYearEnd(store.paychecks, now)
+})
 
 const hasPaychecks = computed(() => store.paychecks.length > 0)
 
@@ -229,6 +245,20 @@ onMounted(() => run(async () => {
             <p class="text-2xl font-bold font-mono tabular-nums text-primary mt-0.5">{{ money(breakdown.totalNet * reveal) }}</p>
             <p class="text-xs text-muted mt-1">
               of {{ money(breakdown.totalGross * reveal) }} gross · {{ breakdown.count }} paycheck{{ breakdown.count === 1 ? '' : 's' }} · {{ scope === 'year' ? yearLabel : 'all time' }}
+            </p>
+          </div>
+          <div v-if="irregularBreakdown.count > 0">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Irregular pay</p>
+            <p class="text-2xl font-bold font-mono tabular-nums mt-0.5">{{ money(irregularBreakdown.totalNet * reveal) }}</p>
+            <p class="text-xs text-muted mt-1">
+              of {{ money(irregularBreakdown.totalGross * reveal) }} gross · {{ irregularBreakdown.count }} payment{{ irregularBreakdown.count === 1 ? '' : 's' }}
+            </p>
+          </div>
+          <div v-if="projection && projection.remainingCount > 0">
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted">Projected {{ yearLabel }}</p>
+            <p class="text-2xl font-bold font-mono tabular-nums mt-0.5">≈{{ money(projection.projectedNet * reveal) }}</p>
+            <p class="text-xs text-muted mt-1">
+              net of ≈{{ money(projection.projectedGross * reveal) }} gross · {{ projection.remainingCount }} paycheck{{ projection.remainingCount === 1 ? '' : 's' }} to come
             </p>
           </div>
           <div class="text-right">
