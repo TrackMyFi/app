@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { DateTime } from 'luxon'
 import { useToast } from '@nuxt/ui/composables'
 import { usePaychecksStore } from '../stores/paychecks'
+import { listPaychecks } from '../lib/api/paychecks'
 import { labelForPayPeriod } from '../lib/paychecks/constants'
 import { useAccountsStore } from '../stores/accounts'
 import { paycheckBreakdown } from '../lib/paychecks/index'
 import PaycheckForm from '../components/PaycheckForm.vue'
-import DateInput from '../components/DateInput.vue'
+import MonthPicker from '../components/MonthPicker.vue'
 import type { Paycheck } from '../lib/types/Paycheck'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import PageError from '../components/PageError.vue'
@@ -56,22 +58,39 @@ async function removeRow(p: Paycheck) {
   }
 }
 
-const startDate = ref('')
-const endDate = ref('')
+// Year-by-year is the natural grain for income questions ("how much this
+// year?", "how does it compare to last?"), so the page defaults to the current
+// year with arrows to step back — same scope vocabulary as Transactions, minus
+// the month grain that paychecks don't need.
+type Scope = 'year' | 'all'
+const scope = ref<Scope>('year')
+const selectedDate = ref(DateTime.now().startOf('year'))
+const yearLabel = computed(() => selectedDate.value.toFormat('yyyy'))
+
+function setScope(s: Scope) {
+  scope.value = s
+  applyFilters()
+}
+
+function onYearChange(dt: DateTime) {
+  selectedDate.value = dt.startOf('year')
+  applyFilters()
+}
+
 const employerSearch = ref('')
 
 async function applyFilters() {
+  const inYear = scope.value === 'year'
   await store.setFilter({
-    startDate: startDate.value || null,
-    endDate: endDate.value || null,
+    startDate: inYear ? selectedDate.value.toISODate() : null,
+    endDate: inYear ? selectedDate.value.endOf('year').toISODate() : null,
     employer: employerSearch.value || null,
   })
   playReveal()
 }
 
 async function clearFilters() {
-  startDate.value = ''
-  endDate.value = ''
+  scope.value = 'all'
   employerSearch.value = ''
   await store.setFilter({ startDate: null, endDate: null, employer: null })
   playReveal()
@@ -80,14 +99,22 @@ async function clearFilters() {
 const breakdown = computed(() => paycheckBreakdown(store.paychecks))
 
 const hasPaychecks = computed(() => store.paychecks.length > 0)
-const hasActiveFilter = computed(
-  () => !!(store.filter.startDate || store.filter.endDate || store.filter.employer),
-)
-// True first run: nothing recorded and nothing filtered away. Earns the
-// teaching empty state rather than a bare "no rows" line.
-const isFirstRun = computed(() => !hasPaychecks.value && !hasActiveFilter.value && !loading.value)
+
+// The year scope is a filter that's always on, so "no rows" alone can't tell a
+// brand-new user from one whose paychecks all live in other years. Track
+// existence separately: any non-empty page proves it; an empty page triggers
+// one unfiltered recheck (covers deleting the last paycheck too).
+const hasAnyPaychecks = ref(false)
+watch(() => store.paychecks, async (rows) => {
+  if (rows.length > 0) hasAnyPaychecks.value = true
+  else hasAnyPaychecks.value = (await listPaychecks({})).length > 0
+})
+
+// True first run: nothing recorded anywhere. Earns the teaching empty state
+// rather than a bare "no rows" line.
+const isFirstRun = computed(() => !hasAnyPaychecks.value && !loading.value)
 // Filter that matched nothing — the data exists, it's just hidden right now.
-const isFilteredEmpty = computed(() => !hasPaychecks.value && hasActiveFilter.value && !loading.value)
+const isFilteredEmpty = computed(() => !hasPaychecks.value && hasAnyPaychecks.value && !loading.value)
 
 // Bar segments. Net and withheld (gross − net) are the two figures that are
 // always real, so the take-home segment is anchored to the headline rate and
@@ -136,11 +163,8 @@ function money(n: number): string {
 
 onMounted(() => run(async () => {
   await accountsStore.load() // pre-populates store for PaycheckForm account dropdowns
-  await store.load()
-  startDate.value = store.filter.startDate ?? ''
-  endDate.value = store.filter.endDate ?? ''
   employerSearch.value = store.filter.employer ?? ''
-  playReveal()
+  await applyFilters() // seeds the default current-year scope and loads
 }))
 </script>
 
@@ -169,16 +193,28 @@ onMounted(() => run(async () => {
     </div>
 
     <template v-else-if="!error">
-      <div class="flex flex-wrap gap-2 items-end">
-        <div>
-          <p class="text-xs text-muted mb-1">From</p>
-          <DateInput v-model="startDate" />
+      <div class="flex flex-wrap gap-2 items-center">
+        <MonthPicker
+          v-if="scope === 'year'"
+          :model-value="selectedDate"
+          mode="year"
+          @update:model-value="onYearChange"
+        />
+        <div class="flex gap-1">
+          <UButton
+            size="xs"
+            :variant="scope === 'year' ? 'subtle' : 'ghost'"
+            :color="scope === 'year' ? 'primary' : 'neutral'"
+            @click="setScope('year')"
+          >Year</UButton>
+          <UButton
+            size="xs"
+            :variant="scope === 'all' ? 'subtle' : 'ghost'"
+            :color="scope === 'all' ? 'primary' : 'neutral'"
+            @click="setScope('all')"
+          >All time</UButton>
         </div>
-        <div>
-          <p class="text-xs text-muted mb-1">To</p>
-          <DateInput v-model="endDate" />
-        </div>
-        <UInput v-model="employerSearch" placeholder="Search employer" class="w-44" />
+        <UInput v-model="employerSearch" placeholder="Search employer" class="w-44 ml-auto" @keyup.enter="applyFilters" />
         <UButton @click="applyFilters">Apply</UButton>
         <UButton variant="ghost" @click="clearFilters">Clear</UButton>
       </div>
@@ -192,7 +228,7 @@ onMounted(() => run(async () => {
             <p class="text-xs font-semibold uppercase tracking-wide text-muted">Net take-home</p>
             <p class="text-2xl font-bold font-mono tabular-nums text-primary mt-0.5">{{ money(breakdown.totalNet * reveal) }}</p>
             <p class="text-xs text-muted mt-1">
-              of {{ money(breakdown.totalGross * reveal) }} gross · {{ breakdown.count }} paycheck{{ breakdown.count === 1 ? '' : 's' }}
+              of {{ money(breakdown.totalGross * reveal) }} gross · {{ breakdown.count }} paycheck{{ breakdown.count === 1 ? '' : 's' }} · {{ scope === 'year' ? yearLabel : 'all time' }}
             </p>
           </div>
           <div class="text-right">
@@ -233,8 +269,10 @@ onMounted(() => run(async () => {
 
       <!-- Filter matched nothing — the data exists, it's just hidden. -->
       <div v-if="isFilteredEmpty" class="border border-default rounded-lg py-12 text-center">
-        <p class="text-sm text-muted">No paychecks match these filters.</p>
-        <UButton variant="ghost" size="sm" class="mt-2" @click="clearFilters">Clear filters</UButton>
+        <p class="text-sm text-muted">
+          {{ scope === 'year' && !store.filter.employer ? `No paychecks recorded in ${yearLabel}.` : 'No paychecks match these filters.' }}
+        </p>
+        <UButton variant="ghost" size="sm" class="mt-2" @click="clearFilters">View all time</UButton>
       </div>
 
       <div v-else class="border border-default rounded-lg overflow-hidden">
