@@ -399,9 +399,9 @@ const cumulativeTransactions = computed(() =>
 
 // Rows dated before the selected period that the attribution preference counts
 // toward it (last month's month-end paycheck and its pre-tax contributions).
-// They're inside every total above but outside the ledger table's date filter,
-// so they get their own notated strip — otherwise the figures don't add up to
-// what the table shows.
+// They're inside every total above but outside the store's date filter, so
+// they join the ledger table as badged rows — otherwise the figures don't add
+// up to what the table shows.
 const carriedInTransactions = computed(() => {
   if (!attributePaychecks.value || scope.value === 'all') return []
   const start = scope.value === 'month' ? monthStart.value : selectedDate.value.startOf('year').toISODate()!
@@ -432,45 +432,137 @@ function shiftedOutTitle(t: Transaction): string {
   return `Month-end paycheck — counted toward ${label}`
 }
 
-const carriedColumns = [
-  { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
-  { id: 'account', header: 'Account' },
-  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-]
-
 // ─── Pending (SimpleFIN) ──────────────────────────────────────────────────────
 
-// Transactions still pending at the bank, shown for awareness in their own
-// strip above the ledger table. They live outside `txn` entirely, so no sum,
-// chart, or stat on this page (or anywhere else) can see them — everything is
-// muted/neutral to signal "not counted yet". Deliberately unaffected by the
-// page filters: the set is small and vanishes as rows post.
+// Transactions still pending at the bank, shown for awareness in the ledger
+// table. They live outside `txn` entirely, so no sum, chart, or stat on this
+// page (or anywhere else) can see them — every pending cell is muted to signal
+// "not counted yet". Deliberately unaffected by the secondary filters: the set
+// is small and vanishes as rows post.
 const pendingTransactions = ref<SimpleFinPendingTransaction[]>([])
 
-// What the pending set adds up to if everything posts as-is. Same sign
-// convention as the verdict strip (net = income − expenses); shown muted
-// because none of it is counted anywhere yet.
-const pendingTotals = computed(() => {
-  let income = 0
-  let expense = 0
-  for (const p of pendingTransactions.value) {
-    if (p.txnType === 'income') income += p.amount
-    else expense += p.amount
-  }
-  return { income, expense, net: income - expense }
+// Only pending rows dated inside the viewed period join the table — today's
+// pending charge doesn't belong in last March's ledger.
+const scopedPending = computed(() => {
+  if (scope.value === 'all') return pendingTransactions.value
+  const start = scope.value === 'month' ? monthStart.value : selectedDate.value.startOf('year').toISODate()!
+  const end = scope.value === 'month' ? monthEnd.value : selectedDate.value.endOf('year').toISODate()!
+  return pendingTransactions.value.filter((p) => p.date >= start && p.date <= end)
 })
 
-const pendingColumns = [
-  { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
-  { id: 'account', header: 'Account' },
-  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-]
+// What the pending set would add to the period's net if everything posts as-is
+// (same sign convention as the verdict strip: net = income − expenses).
+const pendingNet = computed(() => {
+  let net = 0
+  for (const p of scopedPending.value) net += p.txnType === 'income' ? p.amount : -p.amount
+  return net
+})
 
 // ─── Table ─────────────────────────────────────────────────────────────────────
 
-const rows = computed(() => store.page.rows)
+// The ledger interleaves three kinds of rows: bank-pending (awareness only,
+// muted, outside every total), the posted page from the store, and rows
+// carried in from the prior month-end (inside the totals but dated before the
+// period, so outside the store's date filter). Pending rows are the newest so
+// they lead; carried rows are the period's oldest by real date so they trail —
+// infinite scroll appends posted pages in between.
+type LedgerRow =
+  | { kind: 'posted' | 'carried'; txn: Transaction }
+  | { kind: 'pending'; txn: SimpleFinPendingTransaction }
+
+const rows = computed<LedgerRow[]>(() => [
+  ...scopedPending.value.map((txn) => ({ kind: 'pending' as const, txn })),
+  ...store.page.rows.map((txn) => ({ kind: 'posted' as const, txn })),
+  ...carriedInTransactions.value.map((txn) => ({ kind: 'carried' as const, txn })),
+])
+
+function rowMuted(r: LedgerRow): boolean {
+  return r.kind === 'pending'
+}
+
+function rowAccountLabel(r: LedgerRow): string {
+  const base = accountName(r.txn.accountId)
+  if (r.kind !== 'pending' && r.txn.type === 'transfer') {
+    return `${base} → ${accountName(r.txn.transferAccountId)}`
+  }
+  return base
+}
+
+function rowDateIcon(r: LedgerRow): { name: string; title: string } | null {
+  if (r.kind === 'carried') {
+    return {
+      name: 'i-ph-arrow-bend-down-right',
+      title: `Carried in from ${carriedFromLabel.value} — month-end paycheck counted toward ${tableScopeLabel.value}'s totals`,
+    }
+  }
+  if (r.kind === 'posted' && isShiftedOut(r.txn)) {
+    return { name: 'i-ph-arrow-bend-up-right', title: shiftedOutTitle(r.txn) }
+  }
+  return null
+}
+
+type RowBadge = { label: string; color: 'neutral' | 'info' | 'warning'; icon: string; title?: string }
+
+// Status badge in the category column. Pending/carried notation wins over the
+// suppressed/contribution badges — the row's relationship to the totals is the
+// thing that needs explaining; the date-cell icon still carries the detail.
+function rowBadge(r: LedgerRow): RowBadge | null {
+  if (r.kind === 'pending') {
+    return {
+      label: 'Pending',
+      color: 'warning',
+      icon: 'i-ph-clock',
+      title: 'Pending at your bank — not counted in any totals until it posts',
+    }
+  }
+  if (r.kind === 'carried') {
+    return {
+      label: `From ${carriedFromLabel.value}`,
+      color: 'info',
+      icon: 'i-ph-arrow-bend-down-right',
+      title: `Month-end paycheck counted toward ${tableScopeLabel.value}'s totals`,
+    }
+  }
+  if (r.txn.suppressedAs) {
+    return { label: labelForSuppressKind(r.txn.suppressedAs), color: 'neutral', icon: 'i-ph-eye-slash' }
+  }
+  if (r.txn.isContribution) {
+    return r.txn.isWithdrawal
+      ? { label: 'Withdrawal', color: 'warning', icon: 'i-ph-arrow-line-up' }
+      : { label: 'Contribution', color: 'info', icon: 'i-ph-piggy-bank' }
+  }
+  return null
+}
+
+function rowCategory(r: LedgerRow): { label: string; muted: boolean } {
+  return r.kind === 'pending' ? { label: 'Pending', muted: true } : categoryCell(r.txn)
+}
+
+function rowFlowIcon(r: LedgerRow): string {
+  if (r.kind === 'pending') return r.txn.txnType === 'income' ? 'i-ph-arrow-right' : 'i-ph-arrow-left'
+  return flowIcon(r.txn)
+}
+
+function rowFlowColor(r: LedgerRow): string {
+  return r.kind === 'pending' ? 'text-muted' : flowColor(r.txn)
+}
+
+function rowDirectionLabel(r: LedgerRow): string {
+  if (r.kind === 'pending') return r.txn.txnType === 'income' ? 'Income (pending)' : 'Expense (pending)'
+  return directionLabel(r.txn)
+}
+
+function rowId(r: LedgerRow): number | null {
+  return r.kind === 'pending' ? null : r.txn.id
+}
+
+function editRow(r: LedgerRow) {
+  if (r.kind !== 'pending') openEdit(r.txn)
+}
+
+function deleteRow(r: LedgerRow) {
+  if (r.kind !== 'pending') removeRow(r.txn)
+}
 
 const tableScopeLabel = computed(() => {
   if (scope.value === 'month') return monthLabel.value
@@ -479,8 +571,8 @@ const tableScopeLabel = computed(() => {
 })
 
 const columns = [
-  { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
+  { id: 'date', header: 'Date' },
+  { id: 'description', header: 'Description' },
   { id: 'account', header: 'Account' },
   { id: 'category', header: 'Category' },
   { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
@@ -733,43 +825,10 @@ onMounted(() => run(async () => {
       <UButton variant="ghost" @click="clearFilters">Clear</UButton>
     </div>
 
-    <!-- Pending at the bank — awareness only, outside every total -->
-    <div v-if="pendingTransactions.length > 0" class="border border-default rounded-lg overflow-hidden">
-      <div class="flex items-center gap-1.5 px-4 py-2 border-b border-default">
-        <UIcon name="i-ph-clock" class="size-3.5 text-warning" />
-        <p class="text-xs text-muted">
-          Pending at your bank ({{ pendingTransactions.length }}) — not counted in any totals until they post
-        </p>
-      </div>
-      <UTable :data="pendingTransactions" :columns="pendingColumns">
-        <template #date-cell="{ row }">
-          <span class="text-muted">{{ row.original.date }}</span>
-        </template>
-        <template #description-cell="{ row }">
-          <span class="block max-w-[300px] truncate text-muted" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
-        </template>
-        <template #account-cell="{ row }">
-          <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
-        </template>
-        <template #amount-cell="{ row }">
-          <span class="inline-flex items-center justify-end gap-1.5 text-muted">
-            <UIcon
-              :name="row.original.txnType === 'income' ? 'i-ph-arrow-right' : 'i-ph-arrow-left'"
-              class="size-4 shrink-0"
-              :title="row.original.txnType === 'income' ? 'Income (pending)' : 'Expense (pending)'"
-            />
-            {{ money(row.original.amount) }}
-          </span>
-        </template>
-      </UTable>
-      <div class="flex items-center justify-end gap-4 px-4 py-2 border-t border-default text-xs text-muted tabular-nums">
-        <span v-if="pendingTotals.income > 0">Income {{ money(pendingTotals.income) }}</span>
-        <span v-if="pendingTotals.expense > 0">Expenses {{ money(pendingTotals.expense) }}</span>
-        <span>Net {{ money(pendingTotals.net) }}</span>
-      </div>
-    </div>
-
     <!-- Table -->
+    <!-- One ledger: pending rows lead (muted, badged, outside every total),
+         posted rows follow, carried-in month-end rows trail (badged, inside
+         the totals despite their earlier date). -->
     <div class="border border-default rounded-lg overflow-hidden">
       <div class="flex items-center justify-between px-4 py-2 border-b border-default">
         <p class="text-xs text-muted">{{ tableScopeLabel }}</p>
@@ -783,7 +842,9 @@ onMounted(() => run(async () => {
             {{ showSuppressed ? 'Hide' : 'Show' }} suppressed ({{ store.page.suppressedCount }})
           </button>
           <p class="text-xs text-muted">
-            {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions
+            {{ store.page.rows.length }}{{ store.hasMore ? '+' : '' }} of {{ store.page.totalCount }} transactions<!--
+            --><span v-if="scopedPending.length > 0" :title="`Net ${money(pendingNet)} if everything posts as-is`"> · {{ scopedPending.length }} pending — not counted until posted</span><!--
+            --><span v-if="carriedInTransactions.length > 0"> · {{ carriedInTransactions.length }} carried in from {{ carriedFromLabel }}</span>
           </p>
         </div>
       </div>
@@ -804,84 +865,53 @@ onMounted(() => run(async () => {
           </div>
         </template>
         <template #date-cell="{ row }">
-          <span class="inline-flex items-center gap-1.5">
-            {{ row.original.date }}
+          <span class="inline-flex items-center gap-1.5" :class="{ 'text-muted': rowMuted(row.original) }">
+            {{ row.original.txn.date }}
             <UIcon
-              v-if="isShiftedOut(row.original)"
-              name="i-ph-arrow-bend-up-right"
+              v-if="rowDateIcon(row.original)"
+              :name="rowDateIcon(row.original)!.name"
               class="size-3.5 text-info shrink-0"
-              :title="shiftedOutTitle(row.original)"
+              :title="rowDateIcon(row.original)!.title"
             />
           </span>
         </template>
         <template #description-cell="{ row }">
           <!-- Tooltip shows the bank's unedited text when the import cleaned it up. -->
-          <span class="block max-w-[300px] truncate" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
+          <span class="block max-w-[300px] truncate" :class="{ 'text-muted': rowMuted(row.original) }" :title="row.original.txn.rawDescription ?? row.original.txn.description">{{ row.original.txn.description }}</span>
         </template>
         <template #account-cell="{ row }">
-          {{ accountName(row.original.accountId) }}
-          <span v-if="row.original.type === 'transfer'"> → {{ accountName(row.original.transferAccountId) }}</span>
+          <span :class="{ 'text-muted': rowMuted(row.original) }">{{ rowAccountLabel(row.original) }}</span>
         </template>
         <template #category-cell="{ row }">
           <div class="flex items-center gap-1.5">
             <UBadge
-              v-if="row.original.suppressedAs"
-              color="neutral"
+              v-if="rowBadge(row.original)"
+              :color="rowBadge(row.original)!.color"
               variant="subtle"
               size="sm"
-              icon="i-ph-eye-slash"
-            >{{ labelForSuppressKind(row.original.suppressedAs) }}</UBadge>
-            <UBadge
-              v-else-if="row.original.isContribution"
-              :color="row.original.isWithdrawal ? 'warning' : 'info'"
-              variant="subtle"
-              size="sm"
-              :icon="row.original.isWithdrawal ? 'i-ph-arrow-line-up' : 'i-ph-piggy-bank'"
-            >{{ row.original.isWithdrawal ? 'Withdrawal' : 'Contribution' }}</UBadge>
-            <span v-else :class="{ 'text-muted': categoryCell(row.original).muted }">{{ categoryCell(row.original).label }}</span>
+              :icon="rowBadge(row.original)!.icon"
+              :title="rowBadge(row.original)!.title"
+            >{{ rowBadge(row.original)!.label }}</UBadge>
+            <span v-else :class="{ 'text-muted': rowCategory(row.original).muted }">{{ rowCategory(row.original).label }}</span>
           </div>
         </template>
         <template #amount-cell="{ row }">
-          <span class="inline-flex items-center justify-end gap-1.5" :class="flowColor(row.original)">
-            <UIcon :name="flowIcon(row.original)" class="size-4 shrink-0" :title="directionLabel(row.original)" />
-            {{ money(row.original.amount) }}
+          <span class="inline-flex items-center justify-end gap-1.5" :class="rowFlowColor(row.original)">
+            <UIcon :name="rowFlowIcon(row.original)" class="size-4 shrink-0" :title="rowDirectionLabel(row.original)" />
+            {{ money(row.original.txn.amount) }}
           </span>
         </template>
         <template #actions-cell="{ row }">
-          <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="openEdit(row.original)" />
-          <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" :loading="removingId === row.original.id" :disabled="removingId !== null" @click="removeRow(row.original)" />
+          <template v-if="row.original.kind !== 'pending'">
+            <UButton size="xs" variant="ghost" icon="i-ph-pencil" @click="editRow(row.original)" />
+            <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" :loading="removingId === rowId(row.original)" :disabled="removingId !== null" @click="deleteRow(row.original)" />
+          </template>
         </template>
       </UTable>
       <div ref="sentinel" class="h-1" />
       <div v-if="store.loading && store.page.rows.length > 0" class="flex justify-center py-3">
         <UIcon name="i-ph-spinner" class="size-5 text-muted animate-spin" />
       </div>
-    </div>
-
-    <!-- Carried in from last month-end — counted in this period's totals.
-         Last on the page: these rows are the period's oldest by real date,
-         so they read in sequence after the ledger. -->
-    <div v-if="carriedInTransactions.length > 0" class="border border-default rounded-lg overflow-hidden">
-      <div class="flex items-center gap-1.5 px-4 py-2 border-b border-default">
-        <UIcon name="i-ph-arrow-bend-down-right" class="size-3.5 text-info" />
-        <p class="text-xs text-muted">
-          Carried in from {{ carriedFromLabel }} ({{ carriedInTransactions.length }}) — month-end paycheck counted toward {{ tableScopeLabel }}'s totals
-        </p>
-      </div>
-      <UTable :data="carriedInTransactions" :columns="carriedColumns">
-        <template #description-cell="{ row }">
-          <span class="block max-w-[300px] truncate" :title="row.original.rawDescription ?? row.original.description">{{ row.original.description }}</span>
-        </template>
-        <template #account-cell="{ row }">
-          {{ accountName(row.original.accountId) }}
-        </template>
-        <template #amount-cell="{ row }">
-          <span class="inline-flex items-center justify-end gap-1.5" :class="flowColor(row.original)">
-            <UIcon :name="flowIcon(row.original)" class="size-4 shrink-0" :title="directionLabel(row.original)" />
-            {{ money(row.original.amount) }}
-          </span>
-        </template>
-      </UTable>
     </div>
 
     <UModal v-model:open="isModalOpen" :title="editing ? 'Edit transaction' : 'Add transaction'">
