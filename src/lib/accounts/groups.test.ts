@@ -12,6 +12,7 @@ const account = (overrides: Partial<Account>): Account => ({
   createdAt: '2026-01-01',
   simplefinId: null,
   countPaymentsAsExpense: false,
+  traditionalPct: null,
   ...overrides,
 })
 

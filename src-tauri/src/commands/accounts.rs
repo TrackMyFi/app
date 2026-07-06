@@ -15,6 +15,8 @@ pub struct NewAccount {
     #[serde(default)]
     pub count_payments_as_expense: bool,
     pub created_at: String,
+    #[serde(default)]
+    pub traditional_pct: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +46,7 @@ fn row_to_account(row: &libsql::Row) -> Result<Account, String> {
         created_at: row.get(6).map_err(|e| e.to_string())?,
         simplefin_id: row.get(7).map_err(|e| e.to_string())?,
         count_payments_as_expense: row.get::<i64>(8).map_err(|e| e.to_string())? != 0,
+        traditional_pct: row.get(9).map_err(|e| e.to_string())?,
     })
 }
 
@@ -71,7 +74,7 @@ fn row_to_month_summary(row: &libsql::Row) -> Result<BalanceMonthSummary, String
 pub async fn list_accounts(conn: &Connection) -> Result<Vec<Account>, String> {
     let mut rows = conn
         .query(
-            "SELECT id, name, type, institution, is_active, include_in_fire_calculations, created_at, simplefin_id, count_payments_as_expense \
+            "SELECT id, name, type, institution, is_active, include_in_fire_calculations, created_at, simplefin_id, count_payments_as_expense, traditional_pct \
              FROM account ORDER BY created_at",
             (),
         )
@@ -86,15 +89,16 @@ pub async fn list_accounts(conn: &Connection) -> Result<Vec<Account>, String> {
 
 pub async fn create_account(conn: &Connection, a: &NewAccount) -> Result<i32, String> {
     conn.execute(
-        "INSERT INTO account (name, type, institution, is_active, include_in_fire_calculations, count_payments_as_expense, created_at) \
-         VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)",
+        "INSERT INTO account (name, type, institution, is_active, include_in_fire_calculations, count_payments_as_expense, created_at, traditional_pct) \
+         VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)",
         libsql::params![
             a.name.clone(),
             a.r#type.clone(),
             a.institution.clone(),
             a.include_in_fire_calculations,
             a.count_payments_as_expense,
-            a.created_at.clone()
+            a.created_at.clone(),
+            a.traditional_pct
         ],
     )
     .await
@@ -105,7 +109,7 @@ pub async fn create_account(conn: &Connection, a: &NewAccount) -> Result<i32, St
 pub async fn update_account(conn: &Connection, id: i32, a: &NewAccount) -> Result<(), String> {
     conn.execute(
         "UPDATE account SET name = ?1, type = ?2, institution = ?3, \
-         include_in_fire_calculations = ?4, count_payments_as_expense = ?5, created_at = ?6 WHERE id = ?7",
+         include_in_fire_calculations = ?4, count_payments_as_expense = ?5, created_at = ?6, traditional_pct = ?7 WHERE id = ?8",
         libsql::params![
             a.name.clone(),
             a.r#type.clone(),
@@ -113,6 +117,7 @@ pub async fn update_account(conn: &Connection, id: i32, a: &NewAccount) -> Resul
             a.include_in_fire_calculations,
             a.count_payments_as_expense,
             a.created_at.clone(),
+            a.traditional_pct,
             id
         ],
     )

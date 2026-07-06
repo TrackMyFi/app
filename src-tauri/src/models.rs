@@ -51,6 +51,9 @@ pub struct Account {
     /// Count transfers INTO this account as spending (loan-style accounts where
     /// the payment is the expense's only footprint). Defaults on for mortgages.
     pub count_payments_as_expense: bool,
+    /// Traditional (pre-tax) share of a mixed 401k as a 0..1 fraction.
+    /// None for other account types or when the user hasn't set a split.
+    pub traditional_pct: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, TS, Clone)]

@@ -9,4 +9,9 @@ simplefinId: string | null,
  * Count transfers INTO this account as spending (loan-style accounts where
  * the payment is the expense's only footprint). Defaults on for mortgages.
  */
-countPaymentsAsExpense: boolean, };
+countPaymentsAsExpense: boolean, 
+/**
+ * Traditional (pre-tax) share of a mixed 401k as a 0..1 fraction.
+ * None for other account types or when the user hasn't set a split.
+ */
+traditionalPct: number | null, };

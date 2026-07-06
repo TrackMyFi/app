@@ -8,13 +8,14 @@ import {
   netWorthOverTime, investmentsOverTime, projectedFiDate, savingsRate, activeFireInputs,
   derivedMonthlyContribution, journeyProgress, portfolioMonthlyEarnings,
   coastStatus, safeMonthlyWithdrawal, crossoverStatus, buildMilestones,
-  accessibleSplit, bridgeStatus, drawdownStatus, realMonthlyReturn,
+  accessibleSplit, bridgeStatus, bridgeContributionSplit, drawdownStatus, realMonthlyReturn,
+  LADDER_SEASONING_YEARS,
 } from '../lib/fire'
 import { useContributionsStore } from '../stores/contributions'
 import FiProgressCard from '../components/FiProgressCard.vue'
 import NetWorthChart from '../components/NetWorthChart.vue'
 import MilestoneLadder, { type MilestoneRow } from '../components/MilestoneLadder.vue'
-import BridgeCard from '../components/BridgeCard.vue'
+import BridgeCard, { type LadderViz } from '../components/BridgeCard.vue'
 import InvestmentsChart from '../components/InvestmentsChart.vue'
 import PageError from '../components/PageError.vue'
 import { usePageData } from '../composables/usePageData'
@@ -242,6 +243,11 @@ const bridgePct = computed(() => {
   const total = acc + Math.max(0, split.value.deferred)
   return total > 0 ? (acc / total) * 100 : 0
 })
+// Ongoing contributions split into the bridge's buckets. Only when the monthly
+// contribution comes from actual transaction history — the savings-rate
+// estimate has no per-account breakdown to split.
+const bridgeContrib = computed(() =>
+  contribution.value.estimated ? undefined : bridgeContributionSplit(fireAccounts.value, contrib.txns, asOf.value))
 const bridge = computed(() => {
   if (!fp.profile || fp.currentAge === 0) return null
   const yearsExact = progress.value >= 100 ? 0
@@ -250,9 +256,80 @@ const bridge = computed(() => {
   return bridgeStatus(
     split.value, fp.currentAge, yearsExact, fp.profile.annualExpensesTarget,
     fp.profile.expectedReturnRate, fp.profile.inflationRate,
+    bridgeContrib.value,
   )
 })
-const BRIDGE_CAVEAT = 'Projected from today\'s accessible balance alone — future contributions to taxable accounts aren\'t counted.'
+const bridgeCaveat = computed(() => bridgeContrib.value
+  ? 'Projected from today\'s balances plus your trailing 12-month contribution mix, assumed to continue until FI.'
+  : 'Projected from today\'s accessible balance alone — future contributions to taxable accounts aren\'t counted.')
+
+// Status line for the ladder section: strategy-specific — how far conversions
+// reach and what still falls on accessible funds. The timeline below carries
+// the year-by-year detail.
+const ladderDisplay = computed<{ text: string; color: 'success' | 'warning' } | null>(() => {
+  const l = bridge.value?.ladder
+  if (!bridge.value?.needed || !l) return null
+  if (l.coverage >= 1) {
+    return {
+      text: `On track: conversions fund the ${fmtYrs(l.conversionYears)} after seasoning, and ~${fmt(bridge.value.projectedAccessibleAtFi)} accessible covers the ~${fmt(l.bridgeNeeded)} that remains on you.`,
+      color: 'success',
+    }
+  }
+  if (l.fundableYears < l.conversionYears) {
+    return {
+      text: `Pre-tax funds convert to cover ${fmtYrs(l.fundableYears)} of the ${fmtYrs(l.conversionYears)} after seasoning, leaving ~${fmt(l.bridgeNeeded)} on accessible funds — ${((l.coverage) * 100).toFixed(0)}% covered.`,
+      color: 'warning',
+    }
+  }
+  return {
+    text: `Conversions fund the full ${fmtYrs(l.conversionYears)} after seasoning, but accessible funds cover ${((l.coverage) * 100).toFixed(0)}% of the ~${fmt(l.bridgeNeeded)} seasoning window.`,
+    color: 'warning',
+  }
+})
+
+const fmtYrs = (n: number) => {
+  const v = +n.toFixed(1)
+  return `${v} yr${v === 1 ? '' : 's'}`
+}
+
+// The bridge span (FI → 59½) as a funding timeline. Accessible funds are
+// allocated to the seasoning window first; any surplus backfills conversion
+// years the projected pre-tax balance can't reach.
+const ladderViz = computed<LadderViz | null>(() => {
+  const b = bridge.value
+  const l = b?.ladder
+  const exp = fp.profile?.annualExpensesTarget ?? 0
+  if (!b?.needed || !l || exp <= 0 || b.bridgeYears <= 0) return null
+  const accessibleYears = b.projectedAccessibleAtFi / exp
+  const seasoningFunded = Math.min(accessibleYears, LADDER_SEASONING_YEARS)
+  const surplus = Math.min(Math.max(0, accessibleYears - LADDER_SEASONING_YEARS), l.conversionYears - l.fundableYears)
+  const gap = Math.max(0, b.bridgeYears - seasoningFunded - l.fundableYears - surplus)
+  const pct = (yrs: number) => (yrs / b.bridgeYears) * 100
+  return {
+    fiLabel: `FI · age ${Math.round(b.ageAtFi)}`,
+    segments: ([
+      { kind: 'accessible', pct: pct(seasoningFunded) },
+      { kind: 'gap', pct: pct(LADDER_SEASONING_YEARS - seasoningFunded) },
+      { kind: 'ladder', pct: pct(l.fundableYears) },
+      { kind: 'accessible', pct: pct(surplus) },
+      { kind: 'gap', pct: pct(Math.max(0, b.bridgeYears - LADDER_SEASONING_YEARS - l.fundableYears - surplus)) },
+    ] satisfies LadderViz['segments']).filter(s => s.pct > 0),
+    unlockPct: pct(LADDER_SEASONING_YEARS),
+    legend: [
+      {
+        kind: 'accessible',
+        label: `Accessible funds · carry the first ${LADDER_SEASONING_YEARS} yrs`,
+        value: `${fmtYrs(seasoningFunded + surplus)} · ~${fmt(b.projectedAccessibleAtFi)} at FI`,
+      },
+      {
+        kind: 'ladder',
+        label: `Roth ladder · unlocks after ${LADDER_SEASONING_YEARS} yrs`,
+        value: `${fmtYrs(l.fundableYears)} of ${fmtYrs(l.conversionYears)} · ~${fmt(l.projectedLadderableAtFi)} pre-tax`,
+      },
+      ...(gap > 0.05 ? [{ kind: 'gap' as const, label: 'Uncovered', value: fmtYrs(gap) }] : []),
+    ],
+  }
+})
 const bridgeDisplay = computed<{ text: string; color: 'success' | 'warning' | 'muted'; caveat?: string }>(() => {
   if (!fp.profile || fp.currentAge === 0) {
     return { text: 'Add your date of birth in Settings to assess your bridge.', color: 'muted' }
@@ -265,12 +342,12 @@ const bridgeDisplay = computed<{ text: string; color: 'success' | 'warning' | 'm
   const yrs = Math.round(b.bridgeYears)
   const summary = `${fmt(b.bridgeNeeded)} carries you the ${yrs} year${yrs === 1 ? '' : 's'} from FI (age ${Math.round(b.ageAtFi)}) to 59½`
   if ((b.coverage ?? 0) >= 1) {
-    return { text: `On track: ~${fmt(b.projectedAccessibleAtFi)} accessible at FI. ${summary}.`, color: 'success', caveat: BRIDGE_CAVEAT }
+    return { text: `On track: ~${fmt(b.projectedAccessibleAtFi)} accessible at FI. ${summary}.`, color: 'success', caveat: bridgeCaveat.value }
   }
   return {
     text: `Thin bridge: ~${fmt(b.projectedAccessibleAtFi)} accessible at FI covers ${((b.coverage ?? 0) * 100).toFixed(0)}% of it. ${summary}.`,
     color: 'warning',
-    caveat: BRIDGE_CAVEAT,
+    caveat: bridgeCaveat.value,
   }
 })
 
@@ -443,6 +520,9 @@ const metrics = computed<Metric[]>(() => [
         :accessible-pct="bridgePct"
         :status-text="bridgeDisplay.text"
         :status-color="bridgeDisplay.color"
+        :ladder-text="ladderDisplay?.text"
+        :ladder-color="ladderDisplay?.color"
+        :ladder-viz="ladderViz ?? undefined"
         :caveat="bridgeDisplay.caveat"
       />
     </div>

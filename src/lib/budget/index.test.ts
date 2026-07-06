@@ -29,8 +29,8 @@ function makeTxn(overrides: Partial<Transaction>): Transaction {
 const zeroPaycheck: PaycheckSummary = { grossIncome: 0, netIncome: 0, taxes: 0 }
 
 const paymentAccounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
-  { id: 9, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false, traditionalPct: null },
+  { id: 9, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true, traditionalPct: null },
 ]
 
 describe('buildBudgetMonth', () => {

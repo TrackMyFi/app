@@ -6,6 +6,8 @@ import { useAccountsStore } from '../stores/accounts'
 import { accountTypeItems, defaultIncludeInFire, defaultCountPaymentsAsExpense, isLiability, type AccountType } from '../lib/accountTypes'
 import type { Account } from '../lib/types/Account'
 import DateInput from './DateInput.vue'
+import PercentInput from './PercentInput.vue'
+import { DEFAULT_MIXED_TRADITIONAL_PCT } from '../lib/fire'
 
 const props = defineProps<{ account?: Account }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -22,6 +24,7 @@ const form = reactive({
   includeInFireCalculations: props.account?.includeInFireCalculations ?? true,
   countPaymentsAsExpense: props.account?.countPaymentsAsExpense ?? false,
   createdAt: props.account?.createdAt ?? DateTime.now().toISODate()!,
+  traditionalPct: (props.account?.traditionalPct ?? DEFAULT_MIXED_TRADITIONAL_PCT) as number | null,
 })
 
 // Auto-default the FIRE and payment-as-expense toggles from the account type
@@ -47,6 +50,7 @@ async function onSubmit() {
     includeInFireCalculations: form.includeInFireCalculations,
     countPaymentsAsExpense: isLiability(form.type) && form.countPaymentsAsExpense,
     createdAt: form.createdAt,
+    traditionalPct: form.type === 'mixed_401k' ? form.traditionalPct : null,
   }
   saving.value = true
   try {
@@ -80,6 +84,14 @@ async function onSubmit() {
         value-key="value"
         placeholder="Select account type"
       />
+    </UFormField>
+
+    <UFormField
+      v-if="form.type === 'mixed_401k'"
+      label="Traditional (pre-tax) share"
+      help="Rough split of this account's balance that's traditional vs. Roth — used to size a Roth conversion ladder in the bridge to 59½. Update it periodically from your plan's sources page."
+    >
+      <PercentInput v-model="form.traditionalPct" :max="1" class="w-full" />
     </UFormField>
 
     <UFormField label="Institution (optional)">

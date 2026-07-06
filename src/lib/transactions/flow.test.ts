@@ -4,10 +4,10 @@ import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
-  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
-  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
-  { id: 4, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false, traditionalPct: null },
+  { id: 2, name: 'Brokerage', type: 'brokerage', institution: null, isActive: true, includeInFireCalculations: true, createdAt: '', simplefinId: null, countPaymentsAsExpense: false, traditionalPct: null },
+  { id: 3, name: 'Credit Card', type: 'liability', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false, traditionalPct: null },
+  { id: 4, name: 'Mortgage', type: 'mortgage', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: true, traditionalPct: null },
 ]
 
 function tx(overrides: Partial<Transaction>): Transaction {

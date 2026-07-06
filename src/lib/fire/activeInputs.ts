@@ -19,6 +19,7 @@ export function activeFireInputs(
       id: a.id,
       type: a.type,
       includeInFireCalculations: a.includeInFireCalculations,
+      traditionalPct: a.traditionalPct,
     })),
     balances: balances
       .filter(b => activeIds.has(b.accountId))

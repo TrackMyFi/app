@@ -4,7 +4,7 @@ import type { Transaction } from '../types/Transaction'
 import type { Account } from '../types/Account'
 
 const accounts: Account[] = [
-  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false },
+  { id: 1, name: 'Checking', type: 'checking', institution: null, isActive: true, includeInFireCalculations: false, createdAt: '', simplefinId: null, countPaymentsAsExpense: false, traditionalPct: null },
 ]
 
 let nextId = 1

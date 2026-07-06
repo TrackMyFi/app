@@ -17,7 +17,7 @@ async fn make_account(conn: &libsql::Connection, name: &str, ty: &str) -> i32 {
         r#type: ty.into(),
         institution: None,
         include_in_fire_calculations: true, count_payments_as_expense: false,
-        created_at: "2025-01-01".into(),
+        created_at: "2025-01-01".into(), traditional_pct: None,
     }).await.unwrap()
 }
 

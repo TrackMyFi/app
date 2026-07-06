@@ -12,6 +12,7 @@ function acct(id: number, type: string): Account {
     isActive: true, includeInFireCalculations: true, createdAt: '2025-01-01',
     simplefinId: null,
     countPaymentsAsExpense: false,
+    traditionalPct: null,
   }
 }
 

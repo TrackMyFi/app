@@ -39,7 +39,7 @@ async fn transaction_crud_and_totals() {
             r#type: "checking".into(),
             institution: None,
             include_in_fire_calculations: false, count_payments_as_expense: false,
-            created_at: "2026-01-01".into(),
+            created_at: "2026-01-01".into(), traditional_pct: None,
         },
     )
     .await
@@ -113,10 +113,10 @@ async fn transfers_excluded_from_totals() {
     let conn = setup().await;
     let a = accounts::create_account(&conn, &NewAccount {
         name: "A".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let b = accounts::create_account(&conn, &NewAccount {
         name: "B".into(), r#type: "savings".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
 
     let mut t = new_txn(a, 500.0, "transfer");
     t.transfer_account_id = Some(b);
@@ -159,7 +159,7 @@ async fn balance_switch_creates_and_links_snapshot() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: acct, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
 
@@ -182,7 +182,7 @@ async fn balance_switch_off_writes_no_snapshot() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let t = new_txn(acct, 40.0, "expense"); // update_balance defaults false
     transactions::create_transaction(&conn, &t).await.unwrap();
     assert_eq!(balance_count(&conn).await, 0);
@@ -193,10 +193,10 @@ async fn transfer_switch_writes_two_snapshots() {
     let conn = setup().await;
     let a = accounts::create_account(&conn, &NewAccount {
         name: "A".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let b = accounts::create_account(&conn, &NewAccount {
         name: "B".into(), r#type: "savings".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: a, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
@@ -219,10 +219,10 @@ async fn transfer_into_liability_reduces_its_debt() {
     let conn = setup().await;
     let pnc = accounts::create_account(&conn, &NewAccount {
         name: "PNC".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let card = accounts::create_account(&conn, &NewAccount {
         name: "Citi".into(), r#type: "liability".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: pnc, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
@@ -245,7 +245,7 @@ async fn income_and_expense_on_liability_move_debt_correctly() {
     let conn = setup().await;
     let card = accounts::create_account(&conn, &NewAccount {
         name: "Citi".into(), r#type: "liability".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: card, balance: 500.0, recorded_at: "2026-02-01".into() }).await.unwrap();
 
@@ -271,10 +271,10 @@ async fn transfer_out_of_liability_increases_its_debt() {
     let conn = setup().await;
     let card = accounts::create_account(&conn, &NewAccount {
         name: "Citi".into(), r#type: "liability".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let pnc = accounts::create_account(&conn, &NewAccount {
         name: "PNC".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: card, balance: 500.0, recorded_at: "2026-02-01".into() }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
@@ -294,7 +294,7 @@ async fn editing_amount_reapplies_linked_snapshot() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &trackmyfi_app_lib::commands::accounts::NewBalance {
         account_id: acct, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
 
@@ -317,7 +317,7 @@ async fn bulk_create_writes_no_snapshots() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
 
     let rows = vec![
         new_txn(acct, 40.0, "expense"),
@@ -337,7 +337,7 @@ async fn balances_expose_linked_transaction_id() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
 
     // A manually-entered balance has no linking transaction.
     accounts::add_balance(&conn, &accounts::NewBalance {
@@ -360,10 +360,10 @@ async fn transfer_balances_link_to_same_transaction() {
     let conn = setup().await;
     let a = accounts::create_account(&conn, &NewAccount {
         name: "A".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let b = accounts::create_account(&conn, &NewAccount {
         name: "B".into(), r#type: "savings".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     accounts::add_balance(&conn, &accounts::NewBalance {
         account_id: a, balance: 1000.0, recorded_at: "2026-02-01".into() }).await.unwrap();
     accounts::add_balance(&conn, &accounts::NewBalance {
@@ -387,7 +387,7 @@ async fn get_transaction_returns_row() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into() }).await.unwrap();
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None, }).await.unwrap();
     let id = transactions::create_transaction(&conn, &new_txn(acct, 1000.0, "income"))
         .await.unwrap();
 
@@ -409,7 +409,7 @@ async fn bulk_create_with_snapshots_sequential_balances() {
     let conn = setup().await;
     let acct = accounts::create_account(&conn, &NewAccount {
         name: "Checking".into(), r#type: "checking".into(), institution: None,
-        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(),
+        include_in_fire_calculations: false, count_payments_as_expense: false, created_at: "2026-01-01".into(), traditional_pct: None,
     }).await.unwrap();
 
     // Seed balance: $1,000 on Jan 1 — gives base_balance something to start from.
@@ -485,7 +485,7 @@ fn checking(name: &str) -> NewAccount {
         r#type: "checking".into(),
         institution: None,
         include_in_fire_calculations: false, count_payments_as_expense: false,
-        created_at: "2026-01-01".into(),
+        created_at: "2026-01-01".into(), traditional_pct: None,
     }
 }
 

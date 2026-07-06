@@ -76,6 +76,7 @@ async function onLinkChange(remote: SimpleFinRemoteAccount, value: string) {
         includeInFireCalculations: false,
         countPaymentsAsExpense: false,
         createdAt: new Date().toISOString().slice(0, 10),
+        traditionalPct: null,
       })
       await simplefin.link(remote.id, id)
       await accountsStore.loadList()
