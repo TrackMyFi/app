@@ -50,6 +50,7 @@ const fmtDelta = (n: number) => {
 
 const swr = computed(() => fp.profile?.withdrawalRate ?? 0.04)
 const swrPct = computed(() => `${+(swr.value * 100).toFixed(2)}%`)
+const fmtPct = (r: number) => `${+(r * 100).toFixed(1)}%`
 const fireNum = computed(() => fp.profile ? fireNumber(fp.profile.annualExpensesTarget, swr.value) : 0)
 const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances.value))
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
@@ -191,7 +192,7 @@ const retirementYearsAhead = computed(() => {
 const portfolioPays = computed(() => safeMonthlyWithdrawal(investable.value, swr.value))
 const portfolioPaysHint = computed(() => {
   if (!fp.profile || fp.profile.annualExpensesTarget === 0) return `Sustainable income at a ${swrPct.value} withdrawal rate`
-  return `${swrPct.value} rule · covers ${Math.min(progress.value, 100).toFixed(0)}% of your ${fmt(fp.profile.annualExpensesTarget / 12)}/mo expenses`
+  return `${swrPct.value} rule · ${Math.min(progress.value, 100).toFixed(0)}% of ${fmt(fp.profile.annualExpensesTarget / 12)}/mo expenses`
 })
 
 // Crossover point: when compounding out-earns the monthly contribution.
@@ -205,13 +206,18 @@ const crossoverValue = computed(() => {
 })
 const crossoverHint = computed(() => {
   if (crossover.value?.crossed) return 'Your portfolio now out-earns your monthly contributions'
-  if (crossover.value?.date) return `When your portfolio out-earns your ${fmt(contribution.value.monthly)}/mo contributions`
-  return 'When your portfolio out-earns your contributions'
+  if (crossover.value?.date) return `When compounding out-earns your ${fmt(contribution.value.monthly)}/mo`
+  return 'When compounding out-earns your contributions'
 })
 
 const yearsAway = (d: DateTime) => {
-  const yrs = Math.round(d.diff(DateTime.now(), 'years').years)
-  return yrs < 1 ? 'under a year' : `${yrs} yr${yrs === 1 ? '' : 's'}`
+  const now = DateTime.now()
+  const yrs = Math.round(d.diff(now, 'years').years)
+  if (yrs < 1) {
+    const mos = Math.round(d.diff(now, 'months').months)
+    return mos < 1 ? '< 1 month' : `${mos} mo${mos === 1 ? '' : 's'}`
+  }
+  return `${yrs} yr${yrs === 1 ? '' : 's'}`
 }
 
 const milestones = computed<MilestoneRow[]>(() => {
@@ -355,35 +361,58 @@ const coastHint = computed(() => {
   return `coast by ${d.toFormat('LLL yyyy')} · ${yrs} yr${yrs === 1 ? '' : 's'}`
 })
 
+// Hover explanations for each metric: what it shows and where the data comes
+// from, with the live inputs baked in so the formula is checkable at a glance.
+const tooltips = computed(() => {
+  const p = fp.profile
+  const ret = p ? fmtPct(p.expectedReturnRate) : null
+  const infl = p && p.inflationRate > 0 ? fmtPct(p.inflationRate) : null
+  return {
+    fireNumber: `The portfolio size where a ${swrPct.value} withdrawal covers your spending: annual expenses target${p ? ` (${fmt(p.annualExpensesTarget)})` : ''} ÷ ${swrPct.value}. Both inputs come from your FIRE profile in Settings.`,
+    investable: 'The latest balance of every active account included in FIRE calculations — the money that can actually fund retirement. Excludes archived accounts and home equity.',
+    coast: `The balance that would compound to your FIRE number by age ${p?.targetRetirementAge ?? '—'} with zero further contributions${ret ? `, assuming ${ret} returns${infl ? ` and ${infl} inflation` : ''}` : ''}. Once your investable net worth passes it, saving becomes optional.`,
+    crossover: `The projected month when monthly growth from compounding (currently ${fmt(portfolioEarnings.value)}) permanently out-earns your ${fmt(contribution.value.monthly)}/mo contributions — the point where the market does more of the heavy lifting than you do.`,
+    contribution: contribution.value.estimated
+      ? 'Estimated from your savings rate (balance growth against your annual income) because there isn\'t enough transaction history yet. Recording contributions makes this exact.'
+      : 'Your average monthly contribution to investable accounts, derived from the trailing 12 months of recorded transactions.',
+    savingsRate: `Annualized contributions (${fmt(contribution.value.monthly * 12)}) as a share of the annual income in your FIRE profile${p ? ` (${fmt(p.annualIncome)})` : ''}. Time to FI is more sensitive to this number than to returns.`,
+    portfolioEarns: `Expected growth this month from compounding alone: investable net worth × your ${ret ?? 'expected'} annual return, applied monthly. Nominal — the line below restates it in today's purchasing power.`,
+    portfolioPays: `The monthly paycheck your portfolio could sustainably write today: investable net worth × ${swrPct.value} ÷ 12. At FI this fully covers your expenses; until then the line below shows how close it is.`,
+  }
+})
+
 // The eight supporting metrics, consolidated into one card under the net worth
 // headline. Row one is targets and waypoints; row two is the monthly flows.
 interface Metric {
   label: string
   value: string
   hint?: string
+  tooltip?: string
   color?: 'success' | 'default'
   trend?: { text: string; positive: boolean } | null
 }
 
 const metrics = computed<Metric[]>(() => [
-  { label: 'FIRE Number', value: fmt(fireNum.value * reveal.value), hint: fireNumberHint.value },
-  { label: 'Investable Net Worth', value: fmt(investable.value * reveal.value), trend: investableTrend.value },
+  { label: 'FIRE Number', value: fmt(fireNum.value * reveal.value), hint: fireNumberHint.value, tooltip: tooltips.value.fireNumber },
+  { label: 'Investable Net Worth', value: fmt(investable.value * reveal.value), trend: investableTrend.value, tooltip: tooltips.value.investable },
   {
     label: 'Coast FIRE',
     value: !coast.value ? '—' : coast.value.coasting ? 'Coasting' : fmt(coast.value.coastNumber * reveal.value),
     color: coast.value?.coasting ? 'success' : 'default',
     hint: coastHint.value,
+    tooltip: tooltips.value.coast,
   },
   {
     label: 'Crossover Point',
     value: crossoverValue.value,
     color: crossover.value?.crossed ? 'success' : 'default',
     hint: crossoverHint.value,
+    tooltip: tooltips.value.crossover,
   },
-  { label: 'Monthly Contribution', value: fmt(contribution.value.monthly * reveal.value), hint: contributionHint.value },
-  { label: 'Savings Rate', value: `${(rate.value * 100 * reveal.value).toFixed(1)}%`, hint: savingsRateHint.value },
-  { label: 'Portfolio Earns / Mo', value: fmt(portfolioEarnings.value * reveal.value), hint: portfolioEarnsHint.value },
-  { label: 'Portfolio Pays / Mo', value: fmt(portfolioPays.value * reveal.value), hint: portfolioPaysHint.value },
+  { label: 'Monthly Contribution', value: fmt(contribution.value.monthly * reveal.value), hint: contributionHint.value, tooltip: tooltips.value.contribution },
+  { label: 'Savings Rate', value: `${(rate.value * 100 * reveal.value).toFixed(1)}%`, hint: savingsRateHint.value, tooltip: tooltips.value.savingsRate },
+  { label: 'Portfolio Earns / Mo', value: fmt(portfolioEarnings.value * reveal.value), hint: portfolioEarnsHint.value, tooltip: tooltips.value.portfolioEarns },
+  { label: 'Portfolio Pays / Mo', value: fmt(portfolioPays.value * reveal.value), hint: portfolioPaysHint.value, tooltip: tooltips.value.portfolioPays },
 ])
 </script>
 
@@ -469,7 +498,15 @@ const metrics = computed<Metric[]>(() => [
         </header>
         <dl class="border-t border-default px-4 sm:px-5 py-4 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-5">
           <div v-for="(m, i) in metrics" :key="m.label" class="tmfi-rise" :style="{ animationDelay: `${80 + i * 40}ms` }">
-            <dt class="text-sm text-muted">{{ m.label }}</dt>
+            <dt class="text-sm text-muted">
+              <UTooltip v-if="m.tooltip" :delay-duration="150" :disable-closing-trigger="true" :ui="{ content: 'h-auto max-w-72 py-1.5' }">
+                <span class="cursor-help underline decoration-dotted decoration-muted/60 underline-offset-2">{{ m.label }}</span>
+                <template #content>
+                  <p class="text-xs text-wrap">{{ m.tooltip }}</p>
+                </template>
+              </UTooltip>
+              <template v-else>{{ m.label }}</template>
+            </dt>
             <dd
               class="mt-0.5 font-mono font-semibold tabular-nums text-xl"
               :class="m.color === 'success' ? 'text-success' : 'text-highlighted'"
