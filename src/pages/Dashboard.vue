@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { DateTime } from 'luxon'
 import { useFireProfileStore } from '../stores/fireProfile'
 import { useAccountsStore } from '../stores/accounts'
+import { cashFlowTotals } from '../lib/transactions/flow'
+import { listTransactions } from '../lib/api/transactions'
+import type { Transaction } from '../lib/types/Transaction'
 import {
   fireNumber, currentNetWorth, investableNetWorth, fiProgress,
   netWorthOverTime, investmentsOverTime, projectedFiDate, savingsRate, activeFireInputs,
@@ -30,10 +33,18 @@ const { error, run, retry } = usePageData()
 // data lands, so the numbers feel earned rather than simply appearing.
 const { progress: reveal, play: playReveal } = useReveal()
 
+// The trailing 12 months of all transactions — spending, not just
+// contributions — for the reality-check FIRE number in the header.
+const trailingTxns = ref<Transaction[]>([])
+
 onMounted(() => run(async () => {
   // Full contribution history: the bridge derives Roth basis from lifetime
   // contributions; the trailing-12-month windows filter by date themselves.
-  await Promise.all([fp.load(), acc.load(), contrib.loadAll()])
+  const [, , , trailingPage] = await Promise.all([
+    fp.load(), acc.load(), contrib.loadAll(),
+    listTransactions({ startDate: DateTime.now().minus({ months: 12 }).toISODate(), limit: null }),
+  ])
+  trailingTxns.value = trailingPage.rows
   playReveal()
 }))
 
@@ -52,6 +63,26 @@ const swr = computed(() => fp.profile?.withdrawalRate ?? 0.04)
 const swrPct = computed(() => `${+(swr.value * 100).toFixed(2)}%`)
 const fmtPct = (r: number) => `${+(r * 100).toFixed(1)}%`
 const fireNum = computed(() => fp.profile ? fireNumber(fp.profile.annualExpensesTarget, swr.value) : 0)
+// The FIRE number sanity-checked against real spending: trailing 12 months of
+// recorded expenses, annualized when history is shorter than the full window.
+const trailingExpenses = computed(() => {
+  if (trailingTxns.value.length === 0) return null
+  const spend = cashFlowTotals(trailingTxns.value, acc.accounts).expense
+  if (spend <= 0) return null
+  const earliest = trailingTxns.value.reduce((min, t) => (t.date < min ? t.date : min), trailingTxns.value[0].date)
+  const monthsCovered = Math.min(12, Math.max(1, Math.ceil(DateTime.now().diff(DateTime.fromISO(earliest), 'months').months)))
+  return { annual: spend * (12 / monthsCovered), monthsCovered }
+})
+const trailingFireNum = computed(() =>
+  trailingExpenses.value ? fireNumber(trailingExpenses.value.annual, swr.value) : null)
+const trailingFireHint = computed(() => {
+  const t = trailingExpenses.value
+  if (!t) return 'No expense history yet'
+  return t.monthsCovered < 12
+    ? `${fmt(t.annual)} annual expenses · from ${t.monthsCovered} mo of spending`
+    : `${fmt(t.annual)} trailing annual expenses`
+})
+
 const netWorth = computed(() => currentNetWorth(fireAccounts.value, fireBalances.value))
 const investable = computed(() => investableNetWorth(fireAccounts.value, fireBalances.value))
 const progress = computed(() => fiProgress(investable.value, fireNum.value))
@@ -369,6 +400,7 @@ const tooltips = computed(() => {
   const infl = p && p.inflationRate > 0 ? fmtPct(p.inflationRate) : null
   return {
     fireNumber: `The portfolio size where a ${swrPct.value} withdrawal covers your spending: annual expenses target${p ? ` (${fmt(p.annualExpensesTarget)})` : ''} ÷ ${swrPct.value}. Both inputs come from your FIRE profile in Settings.`,
+    trailingFire: `Your FIRE number recomputed from what you actually spent: trailing 12-month recorded expenses${trailingExpenses.value ? ` (${fmt(trailingExpenses.value.annual)})` : ''} ÷ ${swrPct.value}. A reality check on the expenses target set in Settings.`,
     investable: 'The latest balance of every active account included in FIRE calculations — the money that can actually fund retirement. Excludes archived accounts and home equity.',
     coast: `The balance that would compound to your FIRE number by age ${p?.targetRetirementAge ?? '—'} with zero further contributions${ret ? `, assuming ${ret} returns${infl ? ` and ${infl} inflation` : ''}` : ''}. Once your investable net worth passes it, saving becomes optional.`,
     crossover: `The projected month when monthly growth from compounding (currently ${fmt(portfolioEarnings.value)}) permanently out-earns your ${fmt(contribution.value.monthly)}/mo contributions — the point where the market does more of the heavy lifting than you do.`,
@@ -381,8 +413,8 @@ const tooltips = computed(() => {
   }
 })
 
-// The eight supporting metrics, consolidated into one card under the net worth
-// headline. Row one is targets and waypoints; row two is the monthly flows.
+// The supporting metrics, consolidated into one card under the net worth
+// headline: waypoints first, then the monthly flows.
 interface Metric {
   label: string
   value: string
@@ -392,9 +424,16 @@ interface Metric {
   trend?: { text: string; positive: boolean } | null
 }
 
-const metrics = computed<Metric[]>(() => [
+// The three FIRE targets live in the header, beside the net worth headline:
+// the goal, the goal implied by real spending, and the coast threshold.
+const headerStats = computed<Metric[]>(() => [
   { label: 'FIRE Number', value: fmt(fireNum.value * reveal.value), hint: fireNumberHint.value, tooltip: tooltips.value.fireNumber },
-  { label: 'Investable Net Worth', value: fmt(investable.value * reveal.value), trend: investableTrend.value, tooltip: tooltips.value.investable },
+  {
+    label: 'Trailing FIRE Number',
+    value: trailingFireNum.value != null ? fmt(trailingFireNum.value * reveal.value) : '—',
+    hint: trailingFireHint.value,
+    tooltip: tooltips.value.trailingFire,
+  },
   {
     label: 'Coast FIRE',
     value: !coast.value ? '—' : coast.value.coasting ? 'Coasting' : fmt(coast.value.coastNumber * reveal.value),
@@ -402,6 +441,13 @@ const metrics = computed<Metric[]>(() => [
     hint: coastHint.value,
     tooltip: tooltips.value.coast,
   },
+])
+
+const metrics = computed<Metric[]>(() => [
+  { label: 'Investable Net Worth', value: fmt(investable.value * reveal.value), trend: investableTrend.value, tooltip: tooltips.value.investable },
+  { label: 'Monthly Contribution', value: fmt(contribution.value.monthly * reveal.value), hint: contributionHint.value, tooltip: tooltips.value.contribution },
+  { label: 'Portfolio Earns / Mo', value: fmt(portfolioEarnings.value * reveal.value), hint: portfolioEarnsHint.value, tooltip: tooltips.value.portfolioEarns },
+  { label: 'Savings Rate', value: `${(rate.value * 100 * reveal.value).toFixed(1)}%`, hint: savingsRateHint.value, tooltip: tooltips.value.savingsRate },
   {
     label: 'Crossover Point',
     value: crossoverValue.value,
@@ -409,9 +455,6 @@ const metrics = computed<Metric[]>(() => [
     hint: crossoverHint.value,
     tooltip: tooltips.value.crossover,
   },
-  { label: 'Monthly Contribution', value: fmt(contribution.value.monthly * reveal.value), hint: contributionHint.value, tooltip: tooltips.value.contribution },
-  { label: 'Savings Rate', value: `${(rate.value * 100 * reveal.value).toFixed(1)}%`, hint: savingsRateHint.value, tooltip: tooltips.value.savingsRate },
-  { label: 'Portfolio Earns / Mo', value: fmt(portfolioEarnings.value * reveal.value), hint: portfolioEarnsHint.value, tooltip: tooltips.value.portfolioEarns },
   { label: 'Portfolio Pays / Mo', value: fmt(portfolioPays.value * reveal.value), hint: portfolioPaysHint.value, tooltip: tooltips.value.portfolioPays },
 ])
 </script>
@@ -457,7 +500,7 @@ const metrics = computed<Metric[]>(() => [
       </div>
     </template>
     <template v-else>
-      <!-- Where you stand: net worth headline over its eight supporting metrics -->
+      <!-- Where you stand: net worth headline and FIRE targets over the supporting metrics -->
       <section class="tmfi-rise border border-default rounded-lg" :style="{ animationDelay: '40ms' }">
         <header class="px-4 sm:px-5 pt-4 pb-4 flex flex-wrap items-start gap-x-10 gap-y-3">
           <div>
@@ -489,14 +532,39 @@ const metrics = computed<Metric[]>(() => [
               {{ fmtDelta(lessEquityYtd) }} YTD
             </div>
           </div>
-          <span v-if="drawdown" class="ms-auto text-xs" :class="drawdown.atHigh ? 'text-success' : 'text-muted'">
-            <template v-if="drawdown.atHigh">At an all-time high</template>
-            <template v-else>
-              −{{ (drawdown.drawdown * 100).toFixed(1) }}% from the {{ DateTime.fromISO(drawdown.highDate).toFormat('LLL yyyy') }} high of {{ fmt(drawdown.high) }}
-            </template>
-          </span>
+          <!-- The three FIRE targets, filling the header's right side -->
+          <dl class="border-l border-default ps-6 flex flex-wrap items-start gap-x-10 gap-y-3">
+            <div v-for="s in headerStats" :key="s.label">
+              <dt class="text-sm text-muted">
+                <UTooltip v-if="s.tooltip" :delay-duration="150" :disable-closing-trigger="true" :ui="{ content: 'h-auto max-w-72 py-1.5' }">
+                  <span class="cursor-help underline decoration-dotted decoration-muted/60 underline-offset-2">{{ s.label }}</span>
+                  <template #content>
+                    <p class="text-xs text-wrap">{{ s.tooltip }}</p>
+                  </template>
+                </UTooltip>
+                <template v-else>{{ s.label }}</template>
+              </dt>
+              <dd
+                class="mt-0.5 font-mono font-semibold tabular-nums text-xl"
+                :class="s.color === 'success' ? 'text-success' : 'text-highlighted'"
+              >
+                {{ s.value }}
+              </dd>
+              <dd v-if="s.hint" class="mt-0.5 text-xs text-muted">{{ s.hint }}</dd>
+            </div>
+          </dl>
         </header>
-        <dl class="border-t border-default px-4 sm:px-5 py-4 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-5">
+        <div v-if="drawdown" class="px-4 sm:px-5 py-2 border-t border-default text-xs" :class="drawdown.atHigh ? 'text-success' : 'text-muted'">
+          <template v-if="drawdown.atHigh">
+            <UIcon name="ph:trend-up" class="inline-block mr-0.5" />
+            Net worth is at an all-time high
+          </template>
+          <template v-else>
+            <UIcon name="ph:trend-down" class="inline-block mr-0.5" />
+            Net worth is down −{{ (drawdown.drawdown * 100).toFixed(1) }}% from the {{ DateTime.fromISO(drawdown.highDate).toFormat('LLL yyyy') }} high of {{ fmt(drawdown.high) }}
+          </template>
+        </div>
+        <dl class="border-t border-default px-4 sm:px-5 py-4 grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5">
           <div v-for="(m, i) in metrics" :key="m.label" class="tmfi-rise" :style="{ animationDelay: `${80 + i * 40}ms` }">
             <dt class="text-sm text-muted">
               <UTooltip v-if="m.tooltip" :delay-duration="150" :disable-closing-trigger="true" :ui="{ content: 'h-auto max-w-72 py-1.5' }">
