@@ -9,6 +9,7 @@ import { useReveal } from '../composables/useReveal'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import MonthPicker from '../components/MonthPicker.vue'
 import PageError from '../components/PageError.vue'
+import BudgetSectionCard from '../components/BudgetSectionCard.vue'
 
 const store = useBudgetStore()
 const accountsStore = useAccountsStore()
@@ -34,18 +35,25 @@ function money(n: number): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
-
-function accountName(id: number): string {
-  return accountsStore.accounts.find((a) => a.id === id)?.name ?? `#${id}`
-}
-
 async function onMonthChange(dt: DateTime) {
   selectedDate.value = dt
   await run(() => store.load(dt.year, dt.month))
   playReveal()
 }
 
-function setActiveSection(section: 'income' | 'savings' | 'fixed' | 'discretionary') {
+type BudgetSection = 'income' | 'savings' | 'fixed' | 'discretionary'
+const allSections: BudgetSection[] = ['income', 'savings', 'fixed', 'discretionary']
+
+// "At a glance" mode: the active section's card stays on top, and the
+// remaining sections expand below the toggle as their own cards.
+const showAllSections = ref(false)
+
+// The other three sections, in formula order, shown when expanded.
+const remainingSections = computed(() =>
+  allSections.filter((s) => s !== store.activeSection),
+)
+
+function setActiveSection(section: BudgetSection) {
   store.activeSection = section
 }
 
@@ -85,33 +93,18 @@ const incomeTransactions = computed(() => {
 
 // Newest first so fresh activity tops the table; carried-in rows from last
 // month are the oldest by real date and naturally settle at the bottom.
-const detailTransactions = computed(() => {
-  if (!store.summary || !store.activeSection) return []
-  const rows = store.activeSection === 'income'
+function sectionTransactions(section: BudgetSection) {
+  if (!store.summary) return []
+  const rows = section === 'income'
     ? incomeTransactions.value
-    : store.summary[store.activeSection].transactions
+    : store.summary[section].transactions
   return [...rows].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
-})
+}
 
 // ─── Month-end paycheck attribution ──────────────────────────────────────────
 
-// A row dated before the selected month was carried in by the paycheck
-// attribution preference — badge it so the numbers stay explainable.
-function isCarriedIn(t: { date: string }): boolean {
-  return t.date < selectedDate.value.toISODate()!
-}
-
+const monthStartIso = computed(() => selectedDate.value.toISODate()!)
 const carriedFromLabel = computed(() => selectedDate.value.minus({ months: 1 }).toFormat('MMM'))
-
-const emptyMessage = computed(() => {
-  switch (store.activeSection) {
-    case 'income': return 'No income transactions this month.'
-    case 'savings': return 'No contributions this month.'
-    case 'fixed': return 'No bills this month.'
-    case 'discretionary': return 'No spending this month.'
-    default: return 'No transactions this month.'
-  }
-})
 
 const savingsSubLabel = computed(() => {
   if (editingTarget.value) return null
@@ -158,21 +151,6 @@ const spentRatio = computed(() => {
 
 // Bar grows from zero on reveal, in lockstep with the counting figures.
 const envelopeBarWidth = computed(() => `${spentRatio.value * 100 * reveal.value}%`)
-
-const incomeColumns = [
-  { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
-  { id: 'account', header: 'Account' },
-  { id: 'gross', header: 'Gross', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-  { id: 'net', header: 'Net', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-]
-
-const sectionColumns = [
-  { accessorKey: 'date', header: 'Date' },
-  { accessorKey: 'description', header: 'Description' },
-  { id: 'account', header: 'Account' },
-  { id: 'amount', header: 'Amount', meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } } },
-]
 
 onMounted(() => run(async () => {
   await Promise.all([accountsStore.load(), store.loadMonths()])
@@ -258,14 +236,14 @@ onMounted(() => run(async () => {
             </div>
           </template>
           <template v-else>
-            <span class="text-xs flex items-center gap-1" :class="savingsMet ? 'text-primary' : 'text-muted'">
-              {{ savingsMet ? 'target met' : savingsSubLabel }}
+            <span class="text-xs flex items-center" :class="savingsMet ? 'text-primary' : 'text-muted'">
               <button
-                class="ml-1 opacity-50 hover:opacity-100 transition-opacity"
+                class="inline-flex items-center gap-1 hover:opacity-100 transition-opacity group"
                 title="Edit savings target"
                 @click.stop="openTargetEdit"
               >
-                <span class="i-ph-pencil w-3 h-3 inline-block" />
+                {{ savingsMet ? 'target met' : savingsSubLabel }}
+                <UIcon name="i-ph-pencil" class="w-3 h-3 opacity-50 group-hover:opacity-100 transition-opacity" />
               </button>
             </span>
           </template>
@@ -354,14 +332,8 @@ onMounted(() => run(async () => {
         </div>
       </div>
 
-      <!-- Detail panel -->
-      <div class="tmfi-rise border border-default rounded-lg overflow-hidden" :style="{ animationDelay: '120ms' }">
-        <div class="bg-elevated px-4 py-2 border-b border-default">
-          <span v-if="store.activeSection === 'income'" class="text-sm font-medium uppercase tracking-wide">
-            INCOME — {{ incomeTransactions.length }} transaction{{ incomeTransactions.length === 1 ? '' : 's' }}
-          </span>
-          <span v-else class="text-sm font-medium capitalize">{{ store.activeSection }}</span>
-        </div>
+      <!-- Detail panel: the active section, always on top -->
+      <div v-if="store.activeSection" class="tmfi-rise" :style="{ animationDelay: '120ms' }">
         <!-- Crossfade as the active section changes — the panel content swaps,
              so a quick fade conveys "this is now a different breakdown". -->
         <Transition
@@ -371,54 +343,39 @@ onMounted(() => run(async () => {
           leave-to-class="opacity-0"
           mode="out-in"
         >
-          <div :key="store.activeSection ?? 'none'">
-            <!-- Income table: Gross + Net columns -->
-            <UTable v-if="store.activeSection === 'income'" :data="detailTransactions" :columns="incomeColumns" :empty="emptyMessage">
-              <template #description-cell="{ row }">
-                <span class="inline-flex items-center gap-2">
-                  {{ row.original.description }}
-                  <UBadge
-                    v-if="isCarriedIn(row.original)"
-                    color="info"
-                    variant="subtle"
-                    size="sm"
-                    icon="i-ph-arrow-bend-down-right"
-                    title="Month-end paycheck counted toward the month it funds"
-                  >from {{ carriedFromLabel }}</UBadge>
-                </span>
-              </template>
-              <template #account-cell="{ row }">
-                <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
-              </template>
-              <template #gross-cell="{ row }">
-                {{ money(row.original.paycheckId != null ? (store.paycheckGrossMap[row.original.paycheckId] ?? row.original.amount) : row.original.amount) }}
-              </template>
-              <template #net-cell="{ row }">{{ money(row.original.amount) }}</template>
-            </UTable>
-
-            <!-- All other sections: single Amount column -->
-            <UTable v-else :data="detailTransactions" :columns="sectionColumns" :empty="emptyMessage">
-              <template #description-cell="{ row }">
-                <span class="inline-flex items-center gap-2">
-                  {{ row.original.description }}
-                  <UBadge
-                    v-if="isCarriedIn(row.original)"
-                    color="info"
-                    variant="subtle"
-                    size="sm"
-                    icon="i-ph-arrow-bend-down-right"
-                    title="Month-end paycheck counted toward the month it funds"
-                  >from {{ carriedFromLabel }}</UBadge>
-                </span>
-              </template>
-              <template #account-cell="{ row }">
-                <span class="text-muted">{{ accountName(row.original.accountId) }}</span>
-              </template>
-              <template #amount-cell="{ row }">{{ money(row.original.amount) }}</template>
-            </UTable>
-          </div>
+          <BudgetSectionCard
+            :key="store.activeSection"
+            :section="store.activeSection"
+            :transactions="sectionTransactions(store.activeSection)"
+            :month-start="monthStartIso"
+            :carried-from-label="carriedFromLabel"
+          />
         </Transition>
       </div>
+
+      <!-- At-a-glance toggle: expand the remaining sections below -->
+      <button
+        class="flex items-center gap-1.5 text-xs text-muted font-medium rounded hover:text-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        :aria-expanded="showAllSections"
+        @click="showAllSections = !showAllSections"
+      >
+        <UIcon :name="showAllSections ? 'i-ph-caret-down' : 'i-ph-caret-right'" class="w-3.5 h-3.5" />
+        <span>All sections</span>
+      </button>
+
+      <!-- The other sections, in formula order -->
+      <template v-if="showAllSections">
+        <BudgetSectionCard
+          v-for="(section, i) in remainingSections"
+          :key="section"
+          class="tmfi-rise"
+          :style="{ animationDelay: `${i * 50}ms` }"
+          :section="section"
+          :transactions="sectionTransactions(section)"
+          :month-start="monthStartIso"
+          :carried-from-label="carriedFromLabel"
+        />
+      </template>
     </template>
 
     <!-- Months known but summary not ready yet (loading) -->
