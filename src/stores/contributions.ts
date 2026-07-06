@@ -23,5 +23,11 @@ export const useContributionsStore = defineStore('contributions', () => {
     txns.value = await api.listContributionTxns(year)
   }
 
-  return { txns, years, loadYears, load }
+  // Lifetime history — the dashboard needs it for Roth basis, which sums
+  // every contribution ever made, not just a year window.
+  async function loadAll() {
+    txns.value = await api.listAllContributionTxns()
+  }
+
+  return { txns, years, loadYears, load, loadAll }
 })

@@ -31,7 +31,9 @@ const { error, run, retry } = usePageData()
 const { progress: reveal, play: playReveal } = useReveal()
 
 onMounted(() => run(async () => {
-  await Promise.all([fp.load(), acc.load(), contrib.load(DateTime.now().year)])
+  // Full contribution history: the bridge derives Roth basis from lifetime
+  // contributions; the trailing-12-month windows filter by date themselves.
+  await Promise.all([fp.load(), acc.load(), contrib.loadAll()])
   playReveal()
 }))
 
@@ -237,9 +239,12 @@ const milestones = computed<MilestoneRow[]>(() => {
 })
 
 // Bridge to 59½: an early FI date must be funded from accessible accounts.
-const split = computed(() => accessibleSplit(fireAccounts.value, fireBalances.value))
+// Contribution history lets the split carve tracked Roth IRA basis out of the
+// locked side — those dollars are withdrawable at any age.
+const split = computed(() => accessibleSplit(fireAccounts.value, fireBalances.value, contrib.txns))
+const accessibleNow = computed(() => split.value.accessible + split.value.rothBasis)
 const bridgePct = computed(() => {
-  const acc = Math.max(0, split.value.accessible)
+  const acc = Math.max(0, accessibleNow.value)
   const total = acc + Math.max(0, split.value.deferred)
   return total > 0 ? (acc / total) * 100 : 0
 })
@@ -515,7 +520,7 @@ const metrics = computed<Metric[]>(() => [
     <!-- The pre-59½ funding gap every early retiree has to plan around -->
     <div v-if="acc.accounts.length > 0" class="tmfi-rise" :style="{ animationDelay: '560ms' }">
       <BridgeCard
-        :accessible-label="fmt(split.accessible)"
+        :accessible-label="fmt(accessibleNow)"
         :deferred-label="fmt(split.deferred)"
         :accessible-pct="bridgePct"
         :status-text="bridgeDisplay.text"

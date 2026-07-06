@@ -33,6 +33,19 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     })
 }
 
+/// Full contribution history — the dashboard needs it all: the trailing
+/// 12-month window for the contribution rate, and lifetime totals for Roth
+/// basis (contributions withdrawable before 59½).
+pub async fn list_all_contribution_txns(conn: &Connection) -> Result<Vec<Transaction>, String> {
+    let sql = format!("SELECT {COLS} FROM txn WHERE is_contribution = 1 ORDER BY date DESC, id DESC");
+    let mut rows = conn.query(&sql, ()).await.map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(row_to_txn(&row)?);
+    }
+    Ok(out)
+}
+
 pub async fn list_contribution_txns(conn: &Connection, year: i32) -> Result<Vec<Transaction>, String> {
     let sql = format!(
         "SELECT {COLS} FROM txn WHERE is_contribution = 1 \
@@ -69,6 +82,12 @@ pub async fn list_contribution_years(conn: &Connection) -> Result<Vec<String>, S
 pub async fn list_contribution_txns_cmd(db: State<'_, Db>, year: i32) -> Result<Vec<Transaction>, String> {
     let conn = db.conn().await?;
     list_contribution_txns(&conn, year).await
+}
+
+#[tauri::command]
+pub async fn list_all_contribution_txns_cmd(db: State<'_, Db>) -> Result<Vec<Transaction>, String> {
+    let conn = db.conn().await?;
+    list_all_contribution_txns(&conn).await
 }
 
 #[tauri::command]

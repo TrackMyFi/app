@@ -203,6 +203,7 @@ pub fn run() {
             commands::storage::delete_attachment_cmd,
             commands::storage::open_attachment_cmd,
             commands::contributions::list_contribution_txns_cmd,
+            commands::contributions::list_all_contribution_txns_cmd,
             commands::contributions::list_contribution_years_cmd,
             commands::budget::list_budget_months_cmd,
             commands::budget::list_budget_txns_cmd,

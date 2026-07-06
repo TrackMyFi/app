@@ -33,20 +33,53 @@ export const LADDER_SEASONING_YEARS = 5
 export interface BridgeSplit {
   /** Spendable before 59½: taxable, cash, crypto, real estate — minus liabilities. */
   accessible: number
-  /** Locked in retirement accounts until 59½. */
+  /**
+   * Roth IRA contribution basis: tracked lifetime contributions (net of
+   * withdrawals, capped at the balance), withdrawable tax- and penalty-free at
+   * any age. Kept apart from `accessible` because basis doesn't grow — the
+   * growth on those dollars accrues to the still-locked earnings.
+   */
+  rothBasis: number
+  /** Locked in retirement accounts until 59½ (Roth basis already carved out). */
   deferred: number
   /** Subset of `deferred` a Roth conversion ladder could unlock (pre-tax dollars). */
   ladderable: number
 }
 
 /**
+ * Lifetime contribution basis per Roth IRA account: contributions in, netted
+ * against withdrawals (the IRS ordering takes contributions out first).
+ * Transfers count toward the destination account.
+ */
+function rothBasisByAccount(rothIds: Set<number>, txns: Transaction[]): Map<number, number> {
+  const basis = new Map<number, number>()
+  for (const t of txns) {
+    if (!t.isContribution) continue
+    const dest = t.transferAccountId ?? t.accountId
+    if (!rothIds.has(dest)) continue
+    basis.set(dest, (basis.get(dest) ?? 0) + (t.isWithdrawal ? -t.amount : t.amount))
+  }
+  return basis
+}
+
+/**
  * Splits investable net worth (same account set as `investableNetWorth`) into
  * what an early retiree could spend before 59½ vs. what's penalty-locked.
  * Liabilities reduce the accessible side — debts get paid from spendable money.
+ *
+ * When `txns` (full contribution history) is supplied, each Roth IRA's tracked
+ * contribution basis moves from `deferred` to `rothBasis` — those dollars are
+ * withdrawable at any age. Understates true basis when history predates the
+ * app's records, which errs on the safe side.
  */
-export function accessibleSplit(accounts: FireAccount[], balances: FireBalance[]): BridgeSplit {
+export function accessibleSplit(
+  accounts: FireAccount[], balances: FireBalance[], txns?: Transaction[],
+): BridgeSplit {
   const latest = latestBalances(balances)
+  const rothIds = new Set(accounts.filter(a => a.includeInFireCalculations && a.type === 'roth_ira').map(a => a.id))
+  const basisById = txns ? rothBasisByAccount(rothIds, txns) : new Map<number, number>()
   let accessible = 0
+  let rothBasis = 0
   let deferred = 0
   let ladderable = 0
   for (const a of accounts) {
@@ -54,18 +87,23 @@ export function accessibleSplit(accounts: FireAccount[], balances: FireBalance[]
     const bal = latest.get(a.id) ?? 0
     if (isLiability(a.type)) accessible -= bal
     else if (DEFERRED_TYPES.has(a.type)) {
-      deferred += bal
+      // Basis can't exceed what's actually in the account today.
+      const basis = Math.min(Math.max(0, basisById.get(a.id) ?? 0), Math.max(0, bal))
+      rothBasis += basis
+      deferred += bal - basis
       if (LADDERABLE_TYPES.has(a.type)) ladderable += bal
       else if (a.type === 'mixed_401k') ladderable += bal * (a.traditionalPct ?? DEFAULT_MIXED_TRADITIONAL_PCT)
     }
     else accessible += bal
   }
-  return { accessible, deferred, ladderable }
+  return { accessible, rothBasis, deferred, ladderable }
 }
 
 export interface BridgeContributions {
   /** Monthly contributions landing in accessible (taxable/cash) accounts. */
   accessible: number
+  /** Monthly contributions into Roth IRAs — new basis, spendable at any age but non-growing. */
+  rothBasis: number
   /** Monthly contributions landing in ladder-convertible pre-tax accounts. */
   ladderable: number
 }
@@ -74,8 +112,12 @@ export interface BridgeContributions {
  * Splits the trailing-12-month contribution flow into the same buckets as
  * `accessibleSplit`, so the bridge can project balances forward WITH ongoing
  * contributions. Mirrors `trailingMonthlyContribution`'s window and withdrawal
- * netting; contributions to Roth/HSA accounts fund neither bucket (locked and
- * not ladder-convertible).
+ * netting; Roth IRA contributions become withdrawable basis, while Roth
+ * 401k/HSA contributions fund no bucket (locked and not ladder-convertible).
+ *
+ * A contribution is bucketed by where the money lands, not where it's recorded:
+ * imported transfers sit on the funding account (often a checking account
+ * excluded from FIRE) with `transferAccountId` pointing at the destination.
  */
 export function bridgeContributionSplit(
   accounts: FireAccount[], txns: Transaction[], asOfIso: string,
@@ -83,18 +125,20 @@ export function bridgeContributionSplit(
   const cutoff = DateTime.fromISO(asOfIso).minus({ months: 12 }).toISODate()!
   const byId = new Map(accounts.filter(a => a.includeInFireCalculations).map(a => [a.id, a]))
   let accessible = 0
+  let rothBasis = 0
   let ladderable = 0
   for (const t of txns) {
     if (!t.isContribution || t.date <= cutoff || t.date > asOfIso) continue
-    const a = byId.get(t.accountId)
+    const a = byId.get(t.transferAccountId ?? t.accountId)
     if (!a || isLiability(a.type)) continue
     const amt = t.isWithdrawal ? -t.amount : t.amount
     if (DEFERRED_TYPES.has(a.type)) {
-      if (LADDERABLE_TYPES.has(a.type)) ladderable += amt
+      if (a.type === 'roth_ira') rothBasis += amt
+      else if (LADDERABLE_TYPES.has(a.type)) ladderable += amt
       else if (a.type === 'mixed_401k') ladderable += amt * (a.traditionalPct ?? DEFAULT_MIXED_TRADITIONAL_PCT)
     } else accessible += amt
   }
-  return { accessible: accessible / 12, ladderable: ladderable / 12 }
+  return { accessible: accessible / 12, rothBasis: rothBasis / 12, ladderable: ladderable / 12 }
 }
 
 export interface LadderStatus {
@@ -118,9 +162,10 @@ export interface BridgeStatus {
   bridgeYears: number
   bridgeNeeded: number
   /**
-   * Accessible funds compounded at the real return to the FI date. Includes the
-   * future value of ongoing contributions when a contribution split is supplied;
-   * otherwise today's balance alone.
+   * Accessible funds compounded at the real return to the FI date, plus Roth
+   * contribution basis at face value (basis doesn't grow — its growth belongs
+   * to the locked earnings). Includes the future value of ongoing contributions
+   * when a contribution split is supplied; otherwise today's balances alone.
    */
   projectedAccessibleAtFi: number
   /** projectedAccessibleAtFi / bridgeNeeded; null when no bridge is needed. */
@@ -158,7 +203,11 @@ export function bridgeStatus(
   const i = realMonthlyReturn(expectedReturnRate, inflationRate)
   const months = Math.max(0, yearsToFi) * 12
   const contribFv = (monthly: number) => i > 0 ? monthly * ((Math.pow(1 + i, months) - 1) / i) : monthly * months
-  const projectedAccessibleAtFi = Math.max(0, Math.max(0, split.accessible) * growth + contribFv(contributions?.accessible ?? 0))
+  // Roth basis is spendable at any age but never compounds: today's basis at
+  // face value, plus ongoing Roth contributions accumulating without growth.
+  const rothBasisAtFi = Math.max(0, split.rothBasis) + (contributions?.rothBasis ?? 0) * months
+  const projectedAccessibleAtFi = Math.max(0,
+    Math.max(0, split.accessible) * growth + contribFv(contributions?.accessible ?? 0) + rothBasisAtFi)
   const projectedLadderableAtFi = Math.max(0, Math.max(0, split.ladderable) * growth + contribFv(contributions?.ladderable ?? 0))
   return {
     accessible: split.accessible,
