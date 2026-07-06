@@ -265,7 +265,7 @@ const bridge = computed(() => {
   )
 })
 const bridgeCaveat = computed(() => bridgeContrib.value
-  ? 'Projected from today\'s balances plus your trailing 12-month contribution mix, assumed to continue until FI.'
+  ? 'Projected from today\'s balances plus your trailing 12-month contribution mix, assumed to continue until FI. Unspent money keeps compounding through the bridge; Roth basis and seasoned conversions are held at face value.'
   : 'Projected from today\'s accessible balance alone — future contributions to taxable accounts aren\'t counted.')
 
 // Status line for the ladder section: strategy-specific — how far conversions
@@ -297,41 +297,31 @@ const fmtYrs = (n: number) => {
   return `${v} yr${v === 1 ? '' : 's'}`
 }
 
-// The bridge span (FI → 59½) as a funding timeline. Accessible funds are
-// allocated to the seasoning window first; any surplus backfills conversion
-// years the projected pre-tax balance can't reach.
+// The bridge span (FI → 59½) as a funding timeline, straight from the
+// year-by-year simulation: who pays for which years, in order.
 const ladderViz = computed<LadderViz | null>(() => {
   const b = bridge.value
   const l = b?.ladder
-  const exp = fp.profile?.annualExpensesTarget ?? 0
-  if (!b?.needed || !l || exp <= 0 || b.bridgeYears <= 0) return null
-  const accessibleYears = b.projectedAccessibleAtFi / exp
-  const seasoningFunded = Math.min(accessibleYears, LADDER_SEASONING_YEARS)
-  const surplus = Math.min(Math.max(0, accessibleYears - LADDER_SEASONING_YEARS), l.conversionYears - l.fundableYears)
-  const gap = Math.max(0, b.bridgeYears - seasoningFunded - l.fundableYears - surplus)
+  if (!b?.needed || !l || b.bridgeYears <= 0) return null
   const pct = (yrs: number) => (yrs / b.bridgeYears) * 100
   return {
     fiLabel: `FI · age ${Math.round(b.ageAtFi)}`,
-    segments: ([
-      { kind: 'accessible', pct: pct(seasoningFunded) },
-      { kind: 'gap', pct: pct(LADDER_SEASONING_YEARS - seasoningFunded) },
-      { kind: 'ladder', pct: pct(l.fundableYears) },
-      { kind: 'accessible', pct: pct(surplus) },
-      { kind: 'gap', pct: pct(Math.max(0, b.bridgeYears - LADDER_SEASONING_YEARS - l.fundableYears - surplus)) },
-    ] satisfies LadderViz['segments']).filter(s => s.pct > 0),
-    unlockPct: pct(LADDER_SEASONING_YEARS),
+    segments: l.timeline
+      .map(s => ({ kind: s.source === 'ladder' ? 'ladder' as const : s.source === 'gap' ? 'gap' as const : 'accessible' as const, pct: pct(s.years) }))
+      .filter(s => s.pct > 0),
+    unlockPct: pct(Math.min(LADDER_SEASONING_YEARS, b.bridgeYears)),
     legend: [
       {
         kind: 'accessible',
         label: `Accessible funds · carry the first ${LADDER_SEASONING_YEARS} yrs`,
-        value: `${fmtYrs(seasoningFunded + surplus)} · ~${fmt(b.projectedAccessibleAtFi)} at FI`,
+        value: `${fmtYrs(l.accessibleYears)} · ~${fmt(b.projectedAccessibleAtFi)} at FI`,
       },
       {
         kind: 'ladder',
         label: `Roth ladder · unlocks after ${LADDER_SEASONING_YEARS} yrs`,
         value: `${fmtYrs(l.fundableYears)} of ${fmtYrs(l.conversionYears)} · ~${fmt(l.projectedLadderableAtFi)} pre-tax`,
       },
-      ...(gap > 0.05 ? [{ kind: 'gap' as const, label: 'Uncovered', value: fmtYrs(gap) }] : []),
+      ...(l.gapYears > 0.05 ? [{ kind: 'gap' as const, label: 'Uncovered', value: fmtYrs(l.gapYears) }] : []),
     ],
   }
 })

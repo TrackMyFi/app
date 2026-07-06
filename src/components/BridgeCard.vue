@@ -61,6 +61,11 @@ const ACCESS_TIMELINE = [
     detail: 'The dollars you put in directly (not earnings, not conversions) come out tax- and penalty-free at any age. TrackMyFI counts your tracked Roth IRA contributions as accessible; earnings — and any contributions made before you started tracking — stay on the locked side.',
   },
   {
+    when: 'At retirement',
+    what: 'Roth 401(k) contributions',
+    detail: 'Rolling a Roth 401(k) into a Roth IRA — the standard move after leaving a job — turns its contributions into Roth IRA basis, withdrawable immediately. TrackMyFI assumes this rollover happens at FI and counts your tracked Roth-side 401(k) contributions as spendable from then on.',
+  },
+  {
     when: '5 yrs after converting',
     what: 'Roth conversions',
     detail: 'Each amount converted from pre-tax to Roth becomes withdrawable penalty-free five tax years after its conversion — the Roth conversion ladder.',
@@ -89,8 +94,8 @@ const LADDER_STEPS = [
     detail: 'Conversions are taxed as ordinary income, so the ladder works best once your paycheck stops and your tax bracket drops.',
   },
   {
-    title: 'Roll your 401(k) into a traditional IRA',
-    detail: 'Most plans allow this once you\'ve left the employer. It puts the money where you can convert it on your own schedule.',
+    title: 'Roll your 401(k) over',
+    detail: 'Once you\'ve left the employer, the pre-tax side rolls into a traditional IRA so you can convert on your own schedule. Any Roth side rolls into your Roth IRA, where its contributions become immediately withdrawable basis — a bonus pot for the seasoning years.',
   },
   {
     title: 'Convert about one year of expenses to Roth',

@@ -85,6 +85,25 @@ describe('accessibleSplit', () => {
     expect(drained.deferred).toBe(10_000)
   })
 
+  it('tracks Roth 401k contribution basis as rollover basis, still locked today', () => {
+    const s = accessibleSplit([acct(1, 'roth_401k')], [bal(1, 100_000)], [
+      txn({ accountId: 1, amount: 30_000, date: '2021-01-01' }),
+    ])
+    expect(s.rolloverBasis).toBe(30_000)
+    expect(s.rothBasis).toBe(0)
+    expect(s.deferred).toBe(100_000) // rollover basis unlocks at FI, not today
+  })
+
+  it('attributes the Roth share of mixed 401k contributions to rollover basis', () => {
+    const mixed: FireAccount = { id: 1, type: 'mixed_401k', includeInFireCalculations: true, traditionalPct: 0.6 }
+    const s = accessibleSplit([mixed], [bal(1, 100_000)], [
+      txn({ accountId: 1, amount: 50_000, date: '2021-01-01' }),
+    ])
+    expect(s.rolloverBasis).toBeCloseTo(50_000 * 0.4, 6) // capped at 100k × 0.4 — not binding here
+    expect(s.ladderable).toBeCloseTo(60_000, 6)
+    expect(s.deferred).toBe(100_000)
+  })
+
   it('reports zero Roth basis without contribution history', () => {
     const s = accessibleSplit([acct(1, 'roth_ira')], [bal(1, 50_000)])
     expect(s.rothBasis).toBe(0)
@@ -99,7 +118,7 @@ describe('accessibleSplit', () => {
 })
 
 describe('bridgeStatus', () => {
-  const split = { accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }
+  const split = { accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }
 
   it('needs no bridge when FI lands at or past 59½', () => {
     const r = bridgeStatus(split, 50, 10, 40_000, 0.07, 0.03)
@@ -121,7 +140,21 @@ describe('bridgeStatus', () => {
     const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
     const real = (1.07 / 1.03) - 1
     expect(r.projectedAccessibleAtFi).toBeCloseTo(200_000 * Math.pow(1 + real, 5), 2)
-    expect(r.coverage).toBeCloseTo(r.projectedAccessibleAtFi / r.bridgeNeeded, 6)
+  })
+
+  it('with zero real return, coverage is the plain years-funded share', () => {
+    // 200k / 40k = 5 of 14.5 bridge years, no growth to help.
+    const r = bridgeStatus(split, 40, 5, 40_000, 0.03, 0.03)
+    expect(r.coverage).toBeCloseTo(5 / 14.5, 6)
+  })
+
+  it('credits growth on unspent money during the bridge', () => {
+    const flat = bridgeStatus(split, 45, 0, 40_000, 0.03, 0.03)
+    const growing = bridgeStatus(split, 45, 0, 40_000, 0.07, 0.03)
+    // Same 200k at FI either way (yearsToFi 0), but the drawdown sim lets the
+    // remaining balance compound between withdrawals.
+    expect(growing.projectedAccessibleAtFi).toBe(flat.projectedAccessibleAtFi)
+    expect(growing.coverage!).toBeGreaterThan(flat.coverage!)
   })
 
   it('already-FI (yearsToFi 0) still reports the remaining bridge', () => {
@@ -132,49 +165,74 @@ describe('bridgeStatus', () => {
   })
 
   it('an underwater accessible balance projects to zero, not negative', () => {
-    const r = bridgeStatus({ accessible: -10_000, rothBasis: 0, deferred: 100_000, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03)
+    const r = bridgeStatus({ accessible: -10_000, rothBasis: 0, rolloverBasis: 0, deferred: 100_000, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03)
     expect(r.projectedAccessibleAtFi).toBe(0)
     expect(r.coverage).toBe(0)
   })
 })
 
 describe('bridgeStatus ladder', () => {
-  it('shrinks the bridge to the seasoning window when pre-tax funds cover all conversion years', () => {
-    // FI at 45 → 14.5 bridge years, 9.5 conversion years needing 380k; 400k grows past that.
-    const split = { accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }
-    const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
+  it('covers the bridge when accessible funds carry seasoning and pre-tax funds every conversion year', () => {
+    // Zero real return keeps the sim arithmetic exact: 200k carries the 5
+    // seasoning years, 400k pre-tax converts 40k/yr across all 9.5 conversion years.
+    const split = { accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }
+    const r = bridgeStatus(split, 40, 5, 40_000, 0.03, 0.03)
     const l = r.ladder!
     expect(l.conversionYears).toBeCloseTo(r.bridgeYears - LADDER_SEASONING_YEARS, 6)
     expect(l.fundableYears).toBeCloseTo(l.conversionYears, 6)
+    expect(l.accessibleYears).toBeCloseTo(LADDER_SEASONING_YEARS, 6)
+    expect(l.gapYears).toBeCloseTo(0, 6)
     expect(l.bridgeNeeded).toBeCloseTo(LADDER_SEASONING_YEARS * 40_000, 6)
-    expect(l.coverage).toBeCloseTo(r.projectedAccessibleAtFi / l.bridgeNeeded, 6)
-    expect(l.coverage).toBeGreaterThan(1)
+    expect(l.coverage).toBe(1)
+    expect(l.timeline).toEqual([
+      { source: 'accessible', years: expect.closeTo(5, 6) },
+      { source: 'ladder', years: expect.closeTo(9.5, 6) },
+    ])
   })
 
   it('grows the ladder bridge when pre-tax funds cannot fund every conversion year', () => {
-    // 100k pre-tax at FI funds only 2.5 of 9.5 conversion years — 12 years fall on accessible money.
-    const split = { accessible: 200_000, rothBasis: 0, deferred: 100_000, ladderable: 100_000 }
-    const r = bridgeStatus(split, 40, 0, 40_000, 0.07, 0.03)
+    // FI at 40 → 19.5 bridge years. 100k pre-tax funds 2.5 conversion years,
+    // 200k accessible funds 5 — the remaining 12 years are uncovered.
+    const split = { accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 100_000, ladderable: 100_000 }
+    const r = bridgeStatus(split, 40, 0, 40_000, 0.03, 0.03)
     const l = r.ladder!
     expect(l.projectedLadderableAtFi).toBe(100_000)
     expect(l.fundableYears).toBeCloseTo(2.5, 6)
+    expect(l.accessibleYears).toBeCloseTo(5, 6)
+    expect(l.gapYears).toBeCloseTo(12, 6)
     expect(l.bridgeNeeded).toBeCloseTo((r.bridgeYears - 2.5) * 40_000, 6)
+    expect(l.coverage).toBeCloseTo(5 / 17, 6)
+  })
+
+  it('unconverted pre-tax money keeps compounding, funding more conversion years', () => {
+    const split = { accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 100_000, ladderable: 100_000 }
+    const flat = bridgeStatus(split, 40, 0, 40_000, 0.03, 0.03)
+    const growing = bridgeStatus(split, 40, 0, 40_000, 0.07, 0.03)
+    expect(growing.ladder!.fundableYears).toBeGreaterThan(flat.ladder!.fundableYears)
+    expect(growing.ladder!.gapYears).toBeLessThan(flat.ladder!.gapYears)
+  })
+
+  it('timeline slices always span the full bridge', () => {
+    const split = { accessible: 50_000, rothBasis: 10_000, rolloverBasis: 20_000, deferred: 300_000, ladderable: 150_000 }
+    const r = bridgeStatus(split, 38, 3.2, 40_000, 0.07, 0.03)
+    const total = r.ladder!.timeline.reduce((sum, s) => sum + s.years, 0)
+    expect(total).toBeCloseTo(r.bridgeYears, 6)
   })
 
   it('reports no ladder when nothing is convertible', () => {
-    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03)
+    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03)
     expect(r.ladder).toBeNull()
   })
 
   it('reports no ladder when the bridge fits inside the seasoning window', () => {
     // FI at 56 → 3.5 bridge years; conversions would never season in time to help.
-    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }, 50, 6, 40_000, 0.07, 0.03)
+    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }, 50, 6, 40_000, 0.07, 0.03)
     expect(r.needed).toBe(true)
     expect(r.ladder).toBeNull()
   })
 
   it('reports no ladder when no bridge is needed', () => {
-    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }, 50, 10, 40_000, 0.07, 0.03)
+    const r = bridgeStatus({ accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }, 50, 10, 40_000, 0.07, 0.03)
     expect(r.needed).toBe(false)
     expect(r.ladder).toBeNull()
   })
@@ -195,6 +253,16 @@ describe('bridgeContributionSplit', () => {
     expect(c.accessible).toBeCloseTo(1_200 / 12, 6)
     expect(c.rothBasis).toBeCloseTo(600 / 12, 6)
     expect(c.ladderable).toBeCloseTo((2_400 + 0.6 * 1_000) / 12, 6)
+    expect(c.rolloverBasis).toBeCloseTo((0.4 * 1_000) / 12, 6) // mixed 401k's Roth side
+  })
+
+  it('routes Roth 401k contributions to rollover basis', () => {
+    const c = bridgeContributionSplit([acct(1, 'roth_401k')], [
+      txn({ accountId: 1, amount: 6_000, date: '2026-04-01' }),
+    ], asOf)
+    expect(c.rolloverBasis).toBeCloseTo(6_000 / 12, 6)
+    expect(c.rothBasis).toBe(0)
+    expect(c.ladderable).toBe(0)
   })
 
   it('ignores contributions outside the trailing window, withdrawals net down', () => {
@@ -230,34 +298,34 @@ describe('bridgeContributionSplit', () => {
 })
 
 describe('bridgeStatus with contributions', () => {
-  const split = { accessible: 200_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }
+  const split = { accessible: 200_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }
 
   it('adds the future value of ongoing contributions to both projections', () => {
     const base = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
-    const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03, { accessible: 1_000, rothBasis: 0, ladderable: 2_000 })
+    const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03, { accessible: 1_000, rothBasis: 0, rolloverBasis: 0, ladderable: 2_000 })
     expect(r.projectedAccessibleAtFi).toBeCloseTo(base.projectedAccessibleAtFi + annuityFv(1_000, 60), 2)
     expect(r.ladder!.projectedLadderableAtFi).toBeCloseTo(base.ladder!.projectedLadderableAtFi + annuityFv(2_000, 60), 2)
   })
 
   it('taxable contributions alone can turn a thin bridge into a covered one', () => {
-    const thin = { accessible: 50_000, rothBasis: 0, deferred: 400_000, ladderable: 400_000 }
+    const thin = { accessible: 50_000, rothBasis: 0, rolloverBasis: 0, deferred: 400_000, ladderable: 400_000 }
     const without = bridgeStatus(thin, 40, 5, 40_000, 0.07, 0.03)
-    const withContrib = bridgeStatus(thin, 40, 5, 40_000, 0.07, 0.03, { accessible: 2_500, rothBasis: 0, ladderable: 0 })
+    const withContrib = bridgeStatus(thin, 40, 5, 40_000, 0.07, 0.03, { accessible: 2_500, rothBasis: 0, rolloverBasis: 0, ladderable: 0 })
     expect(without.ladder!.coverage).toBeLessThan(1)
     expect(withContrib.ladder!.coverage).toBeGreaterThan(without.ladder!.coverage)
   })
 
   it('a ladder can appear on contributions alone (zero pre-tax balance today)', () => {
-    const noPreTax = { accessible: 100_000, rothBasis: 0, deferred: 0, ladderable: 0 }
+    const noPreTax = { accessible: 100_000, rothBasis: 0, rolloverBasis: 0, deferred: 0, ladderable: 0 }
     const without = bridgeStatus(noPreTax, 40, 5, 40_000, 0.07, 0.03)
-    const withContrib = bridgeStatus(noPreTax, 40, 5, 40_000, 0.07, 0.03, { accessible: 0, rothBasis: 0, ladderable: 1_500 })
+    const withContrib = bridgeStatus(noPreTax, 40, 5, 40_000, 0.07, 0.03, { accessible: 0, rothBasis: 0, rolloverBasis: 0, ladderable: 1_500 })
     expect(without.ladder).toBeNull()
     expect(withContrib.ladder).not.toBeNull()
     expect(withContrib.ladder!.projectedLadderableAtFi).toBeCloseTo(annuityFv(1_500, 60), 2)
   })
 
   it('adds Roth basis at face value — no compounding on basis dollars', () => {
-    const withBasis = { accessible: 200_000, rothBasis: 30_000, deferred: 370_000, ladderable: 400_000 }
+    const withBasis = { accessible: 200_000, rothBasis: 30_000, rolloverBasis: 0, deferred: 370_000, ladderable: 400_000 }
     const base = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
     const r = bridgeStatus(withBasis, 40, 5, 40_000, 0.07, 0.03)
     expect(r.projectedAccessibleAtFi).toBeCloseTo(base.projectedAccessibleAtFi + 30_000, 2)
@@ -265,12 +333,19 @@ describe('bridgeStatus with contributions', () => {
 
   it('accumulates ongoing Roth contributions without growth', () => {
     const base = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
-    const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03, { accessible: 0, rothBasis: 500, ladderable: 0 })
+    const r = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03, { accessible: 0, rothBasis: 500, rolloverBasis: 0, ladderable: 0 })
     expect(r.projectedAccessibleAtFi).toBeCloseTo(base.projectedAccessibleAtFi + 500 * 60, 2)
   })
 
+  it('rollover basis unlocks at FI: face value today plus flat ongoing flow', () => {
+    const withRollover = { ...split, rolloverBasis: 30_000 }
+    const base = bridgeStatus(split, 40, 5, 40_000, 0.07, 0.03)
+    const r = bridgeStatus(withRollover, 40, 5, 40_000, 0.07, 0.03, { accessible: 0, rothBasis: 0, rolloverBasis: 200, ladderable: 0 })
+    expect(r.projectedAccessibleAtFi).toBeCloseTo(base.projectedAccessibleAtFi + 30_000 + 200 * 60, 2)
+  })
+
   it('net-withdrawal flows cannot push projections below zero', () => {
-    const r = bridgeStatus({ accessible: 1_000, rothBasis: 0, deferred: 0, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03, { accessible: -500, rothBasis: 0, ladderable: 0 })
+    const r = bridgeStatus({ accessible: 1_000, rothBasis: 0, rolloverBasis: 0, deferred: 0, ladderable: 0 }, 40, 5, 40_000, 0.07, 0.03, { accessible: -500, rothBasis: 0, rolloverBasis: 0, ladderable: 0 })
     expect(r.projectedAccessibleAtFi).toBe(0)
   })
 })
