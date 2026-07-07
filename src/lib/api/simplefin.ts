@@ -18,6 +18,11 @@ export const linkSimpleFinAccount = (simplefinId: string, accountId: number | nu
 
 export const syncSimpleFinNow = () => invoke<SimpleFinSyncSummary>('simplefin_sync_now')
 
+/** Backfill a specific date range (inclusive, "yyyy-MM-dd"). Imports posted
+ *  transactions only; dedup makes overlap with existing history harmless. */
+export const syncSimpleFinRange = (startDate: string, endDate: string) =>
+  invoke<SimpleFinSyncSummary>('simplefin_sync_range', { startDate, endDate })
+
 /** Candidate SimpleFIN-vs-manual/CSV duplicate pairs for the review UI. */
 export const listSimpleFinDuplicates = () =>
   invoke<SimpleFinDuplicateCandidate[]>('simplefin_duplicate_candidates')

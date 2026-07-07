@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { DateTime } from 'luxon'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useToast } from '@nuxt/ui/composables'
 import { useSimpleFinStore } from '../../stores/simplefin'
 import { useAccountsStore } from '../../stores/accounts'
 import { createAccount } from '../../lib/api/accounts'
 import type { SimpleFinRemoteAccount } from '../../lib/types/SimpleFinRemoteAccount'
+import type { SimpleFinSyncSummary } from '../../lib/types/SimpleFinSyncSummary'
+import DateInput from '../../components/DateInput.vue'
 import PageError from '../../components/PageError.vue'
 import SettingsNav from '../../components/SettingsNav.vue'
 import SimpleFinDuplicateReview from '../../components/SimpleFinDuplicateReview.vue'
@@ -111,21 +114,77 @@ async function connect() {
   }
 }
 
+function toastSummary(s: SimpleFinSyncSummary) {
+  const transfers = s.transfersDetected > 0
+    ? `, ${s.transfersDetected} ${s.transfersDetected === 1 ? 'transfer' : 'transfers'} detected`
+    : ''
+  toast.add({
+    title: `Synced ${s.accountsSynced} ${s.accountsSynced === 1 ? 'account' : 'accounts'}: ${s.transactionsAdded} new ${s.transactionsAdded === 1 ? 'transaction' : 'transactions'}, ${s.snapshotsAdded} balance ${s.snapshotsAdded === 1 ? 'snapshot' : 'snapshots'}${transfers}`,
+    color: 'success',
+  })
+}
+
 async function syncNow() {
   busy.value = true
   message.value = ''
   try {
-    const s = await simplefin.syncNow()
-    const transfers = s.transfersDetected > 0
-      ? `, ${s.transfersDetected} ${s.transfersDetected === 1 ? 'transfer' : 'transfers'} detected`
-      : ''
-    toast.add({
-      title: `Synced ${s.accountsSynced} ${s.accountsSynced === 1 ? 'account' : 'accounts'}: ${s.transactionsAdded} new ${s.transactionsAdded === 1 ? 'transaction' : 'transactions'}, ${s.snapshotsAdded} balance ${s.snapshotsAdded === 1 ? 'snapshot' : 'snapshots'}${transfers}`,
-      color: 'success',
-    })
+    toastSummary(await simplefin.syncNow())
     await accountsStore.loadList()
   } catch (e) {
     message.value = String(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// --- custom-range backfill ---
+
+/** Mirrors CUSTOM_RANGE_MAX_DAYS in src-tauri/src/simplefin.rs. */
+const RANGE_MAX_DAYS = 365
+
+const rangeOpen = ref(false)
+const rangeStart = ref('')
+const rangeEnd = ref('')
+
+const syncMenuItems = [
+  {
+    label: 'Sync custom range…',
+    icon: 'i-ph-calendar-blank',
+    onSelect: openRangeModal,
+  },
+]
+
+function openRangeModal() {
+  const today = DateTime.now()
+  rangeStart.value = today.minus({ days: 14 }).toISODate()
+  rangeEnd.value = today.toISODate()
+  rangeOpen.value = true
+}
+
+/** Same rules the backend enforces, surfaced before the request is made. */
+const rangeError = computed(() => {
+  if (!rangeStart.value || !rangeEnd.value) return 'Pick both dates.'
+  const start = DateTime.fromISO(rangeStart.value)
+  const end = DateTime.fromISO(rangeEnd.value)
+  const today = DateTime.now().startOf('day')
+  if (start > end) return 'The start date must be on or before the end date.'
+  if (end > today) return "The end date can't be in the future."
+  if (today.diff(start, 'days').days > RANGE_MAX_DAYS)
+    return `SimpleFIN provides about a year of history — pick a start date within the last ${RANGE_MAX_DAYS} days.`
+  return null
+})
+
+async function syncRange() {
+  if (rangeError.value) return
+  busy.value = true
+  message.value = ''
+  try {
+    toastSummary(await simplefin.syncRange(rangeStart.value, rangeEnd.value))
+    await accountsStore.loadList()
+    rangeOpen.value = false
+  } catch (e) {
+    message.value = String(e)
+    rangeOpen.value = false
   } finally {
     busy.value = false
   }
@@ -267,7 +326,18 @@ async function disconnect() {
           </p>
 
           <div class="flex gap-2">
-            <UButton :loading="busy" @click="syncNow">Sync now</UButton>
+            <UFieldGroup>
+              <UButton :loading="busy" :disabled="busy" @click="syncNow">Sync now</UButton>
+              <UDropdownMenu :items="syncMenuItems" :content="{ align: 'end' }">
+                <UButton
+                  type="button"
+                  color="primary"
+                  icon="i-ph-caret-down"
+                  aria-label="More sync options"
+                  :disabled="busy"
+                />
+              </UDropdownMenu>
+            </UFieldGroup>
             <UButton v-if="linkedCount" variant="soft" @click="reviewOpen = true">
               Review possible duplicates
             </UButton>
@@ -281,6 +351,40 @@ async function disconnect() {
           </p>
 
           <SimpleFinDuplicateReview v-model:open="reviewOpen" @resolved="accountsStore.loadList()" />
+
+          <UModal v-model:open="rangeOpen" title="Sync a custom date range">
+            <template #body>
+              <div class="space-y-4">
+                <p class="text-sm text-muted">
+                  Re-fetches transactions your banks posted in this window and imports
+                  anything that's missing — useful when a pending charge took long enough
+                  to post that the normal sync window slid past it. Already-imported
+                  transactions are never duplicated.
+                </p>
+                <div class="flex gap-4">
+                  <UFormField label="From" class="flex-1">
+                    <DateInput v-model="rangeStart" />
+                  </UFormField>
+                  <UFormField label="To" class="flex-1">
+                    <DateInput v-model="rangeEnd" />
+                  </UFormField>
+                </div>
+                <p v-if="rangeError" class="text-sm text-error" aria-live="polite">
+                  {{ rangeError }}
+                </p>
+              </div>
+            </template>
+            <template #footer>
+              <div class="flex justify-end gap-2 w-full">
+                <UButton color="neutral" variant="soft" :disabled="busy" @click="rangeOpen = false">
+                  Cancel
+                </UButton>
+                <UButton :loading="busy" :disabled="!!rangeError" @click="syncRange">
+                  Sync range
+                </UButton>
+              </div>
+            </template>
+          </UModal>
         </template>
 
         <p v-if="message" class="text-sm text-error" aria-live="polite">{{ message }}</p>

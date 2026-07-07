@@ -213,6 +213,7 @@ pub fn run() {
             simplefin::simplefin_connect,
             simplefin::simplefin_link_account,
             simplefin::simplefin_sync_now,
+            simplefin::simplefin_sync_range,
             simplefin::simplefin_duplicate_candidates,
             simplefin::simplefin_list_pending,
             simplefin::simplefin_disconnect,

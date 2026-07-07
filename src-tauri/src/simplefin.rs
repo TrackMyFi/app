@@ -49,6 +49,14 @@ const RETRY_AFTER_FAILURE_HOURS: i64 = 6;
 const OVERLAP_DAYS: i64 = 3;
 /// Transaction lookback for the very first sync after connecting.
 const FIRST_SYNC_LOOKBACK_DAYS: i64 = 90;
+/// Extra margin behind the oldest cached pending transaction when it anchors
+/// the fetch window (banks can post a charge backdated to — rarely, just
+/// before — its transacted date).
+const PENDING_ANCHOR_BUFFER_DAYS: i64 = 1;
+/// Oldest allowed start of a user-requested custom range. SimpleFIN bridges
+/// serve roughly a year of history at most, and a year also bounds the
+/// response size.
+const CUSTOM_RANGE_MAX_DAYS: i64 = 365;
 /// How often the background scheduler re-checks whether a sync is due.
 pub const SCHEDULER_TICK_SECS: u64 = 1800; // 30 minutes
 /// ± window (days) for matching the two sides of a transfer across accounts.
@@ -403,6 +411,77 @@ fn select_description(t: &SfinTxn) -> (String, Option<String>) {
     (display, raw)
 }
 
+/// Local calendar date "YYYY-MM-DD" → unix seconds at local midnight
+/// (inverse of `ts_to_date`, same local-time convention).
+fn date_to_ts(d: &str) -> Option<i64> {
+    let nd = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()?;
+    Local
+        .from_local_datetime(&nd.and_hms_opt(0, 0, 0)?)
+        .single()
+        .map(|dt| dt.timestamp())
+}
+
+/// Start of the fetch window for a regular sync: OVERLAP_DAYS before the last
+/// success (or the first-sync lookback), extended further back whenever a
+/// cached pending transaction is older. A charge can take longer than the
+/// overlap to post (e.g. over a holiday weekend), and banks often backdate
+/// the posted date to the original transaction date — once the rolling window
+/// slides past that date the bridge stops returning the transaction entirely,
+/// so it would vanish from the pending cache without ever being imported.
+/// Anchoring to the oldest pending row keeps every transaction the app has
+/// shown as pending inside the window until it actually posts.
+fn window_start(
+    now: DateTime<Utc>,
+    last_success: Option<DateTime<Utc>>,
+    oldest_pending_date: Option<&str>,
+) -> i64 {
+    let base = match last_success {
+        Some(t) => t.timestamp() - OVERLAP_DAYS * 86_400,
+        None => now.timestamp() - FIRST_SYNC_LOOKBACK_DAYS * 86_400,
+    };
+    match oldest_pending_date
+        .and_then(date_to_ts)
+        .map(|ts| ts - PENDING_ANCHOR_BUFFER_DAYS * 86_400)
+    {
+        Some(anchor) => base.min(anchor),
+        None => base,
+    }
+}
+
+/// Validate a user-requested custom range and convert it to the fetch
+/// window's unix timestamps: (start of the start day, start of the day AFTER
+/// the end day — SimpleFIN's end-date is exclusive, so this makes the chosen
+/// end date inclusive).
+fn parse_custom_range(
+    start: &str,
+    end: &str,
+    today: chrono::NaiveDate,
+) -> Result<(i64, i64), String> {
+    let parse = |s: &str| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|_| "Enter dates as YYYY-MM-DD.".to_string())
+    };
+    let start_d = parse(start)?;
+    let end_d = parse(end)?;
+    if start_d > end_d {
+        return Err("The start date must be on or before the end date.".to_string());
+    }
+    if end_d > today {
+        return Err("The end date can't be in the future.".to_string());
+    }
+    if (today - start_d).num_days() > CUSTOM_RANGE_MAX_DAYS {
+        return Err(format!(
+            "SimpleFIN provides about a year of history — pick a start date within the last \
+             {CUSTOM_RANGE_MAX_DAYS} days."
+        ));
+    }
+    let to_ts = |d: chrono::NaiveDate| {
+        date_to_ts(&d.format("%Y-%m-%d").to_string())
+            .ok_or_else(|| "Enter dates as YYYY-MM-DD.".to_string())
+    };
+    Ok((to_ts(start_d)?, to_ts(end_d + chrono::Duration::days(1))?))
+}
+
 /// Whether an automatic sync is due. Pure so it's testable: 3h after the last
 /// success, but never within 6h of the last attempt (failed attempts back off
 /// instead of hammering a broken connection).
@@ -510,6 +589,8 @@ async fn claim_access_url(setup_token: &str) -> Result<String, String> {
 async fn fetch_accounts(
     access_url: &str,
     start_date: Option<i64>,
+    end_date: Option<i64>,
+    include_pending: bool,
 ) -> Result<(SfinAccountSet, String), String> {
     let mut url =
         reqwest::Url::parse(access_url).map_err(|_| "Stored access URL is invalid.".to_string())?;
@@ -522,9 +603,15 @@ async fn fetch_accounts(
     if let Some(ts) = start_date {
         url.query_pairs_mut().append_pair("start-date", &ts.to_string());
     }
+    if let Some(ts) = end_date {
+        url.query_pairs_mut().append_pair("end-date", &ts.to_string());
+    }
     // Without this the bridge returns posted transactions only — pending ones
-    // are opt-in per the SimpleFIN protocol.
-    url.query_pairs_mut().append_pair("pending", "1");
+    // are opt-in per the SimpleFIN protocol. Custom-range backfills skip it:
+    // they must not disturb the pending cache (see import_account_set).
+    if include_pending {
+        url.query_pairs_mut().append_pair("pending", "1");
+    }
 
     let mut req = http()?.get(url);
     if !user.is_empty() {
@@ -640,9 +727,15 @@ struct LinkedAccount {
 /// Import an account set into the DB: one balance snapshot per linked account
 /// (deduped per bank-reported date) and every non-pending transaction (deduped
 /// by SimpleFIN id). Returns the summary plus the remote-account cache entries.
+///
+/// `rebuild_pending` is true for regular syncs (the response carries the full
+/// current pending set, so the cache is wiped and re-inserted) and false for
+/// custom-range backfills (fetched without `pending=1`, covering an arbitrary
+/// window — wiping would throw away perfectly current pending rows).
 async fn import_account_set(
     conn: &Connection,
     set: &SfinAccountSet,
+    rebuild_pending: bool,
 ) -> Result<(SimpleFinSyncSummary, Vec<SimpleFinRemoteAccount>), String> {
     // simplefin_id → local account (id + liability flag, for balance sign).
     // Both lookup cursors are scoped so their statements are closed before the
@@ -692,13 +785,17 @@ async fn import_account_set(
     let mut reproject: Vec<(i32, String)> = Vec::new();
     let created_at = now_iso();
 
-    // The pending cache is rebuilt from scratch every sync: pending rows at
-    // the bank mutate or vanish, so the previous set is worthless. Rows are
-    // re-inserted below as each linked account's transactions are walked.
-    let pending_wiped = conn
-        .execute("DELETE FROM simplefin_pending_txn", ())
-        .await
-        .map_err(|e| e.to_string())? as i64;
+    // The pending cache is rebuilt from scratch every regular sync: pending
+    // rows at the bank mutate or vanish, so the previous set is worthless.
+    // Rows are re-inserted below as each linked account's transactions are
+    // walked.
+    let pending_wiped = if rebuild_pending {
+        conn.execute("DELETE FROM simplefin_pending_txn", ())
+            .await
+            .map_err(|e| e.to_string())? as i64
+    } else {
+        0
+    };
     let mut pending_inserted = 0i64;
 
     for acct in &set.accounts {
@@ -870,6 +967,22 @@ async fn import_account_set(
     // Count comparison only — a same-count content mutation slips through, but
     // it self-corrects on the next page visit and the next sync.
     summary.pending_changed = pending_wiped != pending_inserted;
+
+    // A backfill can import the posted form of a row still sitting in the
+    // (untouched) pending cache — drop such rows so the UI doesn't show the
+    // same purchase twice until the next regular sync rebuilds the cache.
+    if !rebuild_pending {
+        let cleared = conn
+            .execute(
+                "DELETE FROM simplefin_pending_txn WHERE EXISTS \
+                 (SELECT 1 FROM txn WHERE txn.simplefin_id = simplefin_pending_txn.simplefin_id \
+                  OR txn.simplefin_counterpart_id = simplefin_pending_txn.simplefin_id)",
+                (),
+            )
+            .await
+            .map_err(|e| e.to_string())? as i64;
+        summary.pending_changed = cleared > 0;
+    }
 
     Ok((summary, cache))
 }
@@ -1080,6 +1193,16 @@ pub(crate) async fn duplicate_candidates(
 /// fetch deliberately happens OUTSIDE the gate — a slow bank response must not
 /// block cloud sync.
 pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
+    run_sync_inner(app, None).await
+}
+
+/// `range`: None for a regular sync (rolling window + pending cache rebuild);
+/// Some((start_ts, end_ts_exclusive)) for a user-requested backfill of a
+/// specific window (posted transactions only, pending cache left alone).
+async fn run_sync_inner(
+    app: &AppHandle,
+    range: Option<(i64, i64)>,
+) -> Result<SimpleFinSyncSummary, String> {
     let shared = app.state::<SimpleFinShared>();
     let _guard = shared.lock.lock().await; // serialize scheduler vs. manual click
 
@@ -1094,28 +1217,56 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         SimpleFinSyncingEvent { syncing: true, error: None, transactions_added: 0, snapshots_added: 0 },
     );
 
-    crate::sync::sync_log(app, "simplefin: sync start");
+    match range {
+        Some((s, e)) => crate::sync::sync_log(
+            app,
+            &format!("simplefin: custom-range sync start ({} .. {})", ts_to_date(s), ts_to_date(e)),
+        ),
+        None => crate::sync::sync_log(app, "simplefin: sync start"),
+    }
 
     // Everything fallible runs inside this block so the finish event below is
     // emitted on every path — a leaked `?` here would strand the frontend's
     // "syncing…" notification.
     let result: Result<SimpleFinSyncSummary, String> = async {
-        let state = {
+        let (state, oldest_pending) = {
             let _db_guard = gate.lock.lock().await;
             let state = read_state(&conn).await?;
+            // Oldest cached pending date — read BEFORE the import wipes the
+            // cache; it can anchor the window further back than the overlap.
+            let oldest_pending: Option<String> = {
+                let mut rows = conn
+                    .query("SELECT MIN(date) FROM simplefin_pending_txn", ())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                match rows.next().await.map_err(|e| e.to_string())? {
+                    Some(r) => r.get(0).map_err(|e| e.to_string())?,
+                    None => None,
+                }
+            };
             set_state(&conn, "last_attempt_at", Some(&now_iso())).await?;
-            state
+            (state, oldest_pending)
         };
 
-        // Transaction window: always overlap back past the last SUCCESS, so a
-        // connection that was broken for days or weeks backfills the whole gap.
-        let start_ts = match state.last_success_at.as_deref().and_then(parse_iso) {
-            Some(t) => t.timestamp() - OVERLAP_DAYS * 86_400,
-            None => Utc::now().timestamp() - FIRST_SYNC_LOOKBACK_DAYS * 86_400,
+        // Transaction window: always overlap back past the last SUCCESS (so a
+        // connection that was broken for days or weeks backfills the whole
+        // gap) and past the oldest cached pending transaction (so a slow-to-
+        // post charge can't slide out of the window and vanish) — unless the
+        // user requested an explicit range.
+        let (start_ts, end_ts) = match range {
+            Some((s, e)) => (s, Some(e)),
+            None => (
+                window_start(
+                    Utc::now(),
+                    state.last_success_at.as_deref().and_then(parse_iso),
+                    oldest_pending.as_deref(),
+                ),
+                None,
+            ),
         };
 
         // Network fetch — no DB access, no gate.
-        let (set, raw) = fetch_accounts(&access_url, Some(start_ts)).await?;
+        let (set, raw) = fetch_accounts(&access_url, Some(start_ts), end_ts, range.is_none()).await?;
         crate::sync::sync_log(app, &format!("simplefin: fetch ok ({} accounts)", set.accounts.len()));
         dump_raw_response(app, &raw);
 
@@ -1123,7 +1274,8 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
         // Lock/busy failures (e.g. a WAL checkpoint colliding with a straggling
         // reader) are transient; the import is idempotent by construction
         // (INSERT OR IGNORE + same-day snapshot dedup), so one retry is safe.
-        let (summary, cache) = match import_account_set(&conn, &set).await {
+        let rebuild_pending = range.is_none();
+        let (summary, cache) = match import_account_set(&conn, &set, rebuild_pending).await {
             Ok(v) => v,
             Err(e) if is_transient_lock_error(&e) => {
                 crate::sync::sync_log(
@@ -1131,7 +1283,7 @@ pub async fn run_sync(app: &AppHandle) -> Result<SimpleFinSyncSummary, String> {
                     &format!("simplefin: import hit transient lock, retrying once: {e}"),
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-                import_account_set(&conn, &set).await?
+                import_account_set(&conn, &set, rebuild_pending).await?
             }
             Err(e) => return Err(e),
         };
@@ -1331,6 +1483,19 @@ pub async fn simplefin_sync_now(app: AppHandle) -> Result<SimpleFinSyncSummary, 
     run_sync(&app).await
 }
 
+/// User-requested backfill of an explicit date range (inclusive on both ends,
+/// "YYYY-MM-DD"). Posted transactions only; the pending cache is left alone.
+/// Dedup makes any overlap with already-imported history harmless.
+#[tauri::command]
+pub async fn simplefin_sync_range(
+    app: AppHandle,
+    start_date: String,
+    end_date: String,
+) -> Result<SimpleFinSyncSummary, String> {
+    let range = parse_custom_range(&start_date, &end_date, Local::now().date_naive())?;
+    run_sync_inner(&app, Some(range)).await
+}
+
 /// List candidate SimpleFIN-vs-manual/CSV duplicate pairs for the review UI.
 /// Read-only — resolution happens through the transaction delete commands.
 #[tauri::command]
@@ -1468,6 +1633,52 @@ mod tests {
         assert!(sync_due(now, Some(now - h(30)), Some(now - h(7))));
         // Never succeeded, failed attempt 2h ago → back off.
         assert!(!sync_due(now, None, Some(now - h(2))));
+    }
+
+    #[test]
+    fn window_start_anchors_to_oldest_pending() {
+        let now = Utc::now();
+        let d = chrono::Duration::days;
+        let base = window_start(now, Some(now), None);
+        assert_eq!(base, now.timestamp() - OVERLAP_DAYS * 86_400);
+
+        // First sync: 90-day lookback.
+        assert_eq!(window_start(now, None, None), now.timestamp() - FIRST_SYNC_LOOKBACK_DAYS * 86_400);
+
+        // A pending row older than the overlap pulls the window back to a day
+        // before its date — a slow-to-post charge must stay inside the window.
+        let old_pending = ts_to_date((now - d(6)).timestamp());
+        let anchored = window_start(now, Some(now), Some(&old_pending));
+        assert!(anchored < base);
+        assert!(anchored <= date_to_ts(&old_pending).unwrap() - PENDING_ANCHOR_BUFFER_DAYS * 86_400);
+
+        // A pending row inside the overlap changes nothing.
+        let fresh_pending = ts_to_date(now.timestamp());
+        assert_eq!(window_start(now, Some(now), Some(&fresh_pending)), base);
+
+        // Garbage dates are ignored rather than breaking the sync.
+        assert_eq!(window_start(now, Some(now), Some("not-a-date")), base);
+    }
+
+    #[test]
+    fn custom_range_validates_and_is_end_inclusive() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 7).unwrap();
+
+        let (start, end) = parse_custom_range("2026-07-01", "2026-07-05", today).unwrap();
+        assert_eq!(start, date_to_ts("2026-07-01").unwrap());
+        // Exclusive end timestamp = start of the day AFTER the chosen end.
+        assert_eq!(end, date_to_ts("2026-07-06").unwrap());
+
+        // Single-day range is allowed.
+        assert!(parse_custom_range("2026-07-05", "2026-07-05", today).is_ok());
+        // Reversed range.
+        assert!(parse_custom_range("2026-07-05", "2026-07-01", today).is_err());
+        // End in the future.
+        assert!(parse_custom_range("2026-07-01", "2026-07-08", today).is_err());
+        // Start older than the max lookback.
+        assert!(parse_custom_range("2025-01-01", "2026-07-05", today).is_err());
+        // Garbage.
+        assert!(parse_custom_range("07/01/2026", "2026-07-05", today).is_err());
     }
 
     #[test]
@@ -1647,7 +1858,7 @@ mod tests {
             ts,
             vec![demo_txn("TRN-1", "-42.50", ts, "STARBUCKS #123 SEATTLE WA")],
         );
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
 
         let cands = duplicate_candidates(&conn).await.unwrap();
         assert_eq!(cands.len(), 1);
@@ -1683,7 +1894,7 @@ mod tests {
             .await;
 
         let set = demo_set("1500.00", ts, vec![demo_txn("TRN-1", "-42.50", ts, "CHARGE")]);
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
 
         assert!(duplicate_candidates(&conn).await.unwrap().is_empty());
     }
@@ -1718,7 +1929,7 @@ mod tests {
             vec![demo_txn("TRN-DEP", "2500.00", ts, "ACME PAYROLL")],
             vec![demo_txn("TRN-CONTRIB", "500.00", ts + DAY, "EMPLOYEE CONTRIBUTION")],
         );
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
 
         let mut cands = duplicate_candidates(&conn).await.unwrap();
         cands.sort_by(|a, b| a.account_id.cmp(&b.account_id));
@@ -1746,7 +1957,7 @@ mod tests {
         .await;
 
         let set = demo_set("1500.00", ts, vec![demo_txn("TRN-1", "-20.00", ts, "SHELL OIL")]);
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
 
         let cands = duplicate_candidates(&conn).await.unwrap();
         assert_eq!(cands.len(), 1);
@@ -1766,7 +1977,7 @@ mod tests {
             // Destination reports the deposit a day later with unrelated wording.
             vec![demo_txn("TRN-IN", "500.00", ts + DAY, "ACH ELECTRONIC FUNDS")],
         );
-        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.transactions_added, 2);
         assert_eq!(summary.transfers_detected, 1);
 
@@ -1783,7 +1994,7 @@ mod tests {
 
         // Re-import (overlap window): the source dedupes on simplefin_id, the
         // deleted counterpart is blocked by simplefin_counterpart_id.
-        let (again, _) = import_account_set(&conn, &set).await.unwrap();
+        let (again, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(again.transactions_added, 0);
         assert_eq!(again.transfers_detected, 0);
         assert_eq!(read_all_txns(&conn).await.len(), 1);
@@ -1800,7 +2011,7 @@ mod tests {
             vec![demo_txn("TRN-OUT", "-250.00", ts, "ONLINE TRANSFER")],
             vec![demo_txn("TRN-IN", "250.00", ts, "TRANSFER FROM CHECKING")],
         );
-        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.transfers_detected, 1);
         let txns = read_all_txns(&conn).await;
         assert_eq!(txns.len(), 1);
@@ -1819,7 +2030,7 @@ mod tests {
             vec![demo_txn("TRN-OUT", "-7000.00", ts, "WITHDRAWAL")],
             vec![demo_txn("TRN-IN", "7000.00", ts + DAY, "CONTRIBUTION")],
         );
-        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.transfers_detected, 1);
         let txns = read_all_txns(&conn).await;
         assert_eq!(txns[0].3, "transfer");
@@ -1842,7 +2053,7 @@ mod tests {
             ],
             vec![demo_txn("TRN-C", "500.00", ts + 5 * DAY, "PAYROLL")],
         );
-        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.transfers_detected, 0);
         let txns = read_all_txns(&conn).await;
         assert_eq!(txns.len(), 3);
@@ -1858,7 +2069,7 @@ mod tests {
         let ts = 1_700_000_000;
         // First sync: only the source side has posted.
         let set1 = demo_set2(vec![demo_txn("TRN-OUT", "-300.00", ts, "TRANSFER OUT")], vec![]);
-        let (s1, _) = import_account_set(&conn, &set1).await.unwrap();
+        let (s1, _) = import_account_set(&conn, &set1, true).await.unwrap();
         assert_eq!(s1.transfers_detected, 0);
         assert_eq!(read_all_txns(&conn).await.len(), 1);
 
@@ -1868,7 +2079,7 @@ mod tests {
             vec![demo_txn("TRN-OUT", "-300.00", ts, "TRANSFER OUT")],
             vec![demo_txn("TRN-IN", "300.00", ts + 2 * DAY, "DEPOSIT")],
         );
-        let (s2, _) = import_account_set(&conn, &set2).await.unwrap();
+        let (s2, _) = import_account_set(&conn, &set2, true).await.unwrap();
         assert_eq!(s2.transactions_added, 1);
         assert_eq!(s2.transfers_detected, 1);
         let txns = read_all_txns(&conn).await;
@@ -1892,7 +2103,7 @@ mod tests {
             ],
             vec![demo_txn("TRN-IN", "100.00", ts, "DEPOSIT")],
         );
-        let (summary, _) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.transfers_detected, 1);
         let txns = read_all_txns(&conn).await;
         assert_eq!(txns.len(), 2);
@@ -1917,7 +2128,7 @@ mod tests {
             ],
         );
 
-        let (summary, cache) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, cache) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(summary.accounts_synced, 1);
         assert_eq!(summary.transactions_added, 2);
         assert_eq!(summary.snapshots_added, 1);
@@ -1925,7 +2136,7 @@ mod tests {
         assert_eq!(cache[0].name, "Demo Checking");
 
         // Re-import (overlapping window): everything dedupes.
-        let (again, _) = import_account_set(&conn, &set).await.unwrap();
+        let (again, _) = import_account_set(&conn, &set, true).await.unwrap();
         assert_eq!(again.transactions_added, 0);
         assert_eq!(again.snapshots_added, 0);
 
@@ -1967,7 +2178,7 @@ mod tests {
         let conn = setup_db().await;
         let acc = insert_account(&conn, "Card", "liability", "ACT-1").await;
         let set = demo_set("-543.21", 1_700_000_000, vec![]);
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
         let mut snaps = conn
             .query(
                 "SELECT balance FROM account_balance WHERE account_id = ?1",
@@ -1985,9 +2196,9 @@ mod tests {
         let conn = setup_db().await;
         let acc = insert_account(&conn, "Checking", "checking", "ACT-1").await;
         let ts = 1_700_000_000;
-        import_account_set(&conn, &demo_set("100.00", ts, vec![])).await.unwrap();
+        import_account_set(&conn, &demo_set("100.00", ts, vec![]), true).await.unwrap();
         // Same balance-date, new value (e.g. later in the same day).
-        let (s2, _) = import_account_set(&conn, &demo_set("150.00", ts, vec![])).await.unwrap();
+        let (s2, _) = import_account_set(&conn, &demo_set("150.00", ts, vec![]), true).await.unwrap();
         assert_eq!(s2.snapshots_added, 0);
         let mut snaps = conn
             .query(
@@ -2008,7 +2219,7 @@ mod tests {
         let mut pending = demo_txn("TRN-P", "-5.00", 1_700_000_000, "PENDING CHARGE");
         pending.pending = Some(true);
         let set = demo_set("100.00", 1_700_000_000, vec![pending]);
-        let (summary, cache) = import_account_set(&conn, &set).await.unwrap();
+        let (summary, cache) = import_account_set(&conn, &set, true).await.unwrap();
         // ACT-1 isn't linked to any local account: nothing imports, but the
         // account still appears in the cache for the linking UI.
         assert_eq!(summary.accounts_synced, 0);
@@ -2026,7 +2237,7 @@ mod tests {
         let mut pending = demo_txn("TRN-P", "-12.34", ts, "PENDING COFFEE");
         pending.pending = Some(true);
         let (s1, _) =
-            import_account_set(&conn, &demo_set("100.00", ts, vec![pending])).await.unwrap();
+            import_account_set(&conn, &demo_set("100.00", ts, vec![pending]), true).await.unwrap();
         assert!(s1.pending_changed);
         assert_eq!(s1.transactions_added, 0, "pending must not enter the ledger");
 
@@ -2050,6 +2261,7 @@ mod tests {
         let (s2, _) = import_account_set(
             &conn,
             &demo_set("87.66", ts + DAY, vec![demo_txn("TRN-P", "-12.34", ts + DAY, "COFFEE")]),
+            true,
         )
         .await
         .unwrap();
@@ -2065,10 +2277,45 @@ mod tests {
         let (s3, _) = import_account_set(
             &conn,
             &demo_set("87.66", ts + DAY, vec![demo_txn("TRN-P", "-12.34", ts + DAY, "COFFEE")]),
+            true,
         )
         .await
         .unwrap();
         assert!(!s3.pending_changed);
+    }
+
+    #[tokio::test]
+    async fn backfill_import_preserves_pending_cache_and_clears_posted_rows() {
+        let conn = setup_db().await;
+        insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let ts = 1_700_000_000;
+
+        // Regular sync caches two pending charges.
+        let mut p1 = demo_txn("TRN-P1", "-10.00", ts, "PENDING ONE");
+        p1.pending = Some(true);
+        let mut p2 = demo_txn("TRN-P2", "-20.00", ts, "PENDING TWO");
+        p2.pending = Some(true);
+        import_account_set(&conn, &demo_set("100.00", ts, vec![p1, p2]), true).await.unwrap();
+
+        // Backfill (rebuild_pending = false) importing the posted form of one
+        // of them: that row leaves the cache, the other survives the import.
+        let (s, _) = import_account_set(
+            &conn,
+            &demo_set("90.00", ts + DAY, vec![demo_txn("TRN-P1", "-10.00", ts, "POSTED ONE")]),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.transactions_added, 1);
+        assert!(s.pending_changed);
+
+        let mut rows = conn
+            .query("SELECT simplefin_id FROM simplefin_pending_txn", ())
+            .await
+            .unwrap();
+        let r = rows.next().await.unwrap().unwrap();
+        assert_eq!(r.get::<String>(0).unwrap(), "TRN-P2");
+        assert!(rows.next().await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -2081,13 +2328,14 @@ mod tests {
         import_account_set(
             &conn,
             &demo_set("100.00", ts, vec![demo_txn("TRN-1", "-5.00", ts, "CHARGE")]),
+            true,
         )
         .await
         .unwrap();
         // …then a stale fetch still marks the same id as pending: guarded out.
         let mut stale = demo_txn("TRN-1", "-5.00", ts, "CHARGE");
         stale.pending = Some(true);
-        import_account_set(&conn, &demo_set("100.00", ts, vec![stale])).await.unwrap();
+        import_account_set(&conn, &demo_set("100.00", ts, vec![stale]), true).await.unwrap();
         let mut count = conn
             .query("SELECT COUNT(*) FROM simplefin_pending_txn", ())
             .await
@@ -2123,7 +2371,7 @@ mod tests {
         // SimpleFIN reports 1000 today (long before 2099): the later generated
         // snapshot must re-anchor to 1000 + 100.
         let set = demo_set("1000.00", 1_700_000_000, vec![]);
-        import_account_set(&conn, &set).await.unwrap();
+        import_account_set(&conn, &set, true).await.unwrap();
 
         let mut rows = conn
             .query(

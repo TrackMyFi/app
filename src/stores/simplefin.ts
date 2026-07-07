@@ -32,10 +32,16 @@ export const useSimpleFinStore = defineStore('simplefin', () => {
     return summary
   }
 
+  async function syncRange(startDate: string, endDate: string) {
+    const summary = await api.syncSimpleFinRange(startDate, endDate)
+    await load()
+    return summary
+  }
+
   async function disconnect() {
     await api.disconnectSimpleFin()
     await load()
   }
 
-  return { status, load, connect, link, syncNow, disconnect }
+  return { status, load, connect, link, syncNow, syncRange, disconnect }
 })
