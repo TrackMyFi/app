@@ -66,9 +66,10 @@ const budgetPages = [
 
 const trackingPages = [
   { label: 'Progress', icon: 'i-ph-gauge', to: '/' },
-  { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
-  { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
   { label: 'Forecast', icon: 'i-ph-trend-up', to: '/forecast' },
+  { label: 'Contributions', icon: 'i-ph-piggy-bank', to: '/contributions' },
+  { label: 'Assets', icon: 'i-ph-wrench', to: '/assets' },
+  { label: 'HSA Receipts', icon: 'i-ph-first-aid-kit', to: '/hsa' },
 ]
 
 // Which context tab owns each page — used to auto-follow navigation so the
@@ -77,7 +78,7 @@ const trackingPages = [
 function contextForPath(path: string): NavContext | null {
   if (path.startsWith('/accounts')) return 'budget'
   if (path === '/transactions' || path === '/expenses' || path === '/paychecks' || path === '/budget') return 'budget'
-  if (path === '/' || path === '/assets' || path === '/contributions' || path === '/forecast') return 'tracking'
+  if (path === '/' || path === '/assets' || path === '/hsa' || path === '/contributions' || path === '/forecast') return 'tracking'
   return null
 }
 

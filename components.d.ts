@@ -27,6 +27,8 @@ declare module 'vue' {
     ExpenseOpportunities: typeof import('./src/components/ExpenseOpportunities.vue')['default']
     FiProgressCard: typeof import('./src/components/FiProgressCard.vue')['default']
     ForecastChart: typeof import('./src/components/ForecastChart.vue')['default']
+    HsaExpenseDetail: typeof import('./src/components/HsaExpenseDetail.vue')['default']
+    HsaExpenseForm: typeof import('./src/components/HsaExpenseForm.vue')['default']
     ImportWizard: typeof import('./src/components/ImportWizard.vue')['default']
     InvestmentsChart: typeof import('./src/components/InvestmentsChart.vue')['default']
     MilestoneLadder: typeof import('./src/components/MilestoneLadder.vue')['default']

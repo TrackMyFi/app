@@ -9,18 +9,23 @@ import { labelForAccountType } from '../lib/accountTypes'
 import * as api from '../lib/api/accounts'
 import { getTransaction } from '../lib/api/transactions'
 import { listAssetEvents, deleteAssetEvent } from '../lib/api/assetEvents'
+import { listHsaExpenses, deleteHsaExpense } from '../lib/api/hsaExpenses'
 import { costBasisAdded, upkeepCost } from '../lib/assets/rollups'
 import { labelForAssetEventKind, colorForAssetEventKind } from '../lib/assets/constants'
+import { labelForHsaCategory, colorForHsaCategory } from '../lib/hsa/constants'
+import { reimbursedTotal } from '../lib/hsa/rollups'
 import { crossedMilestone } from '../lib/balances/milestones'
 import { useCountUp } from '../composables/useCountUp'
 import type { AccountBalance } from '../lib/types/AccountBalance'
 import type { BalanceMonthSummary } from '../lib/types/BalanceMonthSummary'
 import type { Transaction } from '../lib/types/Transaction'
 import type { AssetEvent } from '../lib/types/AssetEvent'
+import type { HsaExpense } from '../lib/types/HsaExpense'
 import AccountBalanceChart from '../components/AccountBalanceChart.vue'
 import type { ChartPoint } from '../components/AccountBalanceChart.vue'
 import AccountForm from '../components/AccountForm.vue'
 import AssetEventForm from '../components/AssetEventForm.vue'
+import HsaExpenseForm from '../components/HsaExpenseForm.vue'
 import StatCard from '../components/StatCard.vue'
 import CurrencyInput from '../components/CurrencyInput.vue'
 import DateInput from '../components/DateInput.vue'
@@ -41,6 +46,7 @@ onMounted(() => run(async () => {
   if (store.accounts.length === 0) await store.loadList()
   await refreshSummaries()
   await loadAssetEvents()
+  await loadHsaExpenses()
 }))
 
 // ─── Upkeep & improvements (real estate only) ────────────────────────────────
@@ -80,6 +86,45 @@ async function removeAssetEvent(e: AssetEvent) {
     toast.add({ title: 'Failed to delete event', description: String(err), color: 'error' })
   } finally {
     deletingAssetEventId.value = null
+  }
+}
+
+// ─── HSA receipts reimbursed from this account (HSA only) ───────────────────
+
+const isHsa = computed(() => account.value?.type === 'hsa')
+const hsaExpenses = ref<HsaExpense[]>([])
+const hsaExpenseModalOpen = ref(false)
+const editingHsaExpense = ref<HsaExpense | null>(null)
+const deletingHsaExpenseId = ref<number | null>(null)
+
+async function loadHsaExpenses() {
+  if (!isHsa.value) { hsaExpenses.value = []; return }
+  hsaExpenses.value = await listHsaExpenses({ accountId: accountId.value })
+}
+
+const hsaReimbursedTotal = computed(() => reimbursedTotal(hsaExpenses.value))
+
+function openAddHsaExpense() { editingHsaExpense.value = null; hsaExpenseModalOpen.value = true }
+function openEditHsaExpense(e: HsaExpense) { editingHsaExpense.value = e; hsaExpenseModalOpen.value = true }
+
+async function onHsaExpenseSaved() {
+  hsaExpenseModalOpen.value = false
+  await loadHsaExpenses()
+}
+
+watch(hsaExpenseModalOpen, open => { if (!open) editingHsaExpense.value = null })
+
+async function removeHsaExpense(e: HsaExpense) {
+  const ok = await confirm(`Delete "${e.description}" on ${e.date}?`, { title: 'Delete HSA expense', kind: 'warning' })
+  if (!ok) return
+  deletingHsaExpenseId.value = e.id
+  try {
+    await deleteHsaExpense(e.id)
+    await loadHsaExpenses()
+  } catch (err) {
+    toast.add({ title: 'Failed to delete expense', description: String(err), color: 'error' })
+  } finally {
+    deletingHsaExpenseId.value = null
   }
 }
 
@@ -686,6 +731,57 @@ async function deleteAccount() {
       </div>
     </div>
 
+    <!-- HSA receipts reimbursed from this account -->
+    <div v-if="isHsa" class="mb-8">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold">HSA Receipts</h2>
+        <div class="flex items-center gap-2">
+          <UButton size="sm" variant="ghost" color="neutral" icon="i-ph-arrow-square-out" to="/hsa">All receipts</UButton>
+          <UButton size="sm" icon="i-ph-plus" @click="openAddHsaExpense">Add Expense</UButton>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="border border-default rounded-lg p-3">
+          <p class="text-xs uppercase tracking-wide text-muted">Reimbursed from this account</p>
+          <p class="text-lg font-semibold font-mono mt-1">{{ fmtMoney(hsaReimbursedTotal) }}</p>
+        </div>
+        <div class="border border-default rounded-lg p-3">
+          <p class="text-xs uppercase tracking-wide text-muted">Linked receipts</p>
+          <p class="text-lg font-semibold font-mono mt-1">{{ hsaExpenses.length }}</p>
+        </div>
+      </div>
+
+      <div v-if="hsaExpenses.length === 0" class="border border-default rounded-lg px-4 py-8 text-center text-sm text-muted">
+        No receipts linked to this account yet.
+      </div>
+      <div v-else class="border border-default rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <tbody>
+            <tr v-for="e in hsaExpenses" :key="e.id" class="not-first:border-t border-default">
+              <td class="px-4 py-2 whitespace-nowrap text-muted">{{ fmtDate(e.date) }}</td>
+              <td class="px-4 py-2">
+                <UBadge :color="colorForHsaCategory(e.category)" variant="subtle" size="xs">{{ labelForHsaCategory(e.category) }}</UBadge>
+              </td>
+              <td class="px-4 py-2">
+                <span>{{ e.description }}</span>
+                <span v-if="e.person" class="text-muted"> · {{ e.person }}</span>
+              </td>
+              <td class="px-4 py-2 whitespace-nowrap">
+                <UBadge v-if="e.reimbursed" color="neutral" variant="subtle" size="xs" icon="i-ph-check">Reimbursed</UBadge>
+                <UBadge v-else color="success" variant="subtle" size="xs" icon="i-ph-piggy-bank">Receipt bank</UBadge>
+              </td>
+              <td class="px-4 py-2 text-right font-mono">{{ fmtMoney(e.amount) }}</td>
+              <td class="px-4 py-2 text-right whitespace-nowrap">
+                <UButton size="xs" variant="ghost" color="neutral" icon="i-ph-pencil" aria-label="Edit expense" @click="openEditHsaExpense(e)" />
+                <UButton size="xs" variant="ghost" color="error" icon="i-ph-trash" aria-label="Delete expense" :loading="deletingHsaExpenseId === e.id" :disabled="deletingHsaExpenseId !== null" @click="removeHsaExpense(e)" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Danger zone -->
     <div v-if="!account.isActive" class="border border-error/30 rounded-lg p-4">
       <h3 class="text-sm font-semibold text-error mb-1">Danger Zone</h3>
@@ -732,6 +828,13 @@ async function deleteAccount() {
     <UModal v-model:open="assetEventModalOpen" :title="editingAssetEvent ? 'Edit asset event' : 'Add asset event'" class="sm:w-[560px] max-w-full">
       <template #body>
         <AssetEventForm :editing="editingAssetEvent" :preset-account-id="accountId" @saved="onAssetEventSaved" />
+      </template>
+    </UModal>
+
+    <!-- HSA expense modal -->
+    <UModal v-model:open="hsaExpenseModalOpen" :title="editingHsaExpense ? 'Edit HSA expense' : 'Add HSA expense'" class="sm:w-[560px] max-w-full">
+      <template #body>
+        <HsaExpenseForm :editing="editingHsaExpense" :preset-account-id="accountId" @saved="onHsaExpenseSaved" />
       </template>
     </UModal>
 

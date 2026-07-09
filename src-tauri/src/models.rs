@@ -214,6 +214,45 @@ pub struct AssetAttachment {
     pub created_at: String,
 }
 
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct HsaExpense {
+    pub id: i32,
+    /// HSA account the expense was (or will be) reimbursed from; optional.
+    pub account_id: Option<i32>,
+    /// Date of service.
+    pub date: String,
+    pub description: String,
+    /// 'medical' | 'dental' | 'vision' | 'pharmacy' | 'other'
+    pub category: String,
+    pub amount: f64,
+    /// Who the expense was for (family plans).
+    pub person: Option<String>,
+    /// Doctor, clinic, or pharmacy name.
+    pub provider: Option<String>,
+    pub notes: Option<String>,
+    /// Whether money has been taken from the HSA for this expense.
+    pub reimbursed: bool,
+    pub reimbursed_date: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub has_attachment: bool,
+}
+
+#[derive(Serialize, Deserialize, TS, Clone)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/lib/types/")]
+pub struct HsaAttachment {
+    pub id: i32,
+    pub hsa_expense_id: i32,
+    pub object_key: String,
+    pub original_name: String,
+    pub provider: String,
+    pub byte_size: Option<i64>,
+    pub created_at: String,
+}
+
 #[derive(Serialize, TS, Clone)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/lib/types/")]

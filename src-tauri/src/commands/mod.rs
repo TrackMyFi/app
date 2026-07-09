@@ -5,6 +5,7 @@ pub mod category_rules;
 pub mod contributions;
 pub mod data_management;
 pub mod fire_profile;
+pub mod hsa_expenses;
 pub mod import_mappings;
 pub mod paychecks;
 pub mod storage;

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { AssetAttachment } from '../types/AssetAttachment'
+import type { HsaAttachment } from '../types/HsaAttachment'
 import type { MigrationSummary } from '../types/MigrationSummary'
 import type { StorageInfo } from '../types/StorageInfo'
 
@@ -47,4 +48,20 @@ export function openAttachment(attachmentId: number): Promise<void> {
 
 export function deleteAttachment(attachmentId: number): Promise<void> {
   return invoke('delete_attachment_cmd', { attachmentId })
+}
+
+export function listHsaAttachments(hsaExpenseId: number): Promise<HsaAttachment[]> {
+  return invoke('list_hsa_attachments_cmd', { hsaExpenseId })
+}
+
+export function uploadHsaAttachment(hsaExpenseId: number, localFilePath: string): Promise<HsaAttachment> {
+  return invoke('upload_hsa_attachment_cmd', { hsaExpenseId, localFilePath })
+}
+
+export function openHsaAttachment(attachmentId: number): Promise<void> {
+  return invoke('open_hsa_attachment_cmd', { attachmentId })
+}
+
+export function deleteHsaAttachment(attachmentId: number): Promise<void> {
+  return invoke('delete_hsa_attachment_cmd', { attachmentId })
 }

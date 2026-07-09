@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::models::{AssetAttachment, MigrationSummary, StorageInfo};
+use crate::models::{AssetAttachment, HsaAttachment, MigrationSummary, StorageInfo};
 use crate::storage::{
     build_object_store, build_store_from_spec, delete_credentials, local_attachments_dir,
     read_credentials, read_storage_config_db, write_credentials, write_storage_config_db,
@@ -86,7 +86,7 @@ pub async fn clear_storage_config_cmd(db: State<'_, Db>) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns the number of attachments not yet stored in `new_provider`.
+/// Returns the number of attachments (asset + HSA) not yet stored in `new_provider`.
 /// Used by the UI to decide whether to offer a migration prompt.
 #[tauri::command]
 pub async fn count_migratable_attachments_cmd(
@@ -94,7 +94,11 @@ pub async fn count_migratable_attachments_cmd(
     new_provider: String,
 ) -> Result<i64, String> {
     let conn = db.conn().await?;
-    crate::commands::asset_events::count_attachments_not_provider(&conn, &new_provider).await
+    let assets =
+        crate::commands::asset_events::count_attachments_not_provider(&conn, &new_provider).await?;
+    let hsa =
+        crate::commands::hsa_expenses::count_attachments_not_provider(&conn, &new_provider).await?;
+    Ok(assets + hsa)
 }
 
 /// Migrates all attachments stored under the current configured provider to the new
@@ -127,54 +131,69 @@ pub async fn migrate_and_save_storage_config_cmd(
         local_dir: local_dir.clone(),
     })?;
 
-    // Fetch every attachment stored under the source provider.
-    let attachments = crate::commands::asset_events::list_attachments_by_provider(
-        &conn,
-        &src_provider,
-    )
-    .await?;
+    // Fetch every attachment stored under the source provider, across both
+    // attachment tables (asset events + HSA expenses).
+    enum AttachmentKind {
+        Asset,
+        Hsa,
+    }
+    let mut all: Vec<(AttachmentKind, i32, String, String)> = Vec::new();
+    for att in
+        crate::commands::asset_events::list_attachments_by_provider(&conn, &src_provider).await?
+    {
+        all.push((AttachmentKind::Asset, att.id, att.object_key, att.original_name));
+    }
+    for att in
+        crate::commands::hsa_expenses::list_attachments_by_provider(&conn, &src_provider).await?
+    {
+        all.push((AttachmentKind::Hsa, att.id, att.object_key, att.original_name));
+    }
 
     let mut migrated = 0i64;
     let mut failed_names: Vec<String> = Vec::new();
 
-    for att in &attachments {
-        let obj_path = object_store::path::Path::from(att.object_key.as_str());
+    for (kind, id, object_key, original_name) in &all {
+        let obj_path = object_store::path::Path::from(object_key.as_str());
 
         // Download from source.
         let get_result = match src_store.get(&obj_path).await {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("migration: get {} failed: {e}", att.object_key);
-                failed_names.push(att.original_name.clone());
+                eprintln!("migration: get {object_key} failed: {e}");
+                failed_names.push(original_name.clone());
                 continue;
             }
         };
         let data: bytes::Bytes = match get_result.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("migration: read {} failed: {e}", att.object_key);
-                failed_names.push(att.original_name.clone());
+                eprintln!("migration: read {object_key} failed: {e}");
+                failed_names.push(original_name.clone());
                 continue;
             }
         };
 
         // Upload to destination.
         if let Err(e) = dst_store.put(&obj_path, data.into()).await {
-            eprintln!("migration: put {} failed: {e}", att.object_key);
-            failed_names.push(att.original_name.clone());
+            eprintln!("migration: put {object_key} failed: {e}");
+            failed_names.push(original_name.clone());
             continue;
         }
 
         // Update the provider in the DB row.
-        if let Err(e) = crate::commands::asset_events::update_attachment_provider(
-            &conn,
-            att.id,
-            &dst_provider,
-        )
-        .await
-        {
-            eprintln!("migration: db update {} failed: {e}", att.id);
-            failed_names.push(att.original_name.clone());
+        let update_result = match kind {
+            AttachmentKind::Asset => {
+                crate::commands::asset_events::update_attachment_provider(&conn, *id, &dst_provider)
+                    .await
+            }
+            AttachmentKind::Hsa => {
+                crate::commands::hsa_expenses::update_attachment_provider(&conn, *id, &dst_provider)
+                    .await
+            }
+        };
+        if let Err(e) = update_result {
+            eprintln!("migration: db update {id} failed: {e}");
+            failed_names.push(original_name.clone());
             continue;
         }
 
@@ -336,6 +355,116 @@ pub async fn open_attachment_cmd(
     let tmp_dir = std::env::temp_dir().join("trackmyfi-attachments");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
     let tmp_path = tmp_dir.join(&original_name);
+    std::fs::write(&tmp_path, &data).map_err(|e| e.to_string())?;
+
+    tauri_plugin_opener::open_path(tmp_path, Option::<&str>::None)
+        .map_err(|e| e.to_string())
+}
+
+// ---- HSA expense attachments (same object storage, separate table) ----
+
+#[tauri::command]
+pub async fn list_hsa_attachments_cmd(
+    db: State<'_, Db>,
+    hsa_expense_id: i32,
+) -> Result<Vec<HsaAttachment>, String> {
+    let conn = db.conn().await?;
+    crate::commands::hsa_expenses::list_attachments(&conn, hsa_expense_id).await
+}
+
+#[tauri::command]
+pub async fn upload_hsa_attachment_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    hsa_expense_id: i32,
+    local_file_path: String,
+) -> Result<HsaAttachment, String> {
+    let path = std::path::Path::new(&local_file_path);
+    let original_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid file path")?
+        .to_string();
+
+    let data = tokio::fs::read(path).await.map_err(|e| e.to_string())?;
+    let byte_size = data.len() as i64;
+    let bytes = Bytes::from(data);
+
+    let conn = db.conn().await?;
+    let cfg = read_storage_config_db(&conn).await;
+    let provider = cfg.provider;
+
+    // Generate a stable key independent of expense ID.
+    let object_key = format!("attachments/{}/{}", uuid::Uuid::new_v4(), original_name);
+
+    let store = build_object_store(&app, &conn).await?;
+    let obj_path = object_store::path::Path::from(object_key.as_str());
+    store
+        .put(&obj_path, bytes.into())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let created_at = chrono_now();
+    crate::commands::hsa_expenses::insert_attachment(
+        &conn,
+        hsa_expense_id,
+        &object_key,
+        &original_name,
+        &provider,
+        Some(byte_size),
+        &created_at,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_hsa_attachment_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    attachment_id: i32,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    let att = crate::commands::hsa_expenses::get_attachment(&conn, attachment_id).await?;
+
+    // Only attempt to delete from storage if the attachment was stored with the current provider.
+    let current_provider = read_storage_config_db(&conn).await.provider;
+    if att.provider == current_provider {
+        if let Ok(store) = build_object_store(&app, &conn).await {
+            let path = object_store::path::Path::from(att.object_key.as_str());
+            let _ = store.delete(&path).await; // best-effort
+        }
+    }
+
+    crate::commands::hsa_expenses::delete_attachment_row(&conn, attachment_id).await
+}
+
+#[tauri::command]
+pub async fn open_hsa_attachment_cmd(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    attachment_id: i32,
+) -> Result<(), String> {
+    let conn = db.conn().await?;
+    let att = crate::commands::hsa_expenses::get_attachment(&conn, attachment_id).await?;
+
+    let current_provider = read_storage_config_db(&conn).await.provider;
+    if att.provider != current_provider {
+        return Err(format!(
+            "This attachment was stored using '{}' but this device is configured for \
+             '{current_provider}'. Configure the same storage provider on this device to open it.",
+            att.provider
+        ));
+    }
+
+    let store = build_object_store(&app, &conn).await?;
+    let path = object_store::path::Path::from(att.object_key.as_str());
+    let result = store.get(&path).await.map_err(|e| e.to_string())?;
+    let data = result.bytes().await.map_err(|e| e.to_string())?;
+
+    // Write to a temp file, then open with the OS default app.
+    let tmp_dir = std::env::temp_dir().join("trackmyfi-attachments");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let tmp_path = tmp_dir.join(&att.original_name);
     std::fs::write(&tmp_path, &data).map_err(|e| e.to_string())?;
 
     tauri_plugin_opener::open_path(tmp_path, Option::<&str>::None)
