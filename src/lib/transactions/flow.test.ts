@@ -13,7 +13,7 @@ const accounts: Account[] = [
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 100, description: '', date: '2026-05-01',
-    type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
+    type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, isRefund: false, importSource: 'manual',
     generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: '', updatedAt: '',
     ...overrides,
   }
@@ -105,6 +105,16 @@ describe('classifyFlow', () => {
     expect(f).toMatchObject({ outflow: 100, bucket: 'discretionary' })
   })
 
+  it('counts a refund as a negative outflow in its category bucket, not income', () => {
+    const f = classifyFlow(tx({ type: 'income', isRefund: true, category: 'discretionary', amount: 2700 }), accounts)
+    expect(f).toMatchObject({ direction: 'inflow', inflow: 0, outflow: -2700, bucket: 'discretionary', isSavings: false })
+  })
+
+  it('defaults a refund without a category to the uncategorized bucket', () => {
+    const f = classifyFlow(tx({ type: 'income', isRefund: true, category: '', amount: 50 }), accounts)
+    expect(f).toMatchObject({ inflow: 0, outflow: -50, bucket: 'uncategorized' })
+  })
+
   it('neutralizes a suppressed transaction entirely', () => {
     const f = classifyFlow(tx({ type: 'income', amount: 13.47, suppressedAs: 'investment_activity' }), accounts)
     expect(f).toMatchObject({ direction: 'neutral', inflow: 0, outflow: 0, bucket: null, isSavings: false })
@@ -129,6 +139,16 @@ describe('cashFlowTotals', () => {
       tx({ type: 'expense', category: 'fixed', amount: 200 }),
     ]
     expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1400, expense: 200, savings: 400, net: 1200 })
+  })
+
+  it('nets a refund out of expense while leaving income untouched', () => {
+    const txns = [
+      tx({ type: 'income', amount: 1000 }),
+      tx({ type: 'expense', category: 'uncategorized', amount: 2700 }), // reversed ACH pull
+      tx({ type: 'income', isRefund: true, category: 'uncategorized', amount: 2700 }), // money came back
+      tx({ type: 'expense', category: 'fixed', amount: 200 }),
+    ]
+    expect(cashFlowTotals(txns, accounts)).toEqual({ income: 1000, expense: 200, savings: 0, net: 800 })
   })
 
   it('nets a withdrawal out of the savings total', () => {

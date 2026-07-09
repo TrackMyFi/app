@@ -608,6 +608,7 @@ function flowColor(t: Transaction): string {
 
 function directionLabel(t: Transaction): string {
   const { direction, isTransfer } = classifyFlow(t, accountsStore.accounts)
+  if (t.isRefund) return 'Refund'
   if (!isTransfer) return direction === 'inflow' ? 'Income' : 'Expense'
   if (direction === 'inflow') return 'Transfer in'
   if (direction === 'outflow') return 'Transfer out'
@@ -621,6 +622,9 @@ function directionLabel(t: Transaction): string {
 // count-payments-as-expense account (mortgage, car loan), where the payment IS
 // the expense: show the bucket it actually lands in.
 function categoryCell(t: Transaction): { label: string; muted: boolean } {
+  // A refund nets down the bucket it reverses — show that bucket, marked so
+  // it's distinguishable from a plain expense in the same category.
+  if (t.isRefund) return { label: `Refund · ${labelForCategory(t.category || 'uncategorized')}`, muted: false }
   if (t.type === 'income') return { label: 'Income', muted: true }
   if (t.type === 'transfer') {
     const dest = accountsStore.accounts.find((a) => a.id === t.transferAccountId)

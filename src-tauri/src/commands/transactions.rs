@@ -19,6 +19,10 @@ pub struct NewTransaction {
     pub category: String,
     pub is_contribution: bool,
     pub is_withdrawal: bool,
+    /// See `Transaction::is_refund`. Defaults false so import paths (CSV,
+    /// SimpleFIN) that never set it keep working unchanged.
+    #[serde(default)]
+    pub is_refund: bool,
     pub import_source: String,
     pub update_balance: bool,
     pub created_at: String,
@@ -38,6 +42,8 @@ pub struct UpdateTransaction {
     pub category: String,
     pub is_contribution: bool,
     pub is_withdrawal: bool,
+    #[serde(default)]
+    pub is_refund: bool,
     pub update_balance: bool,
     pub updated_at: String,
 }
@@ -133,7 +139,7 @@ pub struct PeriodStatsFilter {
 const COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
     generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, suppressed_as, \
-    created_at, updated_at, raw_description";
+    created_at, updated_at, raw_description, is_refund";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -157,6 +163,7 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         created_at: row.get(17).map_err(|e| e.to_string())?,
         updated_at: row.get(18).map_err(|e| e.to_string())?,
         raw_description: row.get(19).map_err(|e| e.to_string())?,
+        is_refund: row.get::<i64>(20).map_err(|e| e.to_string())? != 0,
     })
 }
 
@@ -272,11 +279,15 @@ pub async fn list_transactions(
     // totals over the full filter (transfers excluded)
     let mut agg_params: Vec<Value> = Vec::new();
     let agg_where = build_where("txn", f, &mut agg_params);
+    // A refund is income-typed for balance math but counts as a NEGATIVE
+    // expense here, netting the original expense out of spending totals
+    // (mirrors classifyFlow in src/lib/transactions/flow.ts).
     let agg_sql = format!(
         "SELECT \
            COUNT(*), \
-           CAST(COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0) AS REAL), \
-           CAST(COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END), 0) AS REAL) \
+           CAST(COALESCE(SUM(CASE WHEN type='income' AND is_refund=0 THEN amount ELSE 0 END), 0) AS REAL), \
+           CAST(COALESCE(SUM(CASE WHEN type='expense' THEN amount \
+                              WHEN type='income' AND is_refund=1 THEN -amount ELSE 0 END), 0) AS REAL) \
          FROM txn {agg_where}"
     );
     let mut agg = conn
@@ -627,9 +638,9 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
 
     conn.execute(
         "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
-         category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
+         category, is_contribution, is_withdrawal, is_refund, import_source, generated_balance_id, \
          generated_balance_to_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -640,6 +651,7 @@ pub async fn create_transaction(conn: &Connection, t: &NewTransaction) -> Result
             t.category.clone(),
             t.is_contribution,
             t.is_withdrawal,
+            t.is_refund,
             t.import_source.clone(),
             gen_id,
             gen_to_id,
@@ -672,8 +684,8 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
 
     conn.execute(
         "UPDATE txn SET account_id=?1, transfer_account_id=?2, amount=?3, description=?4, \
-         date=?5, type=?6, category=?7, is_contribution=?8, is_withdrawal=?9, \
-         generated_balance_id=?10, generated_balance_to_id=?11, updated_at=?12 WHERE id=?13",
+         date=?5, type=?6, category=?7, is_contribution=?8, is_withdrawal=?9, is_refund=?10, \
+         generated_balance_id=?11, generated_balance_to_id=?12, updated_at=?13 WHERE id=?14",
         params![
             t.account_id,
             t.transfer_account_id,
@@ -684,6 +696,7 @@ pub async fn update_transaction(conn: &Connection, t: &UpdateTransaction) -> Res
             t.category.clone(),
             t.is_contribution,
             t.is_withdrawal,
+            t.is_refund,
             gen_id,
             gen_to_id,
             t.updated_at.clone(),
@@ -732,9 +745,9 @@ pub async fn bulk_create_transactions(
     for t in rows {
         tx.execute(
             "INSERT INTO txn (account_id, transfer_account_id, amount, description, date, type, \
-             category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
+             category, is_contribution, is_withdrawal, is_refund, import_source, generated_balance_id, \
              generated_balance_to_id, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'csv', NULL, NULL, ?10, ?10)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'csv', NULL, NULL, ?11, ?11)",
             params![
                 t.account_id,
                 t.transfer_account_id,
@@ -745,6 +758,7 @@ pub async fn bulk_create_transactions(
                 t.category.clone(),
                 t.is_contribution,
                 t.is_withdrawal,
+                t.is_refund,
                 t.created_at.clone()
             ],
         )
@@ -934,9 +948,9 @@ pub async fn bulk_create_transactions_with_snapshots(
         };
         sql.push_str(&format!(
             "INSERT INTO txn (account_id, transfer_account_id, amount, description, \
-             date, type, category, is_contribution, is_withdrawal, import_source, \
+             date, type, category, is_contribution, is_withdrawal, is_refund, import_source, \
              generated_balance_id, generated_balance_to_id, created_at, updated_at) \
-             VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', {}, {}, '{}', {}, {}, '{}', '{}');\n",
+             VALUES ({}, {}, {}, '{}', '{}', '{}', '{}', {}, {}, {}, '{}', {}, {}, '{}', '{}');\n",
             t.account_id,
             transfer_id_sql,
             t.amount,
@@ -946,6 +960,7 @@ pub async fn bulk_create_transactions_with_snapshots(
             sql_escape(&t.category),
             i32::from(t.is_contribution),
             i32::from(t.is_withdrawal),
+            i32::from(t.is_refund),
             sql_escape(&t.import_source),
             gen_id_sql,
             gen_to_id_sql,
@@ -1036,7 +1051,7 @@ pub async fn period_stats(
     let sql = format!(
         "SELECT t.type, t.amount, t.category, t.is_contribution, t.is_withdrawal, \
          a1.type, a2.type, strftime('{period_fmt}', t.date), a2.count_payments_as_expense, \
-         t.paycheck_id, t.date \
+         t.paycheck_id, t.date, t.is_refund \
          FROM txn t \
          LEFT JOIN account a1 ON a1.id = t.account_id \
          LEFT JOIN account a2 ON a2.id = t.transfer_account_id \
@@ -1062,6 +1077,7 @@ pub async fn period_stats(
         let dest_counts_as_expense: Option<i64> = row.get(8).map_err(|e| e.to_string())?;
         let paycheck_id: Option<i64> = row.get(9).map_err(|e| e.to_string())?;
         let date: String = row.get(10).map_err(|e| e.to_string())?;
+        let is_refund: bool = row.get::<i64>(11).map_err(|e| e.to_string())? != 0;
 
         // Month-end paycheck rows attribute to the month they fund.
         let mut attribution_shifted = false;
@@ -1115,6 +1131,15 @@ pub async fn period_stats(
             // savings funded from gross don't read as consuming net income.
             if tx_type == "income" && !is_withdrawal {
                 s.income += amount;
+            }
+        } else if tx_type == "income" && is_refund {
+            // Refund: negative outflow in its category bucket, not income.
+            s.expense -= amount;
+            match category.as_deref().unwrap_or("uncategorized") {
+                "fixed" => s.cat_fixed -= amount,
+                "discretionary" => s.cat_discretionary -= amount,
+                "irregular" => s.cat_irregular -= amount,
+                _ => s.cat_uncategorized -= amount,
             }
         } else if tx_type == "income" {
             s.income += amount;
@@ -1358,6 +1383,7 @@ mod tests {
             category: "test".to_string(),
             is_contribution: false,
             is_withdrawal: false,
+            is_refund: false,
             import_source: "csv".to_string(),
             update_balance: true,
             created_at: "2024-01-01T00:00:00".to_string(),
@@ -1375,6 +1401,7 @@ mod tests {
             category: "transfer".to_string(),
             is_contribution: false,
             is_withdrawal: false,
+            is_refund: false,
             import_source: "csv".to_string(),
             update_balance: true,
             created_at: "2024-01-01T00:00:00".to_string(),

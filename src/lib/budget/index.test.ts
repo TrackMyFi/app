@@ -15,7 +15,7 @@ function makeTxn(overrides: Partial<Transaction>): Transaction {
     type: 'income',
     category: '',
     isContribution: false,
-    isWithdrawal: false,
+    isWithdrawal: false, isRefund: false,
     importSource: 'manual',
     generatedBalanceId: null,
     generatedBalanceToId: null,

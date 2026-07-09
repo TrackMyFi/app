@@ -45,6 +45,8 @@ export interface NewTransaction {
   category: string
   isContribution: boolean
   isWithdrawal: boolean
+  /** Income-typed reversal of an earlier expense; see Transaction.isRefund. */
+  isRefund?: boolean
   importSource: string
   updateBalance: boolean
   createdAt: string
@@ -61,6 +63,7 @@ export interface UpdateTransaction {
   category: string
   isContribution: boolean
   isWithdrawal: boolean
+  isRefund?: boolean
   updateBalance: boolean
   updatedAt: string
 }

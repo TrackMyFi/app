@@ -11,7 +11,7 @@ let nextId = 1
 function tx(overrides: Partial<Transaction>): Transaction {
   return {
     id: nextId++, accountId: 1, transferAccountId: null, amount: 10, description: '', date: '2026-05-01',
-    type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, importSource: 'manual',
+    type: 'expense', category: 'discretionary', isContribution: false, isWithdrawal: false, isRefund: false, importSource: 'manual',
     generatedBalanceId: null, generatedBalanceToId: null, paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: '', updatedAt: '',
     ...overrides,
   }

@@ -92,6 +92,16 @@ export function classifyFlow(t: Transaction, accounts: AccountLookup): Transacti
     return { direction, isTransfer, inflow, outflow, bucket: 'savings', isSavings: true }
   }
 
+  // A refund reverses an earlier expense. The money genuinely arrived (income
+  // type keeps balance math correct), but counting it as income would inflate
+  // earnings while the original expense still inflates spending. Instead it's
+  // a negative outflow in its category bucket, netting the expense back out —
+  // the same trick the withdrawal branch above uses for the savings bucket.
+  if (t.type === 'income' && t.isRefund) {
+    const bucket = (t.category || 'uncategorized') as FlowBucket
+    return { direction, isTransfer, inflow: 0, outflow: -t.amount, bucket, isSavings: false }
+  }
+
   if (t.type === 'income') {
     return { direction, isTransfer, inflow: t.amount, outflow: 0, bucket: null, isSavings: false }
   }

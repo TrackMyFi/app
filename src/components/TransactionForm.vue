@@ -63,6 +63,7 @@ const form = reactive({
   type: 'expense',
   category: 'uncategorized',
   isContribution: false,
+  isRefund: false,
 })
 
 function resetForm() {
@@ -74,6 +75,7 @@ function resetForm() {
   form.type = 'expense'
   form.category = 'uncategorized'
   form.isContribution = false
+  form.isRefund = false
 }
 
 watch(
@@ -88,6 +90,7 @@ watch(
       form.type = e.type
       form.category = e.category
       form.isContribution = e.isContribution
+      form.isRefund = e.isRefund
     } else {
       resetForm()
     }
@@ -125,6 +128,13 @@ const contributionFlagLabel = computed(() =>
 watch([() => form.accountId, () => form.transferAccountId], () => {
   if (props.editing) return
   form.isContribution = isContributionTransfer.value || isWithdrawalTransfer.value
+})
+
+// A refund only makes sense on an income row (money genuinely came back in),
+// and never combines with a contribution — clear it when either changes.
+const canBeRefund = computed(() => form.type === 'income' && !form.isContribution)
+watch(canBeRefund, (can) => {
+  if (!can) form.isRefund = false
 })
 
 // A transfer into a count-payments-as-expense account (mortgage, car loan) IS
@@ -204,6 +214,7 @@ async function save(mode: SaveMode = 'close') {
         category: form.category,
         isContribution: form.isContribution,
         isWithdrawal: form.isContribution && isWithdrawalTransfer.value,
+        isRefund: form.isRefund,
         updateBalance: updateBalance.value,
         updatedAt: now,
       })
@@ -219,6 +230,7 @@ async function save(mode: SaveMode = 'close') {
         category: form.category,
         isContribution: form.isContribution,
         isWithdrawal: form.isContribution && isWithdrawalTransfer.value,
+        isRefund: form.isRefund,
         importSource: 'manual',
         updateBalance: updateBalance.value,
         createdAt: now,
@@ -280,7 +292,14 @@ async function save(mode: SaveMode = 'close') {
     >
       <USelect v-model="form.category" :items="paymentCategoryItems" class="w-full" />
     </UFormField>
-    <UCheckbox v-if="!isTransfer || isContributionTransfer || isWithdrawalTransfer" v-model="form.isContribution" :label="contributionFlagLabel" />
+    <UCheckbox v-if="(!isTransfer || isContributionTransfer || isWithdrawalTransfer) && !form.isRefund" v-model="form.isContribution" :label="contributionFlagLabel" />
+    <div v-if="canBeRefund" class="space-y-1">
+      <UCheckbox v-model="form.isRefund" label="Refund of an expense" />
+      <p v-if="form.isRefund" class="text-xs text-muted">
+        Counts against spending instead of income — pick the category of the expense it
+        reverses so the totals net out.
+      </p>
+    </div>
 
     <div class="rounded-lg border border-default p-3 space-y-2">
       <USwitch v-model="updateBalance" label="Update account balance" />

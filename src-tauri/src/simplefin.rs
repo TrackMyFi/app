@@ -2360,6 +2360,7 @@ mod tests {
             category: "uncategorized".into(),
             is_contribution: false,
             is_withdrawal: false,
+            is_refund: false,
             import_source: "manual".into(),
             update_balance: true,
             created_at: "2099-01-15T00:00:00".into(),

@@ -10,7 +10,7 @@ import type { Transaction } from '../types/Transaction'
 function txn(p: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 0, description: '',
-    date: '2026-01-01', type: 'expense', category: '', isContribution: false, isWithdrawal: false,
+    date: '2026-01-01', type: 'expense', category: '', isContribution: false, isWithdrawal: false, isRefund: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: '', updatedAt: '', ...p,
   }

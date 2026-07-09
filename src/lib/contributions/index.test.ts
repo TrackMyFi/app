@@ -19,7 +19,7 @@ function acct(id: number, type: string): Account {
 function txn(id: number, accountId: number, amount: number, date: string): Transaction {
   return {
     id, accountId, transferAccountId: null, amount, description: 'Contribution',
-    date, type: 'income', category: 'savings', isContribution: true, isWithdrawal: false,
+    date, type: 'income', category: 'savings', isContribution: true, isWithdrawal: false, isRefund: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: date, updatedAt: date,
   }
@@ -30,7 +30,7 @@ function txn(id: number, accountId: number, amount: number, date: string): Trans
 function withdrawal(id: number, fromInvestmentId: number, toCashId: number, amount: number, date: string): Transaction {
   return {
     id, accountId: fromInvestmentId, transferAccountId: toCashId, amount, description: 'Withdrawal',
-    date, type: 'transfer', category: 'transfer', isContribution: true, isWithdrawal: true,
+    date, type: 'transfer', category: 'transfer', isContribution: true, isWithdrawal: true, isRefund: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: date, updatedAt: date,
   }

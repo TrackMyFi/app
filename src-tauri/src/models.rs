@@ -92,6 +92,11 @@ pub struct Transaction {
     pub category: String,
     pub is_contribution: bool,
     pub is_withdrawal: bool,
+    /// An income-typed row that reverses an earlier expense (merchant refund,
+    /// reversed ACH pull). Balance math treats it as normal income (money in);
+    /// cash-flow classification counts it as a negative outflow in its category
+    /// bucket instead of income, netting the original expense out of spending.
+    pub is_refund: bool,
     pub import_source: String,
     pub generated_balance_id: Option<i32>,
     pub generated_balance_to_id: Option<i32>,

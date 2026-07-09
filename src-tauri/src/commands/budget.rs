@@ -22,7 +22,7 @@ pub struct BudgetMonthTarget {
 const TXN_COLS: &str = "id, account_id, transfer_account_id, amount, description, date, type, \
     category, is_contribution, is_withdrawal, import_source, generated_balance_id, \
     generated_balance_to_id, paycheck_id, vendor_category, simplefin_id, suppressed_as, \
-    created_at, updated_at, raw_description";
+    created_at, updated_at, raw_description, is_refund";
 
 fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
     Ok(Transaction {
@@ -46,6 +46,7 @@ fn row_to_txn(row: &libsql::Row) -> Result<Transaction, String> {
         created_at: row.get(17).map_err(|e| e.to_string())?,
         updated_at: row.get(18).map_err(|e| e.to_string())?,
         raw_description: row.get(19).map_err(|e| e.to_string())?,
+        is_refund: row.get::<i64>(20).map_err(|e| e.to_string())? != 0,
     })
 }
 

@@ -15,7 +15,7 @@ const bal = (accountId: number, balance: number): FireBalance =>
 function txn(p: Partial<Transaction>): Transaction {
   return {
     id: 1, accountId: 1, transferAccountId: null, amount: 0, description: '',
-    date: '2026-01-01', type: 'transfer', category: '', isContribution: true, isWithdrawal: false,
+    date: '2026-01-01', type: 'transfer', category: '', isContribution: true, isWithdrawal: false, isRefund: false,
     importSource: 'manual', generatedBalanceId: null, generatedBalanceToId: null,
     paycheckId: null, vendorCategory: null, simplefinId: null, suppressedAs: null, rawDescription: null, createdAt: '', updatedAt: '', ...p,
   }
