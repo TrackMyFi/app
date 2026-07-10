@@ -2,7 +2,8 @@
 
 export type SimpleFinSyncSummary = { accountsSynced: number, transactionsAdded: number, snapshotsAdded: number, 
 /**
- * Cross-account income/expense pairs collapsed into canonical transfers.
+ * Cross-account income/expense pairs collapsed into canonical transfers,
+ * plus counterpart rows absorbed into user-converted transfers.
  */
 transfersDetected: number, 
 /**

@@ -240,7 +240,8 @@ pub struct SimpleFinSyncSummary {
     pub transactions_added: i64,
     #[ts(type = "number")]
     pub snapshots_added: i64,
-    /// Cross-account income/expense pairs collapsed into canonical transfers.
+    /// Cross-account income/expense pairs collapsed into canonical transfers,
+    /// plus counterpart rows absorbed into user-converted transfers.
     #[ts(type = "number")]
     pub transfers_detected: i64,
     /// Whether the pending-transaction cache changed this sync (the set is
@@ -962,7 +963,10 @@ async fn import_account_set(
     // never be mistaken for one side of a same-amount transfer pair.
     crate::commands::suppress_rules::apply_suppress_rules(conn).await?;
 
-    summary.transfers_detected = collapse_transfer_pairs(conn).await?;
+    // Absorb before collapse: a user's hand-converted transfer is deliberate,
+    // so it claims its counterpart ahead of the heuristic pairing pass.
+    summary.transfers_detected = absorb_into_user_transfers(conn).await?;
+    summary.transfers_detected += collapse_transfer_pairs(conn).await?;
 
     // Count comparison only — a same-count content mutation slips through, but
     // it self-corrects on the next page visit and the next sync.
@@ -1102,6 +1106,96 @@ pub(crate) async fn collapse_transfer_pairs(conn: &Connection) -> Result<i64, St
     }
 
     Ok(collapsed)
+}
+
+/// Absorb a SimpleFIN-imported income/expense row into an existing transfer
+/// the user converted by hand.
+///
+/// When only one side of a transfer has posted, its row sits as ordinary
+/// income/expense until the counterpart arrives and `collapse_transfer_pairs`
+/// merges them. A user who converts that row to a transfer early (rather than
+/// waiting out the lag) leaves nothing for the collapse pass to pair with —
+/// the counterpart would import as a fresh row and double-count the flow.
+///
+/// Such a hand-converted transfer is recognizable: it still carries its own
+/// `simplefin_id` but has no `simplefin_counterpart_id` (only the collapse
+/// pass writes that column). This pass matches an incoming SimpleFIN row
+/// against those transfers by amount (± float tolerance), date window, and
+/// account orientation — an expense must sit on the transfer's source
+/// account, an income on its destination. On a match the incoming row is
+/// deleted and its id stored in `simplefin_counterpart_id`, exactly as if the
+/// collapse pass had paired the two, so the import's NOT EXISTS guard blocks
+/// re-import from the overlap window.
+pub(crate) async fn absorb_into_user_transfers(conn: &Connection) -> Result<i64, String> {
+    struct Match {
+        incoming_id: i32,
+        incoming_sfin_id: String,
+        transfer_id: i32,
+    }
+
+    // Candidates ordered by date proximity so the greedy pass below pairs each
+    // row with its closest match first (same technique as collapse_transfer_pairs).
+    let mut rows = conn
+        .query(
+            "SELECT s.id, s.simplefin_id, tr.id \
+             FROM txn s \
+             JOIN txn tr ON tr.type = 'transfer' \
+               AND tr.import_source = 'simplefin' \
+               AND tr.simplefin_id IS NOT NULL \
+               AND tr.simplefin_counterpart_id IS NULL \
+               AND tr.simplefin_id <> s.simplefin_id \
+               AND tr.suppressed_as IS NULL \
+               AND ABS(tr.amount - s.amount) < 0.005 \
+               AND ABS(julianday(tr.date) - julianday(s.date)) <= ?1 \
+               AND ((s.type = 'expense' AND s.account_id = tr.account_id) \
+                 OR (s.type = 'income' AND s.account_id = tr.transfer_account_id)) \
+             WHERE s.type IN ('income', 'expense') \
+               AND s.import_source = 'simplefin' \
+               AND s.simplefin_id IS NOT NULL \
+               AND s.suppressed_as IS NULL \
+               AND s.paycheck_id IS NULL \
+               AND s.generated_balance_id IS NULL AND s.generated_balance_to_id IS NULL \
+             ORDER BY ABS(julianday(tr.date) - julianday(s.date)) ASC, s.id ASC, tr.id ASC",
+            params![TRANSFER_DATE_TOLERANCE_DAYS],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut candidates: Vec<Match> = Vec::new();
+    while let Some(r) = rows.next().await.map_err(|e| e.to_string())? {
+        candidates.push(Match {
+            incoming_id: r.get(0).map_err(|e| e.to_string())?,
+            incoming_sfin_id: r.get(1).map_err(|e| e.to_string())?,
+            transfer_id: r.get(2).map_err(|e| e.to_string())?,
+        });
+    }
+
+    // Greedy one-to-one matching: each row participates in at most one pair.
+    let mut used_incoming = std::collections::HashSet::new();
+    let mut used_transfers = std::collections::HashSet::new();
+    let updated_at = now_iso();
+    let mut absorbed = 0i64;
+
+    for m in candidates {
+        if used_incoming.contains(&m.incoming_id) || used_transfers.contains(&m.transfer_id) {
+            continue;
+        }
+        used_incoming.insert(m.incoming_id);
+        used_transfers.insert(m.transfer_id);
+
+        conn.execute(
+            "UPDATE txn SET simplefin_counterpart_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![m.incoming_sfin_id, updated_at.clone(), m.transfer_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM txn WHERE id = ?1", params![m.incoming_id])
+            .await
+            .map_err(|e| e.to_string())?;
+        absorbed += 1;
+    }
+
+    Ok(absorbed)
 }
 
 /// Find candidate duplicate pairs for the on-demand review: same account, same
@@ -2085,6 +2179,84 @@ mod tests {
         let txns = read_all_txns(&conn).await;
         assert_eq!(txns.len(), 1);
         assert_eq!(txns[0].3, "transfer");
+    }
+
+    #[tokio::test]
+    async fn counterpart_absorbs_into_user_converted_transfer() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let mortgage = insert_account(&conn, "Mortgage", "loan", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        // First sync: only the mortgage side has posted — lands as income.
+        let set1 = demo_set2(vec![], vec![demo_txn("TRN-MORT", "199.59", ts, "PAYMENT")]);
+        import_account_set(&conn, &set1, true).await.unwrap();
+
+        // User converts the row to a transfer by hand instead of waiting for
+        // the counterpart (same columns update_transaction touches).
+        conn.execute(
+            "UPDATE txn SET type = 'transfer', account_id = ?1, transfer_account_id = ?2, \
+             category = 'uncategorized' WHERE simplefin_id = 'TRN-MORT'",
+            params![checking, mortgage],
+        )
+        .await
+        .unwrap();
+
+        // Next sync: the checking side posts. It must be absorbed, not kept
+        // as a duplicate expense.
+        let set2 = demo_set2(vec![demo_txn("TRN-PNC", "-199.59", ts + DAY, "ONLINE PMT")], vec![]);
+        let (s2, _) = import_account_set(&conn, &set2, true).await.unwrap();
+        assert_eq!(s2.transfers_detected, 1);
+
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 1, "counterpart should be absorbed into the transfer");
+        let t = &txns[0];
+        assert_eq!(t.0, checking);
+        assert_eq!(t.1, Some(mortgage));
+        assert_eq!(t.3, "transfer");
+        assert_eq!(t.5.as_deref(), Some("TRN-MORT"));
+        assert_eq!(t.6.as_deref(), Some("TRN-PNC"));
+
+        // Re-import (overlap window): the absorbed id is blocked by
+        // simplefin_counterpart_id, and the transfer is claimed exactly once.
+        let (again, _) = import_account_set(&conn, &set2, true).await.unwrap();
+        assert_eq!(again.transactions_added, 0);
+        assert_eq!(again.transfers_detected, 0);
+        assert_eq!(read_all_txns(&conn).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn absorb_requires_matching_orientation_and_amount() {
+        let conn = setup_db().await;
+        let checking = insert_account(&conn, "Checking", "checking", "ACT-1").await;
+        let mortgage = insert_account(&conn, "Mortgage", "loan", "ACT-2").await;
+
+        let ts = 1_700_000_000;
+        let set1 = demo_set2(vec![], vec![demo_txn("TRN-MORT", "199.59", ts, "PAYMENT")]);
+        import_account_set(&conn, &set1, true).await.unwrap();
+        conn.execute(
+            "UPDATE txn SET type = 'transfer', account_id = ?1, transfer_account_id = ?2, \
+             category = 'uncategorized' WHERE simplefin_id = 'TRN-MORT'",
+            params![checking, mortgage],
+        )
+        .await
+        .unwrap();
+
+        // An income on the source account (wrong orientation) and an expense
+        // with a different amount: neither may be absorbed.
+        let set2 = demo_set2(
+            vec![
+                demo_txn("TRN-DEP", "199.59", ts + DAY, "DEPOSIT"),
+                demo_txn("TRN-OTHER", "-210.00", ts + DAY, "GROCERIES"),
+            ],
+            vec![],
+        );
+        let (s2, _) = import_account_set(&conn, &set2, true).await.unwrap();
+        assert_eq!(s2.transfers_detected, 0);
+        let txns = read_all_txns(&conn).await;
+        assert_eq!(txns.len(), 3);
+        let transfer = txns.iter().find(|t| t.3 == "transfer").unwrap();
+        assert_eq!(transfer.6, None, "transfer must not claim a mismatched counterpart");
     }
 
     #[tokio::test]
